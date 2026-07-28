@@ -36,9 +36,12 @@ describe('upload streaming', () => {
 		let putStarted = false;
 		let stored = 0;
 		const bucket = {
-			async put(_key, readable) {
+			async put(_key, value) {
+				if (!(value instanceof ReadableStream)) {
+					throw new Error('Expected a streamed upload');
+				}
 				putStarted = true;
-				const reader = readable.getReader();
+				const reader = value.getReader();
 				while (true) {
 					const next = await reader.read();
 					if (next.done) break;
@@ -61,10 +64,34 @@ describe('upload streaming', () => {
 		expect(result).toEqual({ size: 4, etag: '"etag"' });
 	});
 
+	it('buffers locally when the runtime has no FixedLengthStream', async () => {
+		const bucket = {
+			async put(_key, value) {
+				if (!(value instanceof ArrayBuffer)) {
+					throw new Error('Expected a buffered local upload');
+				}
+				return { size: value.byteLength, httpEtag: '"local"' };
+			}
+		} satisfies UploadBucket;
+
+		await expect(
+			streamIntoBucket(
+				bucket,
+				'local-key',
+				source(new Uint8Array([1, 2, 3])),
+				3,
+				'image/png'
+			)
+		).resolves.toEqual({ size: 3, etag: '"local"' });
+	});
+
 	it('supports a zero-byte upload without synthesizing buffered bytes', async () => {
 		const bucket = {
-			async put(_key, readable) {
-				const reader = readable.getReader();
+			async put(_key, value) {
+				if (!(value instanceof ReadableStream)) {
+					throw new Error('Expected a streamed upload');
+				}
+				const reader = value.getReader();
 				const first = await reader.read();
 				expect(first.done).toBe(true);
 				return { size: 0, httpEtag: '"empty"' };

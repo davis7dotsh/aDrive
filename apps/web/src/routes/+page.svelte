@@ -37,15 +37,17 @@
 	let tags = $state<ReadonlyArray<Tag>>([]);
 	let contentOrigin = $state('');
 	let maxUploadBytes = $state(0);
-	let semantic = $state<FileListPayload['semantic'] | null>(null);
 	let refresh = $state(0);
 	let loading = $state(false);
 	let loadError = $state('');
 	let isPublic = $state(true);
 	let uploading = $state(false);
 	let uploadMessage = $state('');
+	let uploadOpen = $state(false);
 	let uploadTagIds = $state<ReadonlyArray<string>>([]);
 	let dragging = $state(false);
+	let uploadDialog = $state<HTMLDialogElement | null>(null);
+	let fileInput = $state<HTMLInputElement | null>(null);
 	let copiedId = $state('');
 	let keyInput = $state('');
 	let localKeyInput = $state('');
@@ -58,15 +60,32 @@
 	let newTagName = $state('');
 	let newTagColor = $state('#2563eb');
 	let tagMessage = $state('');
+	let tagManagerOpen = $state(false);
+	let tagDialog = $state<HTMLDialogElement | null>(null);
 	let manageTagId = $state('');
 	let manageName = $state('');
 	let manageColor = $state('#2563eb');
 	let managing = $state(false);
 	let run = 0;
+	let dragDepth = 0;
 	const deviceCode = $derived(page.url.searchParams.get('device') ?? '');
 
 	$effect(() => {
 		return () => params.cleanup();
+	});
+
+	$effect(() => {
+		const dialog = uploadDialog;
+		if (!dialog) return;
+		if (uploadOpen && !dialog.open) dialog.showModal();
+		if (!uploadOpen && dialog.open) dialog.close();
+	});
+
+	$effect(() => {
+		const dialog = tagDialog;
+		if (!dialog) return;
+		if (tagManagerOpen && !dialog.open) dialog.showModal();
+		if (!tagManagerOpen && dialog.open) dialog.close();
 	});
 
 	$effect(() => {
@@ -111,7 +130,6 @@
 					tags = result.tags;
 					contentOrigin = result.contentOrigin;
 					maxUploadBytes = result.maxUploadBytes;
-					semantic = result.semantic;
 					uploadTagIds = uploadTagIds.filter((id) =>
 						result.tags.some((tag) => tag.id === id)
 					);
@@ -143,7 +161,7 @@
 
 	const upload = async (selected: FileList | ReadonlyArray<File>) => {
 		const nextFiles = Array.from(selected);
-		if (nextFiles.length === 0 || uploading) return;
+		if (nextFiles.length === 0 || uploading) return false;
 		uploading = true;
 		uploadMessage = '';
 		try {
@@ -166,11 +184,13 @@
 					: `${file.name} uploaded.`;
 			}
 			refresh += 1;
+			return true;
 		} catch (cause) {
 			uploadMessage =
 				cause instanceof Error
 					? cause.message
 					: 'Upload could not be completed';
+			return false;
 		} finally {
 			uploading = false;
 		}
@@ -228,10 +248,73 @@
 		}
 	};
 
-	const onDrop = (event: DragEvent) => {
+	const containsFiles = (event: DragEvent) =>
+		event.dataTransfer?.types.includes('Files') ?? false;
+
+	const onWindowDragEnter = (event: DragEvent) => {
+		if (!session.token || showTrash || uploading || !containsFiles(event))
+			return;
 		event.preventDefault();
+		dragDepth += 1;
+		dragging = true;
+	};
+
+	const onWindowDragOver = (event: DragEvent) => {
+		if (!session.token || showTrash || uploading || !containsFiles(event))
+			return;
+		event.preventDefault();
+		if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+	};
+
+	const onWindowDragLeave = (event: DragEvent) => {
+		if (!containsFiles(event)) return;
+		dragDepth = Math.max(0, dragDepth - 1);
+		if (dragDepth === 0) dragging = false;
+	};
+
+	const onWindowDrop = async (event: DragEvent) => {
+		if (!session.token || showTrash || uploading || !containsFiles(event))
+			return;
+		event.preventDefault();
+		dragDepth = 0;
 		dragging = false;
-		if (event.dataTransfer?.files) void upload(event.dataTransfer.files);
+		const selected = event.dataTransfer?.files;
+		if (!selected) return;
+		if (await upload(selected)) uploadOpen = false;
+	};
+
+	const onWindowPaste = async (event: ClipboardEvent) => {
+		if (!session.token || showTrash || uploading) return;
+		const selected = event.clipboardData?.files;
+		if (!selected || selected.length === 0) return;
+		event.preventDefault();
+		if (await upload(selected)) uploadOpen = false;
+	};
+
+	const onWindowKeyDown = (event: KeyboardEvent) => {
+		if (event.key !== 'Escape') return;
+		if (uploadOpen) {
+			event.preventDefault();
+			uploadOpen = false;
+			return;
+		}
+		if (tagManagerOpen) {
+			event.preventDefault();
+			tagManagerOpen = false;
+		}
+	};
+
+	const uploadFromPicker = async (selected: FileList | null) => {
+		if (!selected) return;
+		if (await upload(selected)) uploadOpen = false;
+	};
+
+	const fileLabel = (file: DashboardFile) => {
+		if (file.kind === 'site') return 'SITE';
+		const extension = file.displayName.split('.').pop();
+		return extension && extension !== file.displayName
+			? extension.slice(0, 5).toUpperCase()
+			: 'FILE';
 	};
 
 	const copyLink = async (file: DashboardFile) => {
@@ -360,30 +443,267 @@
 	<title>Files · adrive</title>
 </svelte:head>
 
-<main class="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-12">
-	{#if !session.ready}
-		<div
-			class="mx-auto max-w-md animate-pulse rounded-lg border border-zinc-200 bg-white p-8"
+<svelte:window
+	ondragenter={onWindowDragEnter}
+	ondragover={onWindowDragOver}
+	ondragleave={onWindowDragLeave}
+	ondrop={onWindowDrop}
+	onpaste={onWindowPaste}
+	onkeydown={onWindowKeyDown}
+/>
+
+{#if dragging}
+	<div
+		class="pointer-events-none fixed inset-3 z-50 flex items-center justify-center rounded-2xl border-2 border-dashed border-accent-500 bg-accent-50/95"
+		aria-hidden="true"
+	>
+		<div class="text-center">
+			<svg
+				class="mx-auto size-10 text-accent-600"
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="1.6"
+			>
+				<path
+					d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"
+				/>
+			</svg>
+			<p class="mt-3 text-base font-medium text-accent-700">Drop to upload</p>
+		</div>
+	</div>
+{/if}
+
+<dialog
+	bind:this={uploadDialog}
+	class="m-auto w-[min(34rem,calc(100%-2rem))] rounded-xl bg-white p-0 text-zinc-950 shadow-2xl backdrop:bg-zinc-950/30"
+	aria-labelledby="upload-title"
+	onclose={() => (uploadOpen = false)}
+	oncancel={() => (uploadOpen = false)}
+	onclick={(event) => {
+		if (event.target === event.currentTarget) uploadOpen = false;
+	}}
+>
+	<div class="p-5 sm:p-6">
+		<div class="flex items-start justify-between gap-4">
+			<h2 id="upload-title" class="text-lg font-semibold tracking-tight">
+				Upload files
+			</h2>
+			<button
+				type="button"
+				class="rounded-md p-1.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-800"
+				aria-label="Close upload dialog"
+				onclick={() => (uploadOpen = false)}
+			>
+				<svg
+					class="size-5"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="1.8"
+					aria-hidden="true"
+				>
+					<path d="m6 6 12 12M18 6 6 18" />
+				</svg>
+			</button>
+		</div>
+
+		<button
+			type="button"
+			disabled={uploading}
+			class="mt-6 flex w-full items-center justify-center gap-2 rounded-lg bg-zinc-950 px-4 py-3 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:opacity-50"
+			onclick={() => fileInput?.click()}
 		>
+			{uploading ? 'Uploading…' : 'Choose files'}
+		</button>
+		<input
+			bind:this={fileInput}
+			type="file"
+			multiple
+			class="sr-only"
+			disabled={uploading}
+			onchange={(event) => {
+				const input = event.currentTarget;
+				void uploadFromPicker(input.files);
+				input.value = '';
+			}}
+		/>
+
+		<div class="mt-6 space-y-5 border-t border-zinc-100 pt-5">
+			<label
+				class="flex items-center gap-3 text-sm text-zinc-700"
+				title="Anyone with the link can open public files. HTML is always public."
+			>
+				<input
+					type="checkbox"
+					bind:checked={isPublic}
+					class="size-4 rounded border-zinc-300 accent-accent-600"
+				/>
+				<span>Public</span>
+			</label>
+
+			{#if tags.length > 0}
+				<fieldset>
+					<legend class="text-sm font-medium text-zinc-700">Tags</legend>
+					<div class="mt-2 flex flex-wrap gap-2">
+						{#each tags as tag (tag.id)}
+							<label
+								class="flex items-center gap-1.5 rounded-full bg-zinc-100 px-2.5 py-1 text-xs text-zinc-600"
+							>
+								<input
+									type="checkbox"
+									checked={uploadTagIds.includes(tag.id)}
+									onchange={() => toggleUploadTag(tag.id)}
+									class="size-3.5 accent-accent-600"
+								/>
+								{tag.name}
+							</label>
+						{/each}
+					</div>
+				</fieldset>
+			{/if}
+
+			<label class="block text-sm text-zinc-700">
+				Expiration
+				<input
+					type="datetime-local"
+					bind:value={expiresAtInput}
+					class="mt-2 block w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
+				/>
+			</label>
+		</div>
+	</div>
+</dialog>
+
+<dialog
+	bind:this={tagDialog}
+	class="m-auto w-[min(38rem,calc(100%-2rem))] rounded-xl bg-white p-0 text-zinc-950 shadow-2xl backdrop:bg-zinc-950/30"
+	aria-labelledby="tag-manager-title"
+	onclose={() => (tagManagerOpen = false)}
+	oncancel={() => (tagManagerOpen = false)}
+	onclick={(event) => {
+		if (event.target === event.currentTarget) tagManagerOpen = false;
+	}}
+>
+	<div class="p-5 sm:p-6">
+		<div class="flex items-start justify-between gap-4">
+			<h2 id="tag-manager-title" class="text-lg font-semibold tracking-tight">
+				Manage tags
+			</h2>
+			<button
+				type="button"
+				class="rounded-md p-1.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-800"
+				aria-label="Close tag manager"
+				onclick={() => (tagManagerOpen = false)}
+			>
+				<svg
+					class="size-5"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="1.8"
+					aria-hidden="true"
+				>
+					<path d="m6 6 12 12M18 6 6 18" />
+				</svg>
+			</button>
+		</div>
+
+		<div class="mt-6 grid gap-2 sm:grid-cols-[1fr_auto_auto]">
+			<input
+				aria-label="New tag name"
+				bind:value={newTagName}
+				placeholder="New tag name"
+				class="rounded-md border border-zinc-300 px-3 py-2 text-sm"
+			/>
+			<input
+				aria-label="New tag color"
+				type="color"
+				bind:value={newTagColor}
+				class="h-10 w-full rounded-md border border-zinc-300 bg-white p-1 sm:w-12"
+			/>
+			<button
+				type="button"
+				disabled={!newTagName.trim() || managing}
+				class="rounded-md bg-zinc-950 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+				onclick={() => void addTag()}>Create</button
+			>
+		</div>
+
+		{#if tags.length > 0}
+			<div class="mt-6 border-t border-zinc-100 pt-5">
+				<div class="flex flex-wrap gap-2">
+					{#each tags as tag (tag.id)}
+						<button
+							type="button"
+							aria-pressed={manageTagId === tag.id}
+							class="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm transition {manageTagId ===
+							tag.id
+								? 'border-accent-500 bg-accent-50 text-accent-700'
+								: 'border-zinc-200 bg-zinc-50 text-zinc-700 hover:border-zinc-300'}"
+							onclick={() => selectManagedTag(tag.id)}
+						>
+							<span
+								class="size-2.5 rounded-full"
+								style={`background:${tag.color ?? '#a1a1aa'}`}
+							></span>
+							{tag.name}
+							<span class="text-xs text-zinc-400">{tag.fileCount}</span>
+						</button>
+					{/each}
+				</div>
+			</div>
+		{/if}
+
+		{#if manageTagId}
+			<div
+				class="mt-5 grid gap-2 border-t border-zinc-100 pt-5 sm:grid-cols-[1fr_auto_auto_auto]"
+			>
+				<input
+					aria-label="Tag display name"
+					bind:value={manageName}
+					class="rounded-md border border-zinc-300 px-3 py-2 text-sm"
+				/>
+				<input
+					aria-label="Tag color"
+					type="color"
+					bind:value={manageColor}
+					class="h-10 w-full rounded-md border border-zinc-300 bg-white p-1 sm:w-12"
+				/>
+				<button
+					type="button"
+					disabled={!manageName.trim() || managing}
+					class="rounded-md border border-zinc-200 px-3 py-2 text-sm font-medium disabled:opacity-50"
+					onclick={() => void saveManagedTag()}>Save</button
+				>
+				<button
+					type="button"
+					disabled={managing}
+					class="rounded-md px-3 py-2 text-sm font-medium text-red-600 disabled:opacity-50"
+					onclick={() => void removeManagedTag()}>Delete</button
+				>
+			</div>
+		{/if}
+
+		{#if tagMessage}
+			<p class="mt-4 text-sm text-zinc-600" aria-live="polite">
+				{tagMessage}
+			</p>
+		{/if}
+	</div>
+</dialog>
+
+<main class="mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:py-10">
+	{#if !session.ready}
+		<div class="mx-auto max-w-md animate-pulse py-12">
 			<div class="h-5 w-28 rounded bg-zinc-200"></div>
 			<div class="mt-4 h-10 rounded bg-zinc-100"></div>
 		</div>
 	{:else if !session.token}
-		<section
-			class="mx-auto max-w-md rounded-lg border border-zinc-200 bg-white p-6 shadow-sm sm:p-8"
-		>
-			<p
-				class="text-xs font-semibold tracking-widest text-accent-600 uppercase"
-			>
-				Private dashboard
-			</p>
-			<h1 class="mt-3 text-2xl font-semibold tracking-tight text-zinc-950">
+		<section class="mx-auto max-w-md py-10 sm:py-16">
+			<h1 class="text-2xl font-semibold tracking-tight text-zinc-950">
 				Sign in to your drive
 			</h1>
-			<p class="mt-2 text-sm leading-6 text-zinc-500">
-				Use the deployment passcode. A secure, host-only browser session is
-				created without storing the passcode.
-			</p>
 			<form
 				class="mt-6"
 				onsubmit={(event) => {
@@ -416,10 +736,6 @@
 				<summary class="text-xs font-medium text-zinc-500"
 					>Local HTTP fallback</summary
 				>
-				<p class="mt-2 text-xs leading-5 text-zinc-500">
-					Secure <code>__Host-</code> cookies require HTTPS. For local HTTP development,
-					connect an existing API key in this browser tab.
-				</p>
 				<form
 					class="mt-3 flex gap-2"
 					onsubmit={(event) => {
@@ -447,367 +763,156 @@
 	{:else}
 		{#if deviceCode}
 			<section
-				class="mb-6 rounded-lg border border-accent-100 bg-accent-50 p-5"
+				class="mb-7 flex flex-col gap-3 border-b border-accent-100 bg-accent-50/70 px-4 py-4 sm:flex-row sm:items-center sm:justify-between"
 			>
-				<p class="text-sm font-semibold text-accent-700">Approve CLI device</p>
-				<p class="mt-1 text-sm text-zinc-600">
-					Confirm code <strong class="font-mono">{deviceCode}</strong> only if it
-					matches the CLI you started.
-				</p>
+				<div>
+					<p class="text-sm font-semibold text-accent-700">
+						Approve CLI device
+					</p>
+					<p class="mt-1 text-sm text-zinc-600">
+						Confirm code <strong class="font-mono">{deviceCode}</strong> only if it
+						matches the CLI you started.
+					</p>
+				</div>
 				<button
 					type="button"
 					disabled={managingAuth}
-					class="mt-3 rounded-md bg-zinc-950 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+					class="self-start rounded-md bg-zinc-950 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
 					onclick={() => void authorizeDevice()}>Approve device</button
 				>
 			</section>
 		{/if}
+
 		<div
-			class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"
+			class="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between"
 		>
 			<div>
-				<p class="text-sm font-medium text-accent-600">Dashboard</p>
-				<h1 class="mt-1 text-3xl font-semibold tracking-tight text-zinc-950">
+				<h1 class="text-3xl font-semibold tracking-tight text-zinc-950">
 					{showTrash ? 'Trash' : 'Files'}
 				</h1>
-				<p class="mt-2 text-sm text-zinc-500">
-					{showTrash
-						? 'Restore files before their purge window ends.'
-						: 'Search names, tags, and text content without folders.'}
-				</p>
 			</div>
-			<div class="flex rounded-md border border-zinc-200 bg-white p-1">
+			<div class="flex items-center gap-1">
+				{#if !showTrash}
+					<button
+						type="button"
+						class="mr-2 inline-flex items-center gap-2 rounded-md bg-zinc-950 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-800"
+						onclick={() => (uploadOpen = true)}
+					>
+						<svg
+							class="size-4"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="1.8"
+							aria-hidden="true"
+						>
+							<path d="M12 5v14M5 12h14" />
+						</svg>
+						Upload
+					</button>
+				{/if}
 				<button
 					type="button"
 					aria-pressed={!showTrash}
-					class="rounded px-3 py-1.5 text-sm font-medium {showTrash
-						? 'text-zinc-500'
-						: 'bg-zinc-100 text-zinc-950'}"
+					class="border-b-2 px-3 py-2 text-sm font-medium {showTrash
+						? 'border-transparent text-zinc-400 hover:text-zinc-700'
+						: 'border-zinc-950 text-zinc-950'}"
 					onclick={() => (params.view = 'files')}>Files</button
 				>
 				<button
 					type="button"
 					aria-pressed={showTrash}
-					class="rounded px-3 py-1.5 text-sm font-medium {showTrash
-						? 'bg-zinc-100 text-zinc-950'
-						: 'text-zinc-500'}"
+					class="border-b-2 px-3 py-2 text-sm font-medium {showTrash
+						? 'border-zinc-950 text-zinc-950'
+						: 'border-transparent text-zinc-400 hover:text-zinc-700'}"
 					onclick={() => (params.view = 'trash')}>Trash</button
 				>
 			</div>
 		</div>
 
+		{#if uploadMessage}
+			<p
+				class="mt-5 border-l-2 border-accent-500 pl-3 text-sm text-zinc-600"
+				aria-live="polite"
+			>
+				{uploadMessage}
+			</p>
+		{/if}
+
 		{#if !showTrash}
-			<section
-				class="mt-8 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm sm:p-6"
-			>
-				<label for="drive-search" class="text-sm font-medium text-zinc-900">
-					Search
-				</label>
-				<input
-					id="drive-search"
-					type="search"
-					bind:value={params.q}
-					placeholder="Filename, tag, or text inside a file"
-					class="mt-2 w-full rounded-md border border-zinc-300 px-3 py-2.5 text-sm shadow-sm"
-				/>
-				{#if tags.length > 0}
-					<div class="mt-3 flex flex-wrap gap-2" aria-label="Filter by any tag">
-						{#each tags as tag (tag.id)}
-							<button
-								type="button"
-								aria-pressed={params.tags.includes(tag.id)}
-								class="rounded-full border px-2.5 py-1 text-xs font-medium {params.tags.includes(
-									tag.id
-								)
-									? 'border-accent-500 bg-accent-50 text-accent-700'
-									: 'border-zinc-200 text-zinc-600'}"
-								onclick={() => toggleFilterTag(tag.id)}
-							>
-								<span
-									class="mr-1 inline-block size-2 rounded-full"
-									style={`background:${tag.color ?? '#a1a1aa'}`}
-								></span>
-								{tag.name} ({tag.fileCount})
-							</button>
-						{/each}
-					</div>
-					{#if params.tags.length > 1}
-						<p class="mt-2 text-xs text-zinc-400">
-							Tags use OR: a file matching any selected tag is included.
-						</p>
-					{/if}
-				{/if}
-				{#if semantic}
-					<div class="mt-4 border-t border-zinc-100 pt-4">
-						<div class="flex flex-wrap items-center justify-between gap-2">
-							<p class="text-xs font-medium text-zinc-700">
-								Semantic search {semantic.enabled ? 'enabled' : 'off'}
-							</p>
-							<p class="text-xs text-zinc-400">
-								{semantic.indexedChunks} indexed
-								{semantic.indexedChunks === 1 ? 'chunk' : 'chunks'} ·
-								{semantic.dimensions} dimensions
-							</p>
-						</div>
-						<p class="mt-1 text-xs leading-5 text-zinc-500">
-							{semantic.enabled
-								? semantic.costNotice
-								: 'Name, tag, typo-tolerant, and extracted-text search remain fully available without AI bindings.'}
-						</p>
-					</div>
-				{/if}
-			</section>
-
-			<section
-				class="mt-6 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm sm:p-6"
-			>
+			<section class="mt-8">
+				<div class="relative max-w-2xl">
+					<svg
+						class="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-zinc-400"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="1.8"
+						aria-hidden="true"
+					>
+						<circle cx="11" cy="11" r="7" />
+						<path d="m16 16 4 4" />
+					</svg>
+					<label for="drive-search" class="sr-only">Search files</label>
+					<input
+						id="drive-search"
+						type="search"
+						bind:value={params.q}
+						placeholder="Search files"
+						class="w-full rounded-lg bg-zinc-100 py-2.5 pr-3 pl-10 text-sm outline-none placeholder:text-zinc-400 focus:bg-white focus:ring-2 focus:ring-accent-500"
+					/>
+				</div>
 				<div
-					role="button"
-					tabindex="0"
-					aria-label="Upload files"
-					class="rounded-md border border-dashed px-6 py-9 text-center transition {dragging
-						? 'border-accent-500 bg-accent-50'
-						: 'border-zinc-300 bg-zinc-50/60'}"
-					ondragenter={(event) => {
-						event.preventDefault();
-						dragging = true;
-					}}
-					ondragover={(event) => event.preventDefault()}
-					ondragleave={() => (dragging = false)}
-					ondrop={onDrop}
-					onkeydown={(event) => {
-						if (event.key === 'Enter' || event.key === ' ') {
-							event.preventDefault();
-							document.getElementById('file-upload')?.click();
-						}
-					}}
-					onclick={() => document.getElementById('file-upload')?.click()}
+					class="mt-5 flex flex-wrap gap-2"
+					aria-label="Filter and manage tags"
 				>
-					<p class="text-sm font-medium text-zinc-900">
-						{uploading ? 'Uploading…' : 'Drop files here or choose files'}
-					</p>
-					<p class="mt-1 text-xs text-zinc-500">
-						{maxUploadBytes > 0
-							? `Up to ${formatBytes(maxUploadBytes)} per file`
-							: 'Uploads are streamed directly to storage'}
-					</p>
-					<input
-						id="file-upload"
-						type="file"
-						multiple
-						class="sr-only"
-						disabled={uploading}
-						onchange={(event) => {
-							const input = event.currentTarget;
-							if (input.files) void upload(input.files);
-							input.value = '';
-						}}
-					/>
-				</div>
-				<div class="mt-4 grid gap-4 sm:grid-cols-2">
-					<label class="flex items-start gap-3 text-sm text-zinc-600">
-						<input
-							type="checkbox"
-							bind:checked={isPublic}
-							class="mt-0.5 size-4 rounded border-zinc-300 accent-accent-600"
-						/>
-						<span>
-							Public — anyone with the link can open it.
-							<span class="block text-xs text-zinc-400"
-								>HTML is always public.</span
-							>
-						</span>
-					</label>
-					{#if tags.length > 0}
-						<fieldset>
-							<legend class="text-sm font-medium text-zinc-700"
-								>Upload tags</legend
-							>
-							<div class="mt-2 flex flex-wrap gap-2">
-								{#each tags as tag (tag.id)}
-									<label
-										class="flex items-center gap-1.5 text-xs text-zinc-600"
-									>
-										<input
-											type="checkbox"
-											checked={uploadTagIds.includes(tag.id)}
-											onchange={() => toggleUploadTag(tag.id)}
-											class="size-3.5 accent-accent-600"
-										/>
-										{tag.name}
-									</label>
-								{/each}
-							</div>
-						</fieldset>
-					{/if}
-					<label class="text-sm text-zinc-600 sm:col-span-2">
-						Expiration (optional)
-						<input
-							type="datetime-local"
-							bind:value={expiresAtInput}
-							class="mt-2 block rounded-md border border-zinc-300 px-3 py-2 text-sm"
-						/>
-						<span class="mt-1 block text-xs text-zinc-400"
-							>Expired links stop serving immediately; cleanup runs in the
-							background.</span
+					{#each tags as tag (tag.id)}
+						<button
+							type="button"
+							aria-pressed={params.tags.includes(tag.id)}
+							class="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium transition {params.tags.includes(
+								tag.id
+							)
+								? 'border-accent-500 bg-accent-50 text-accent-700 ring-1 ring-accent-500'
+								: 'border-zinc-200 bg-zinc-50 text-zinc-700 hover:border-zinc-300 hover:bg-white'}"
+							onclick={() => toggleFilterTag(tag.id)}
 						>
-					</label>
-				</div>
-				{#if uploadMessage}
-					<p class="mt-4 text-sm text-zinc-600" aria-live="polite">
-						{uploadMessage}
-					</p>
-				{/if}
-			</section>
-
-			<section
-				class="mt-6 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm sm:p-6"
-			>
-				<h2 class="text-sm font-semibold text-zinc-900">Manage tags</h2>
-				<div class="mt-3 grid gap-3 sm:grid-cols-[1fr_auto_auto]">
-					<input
-						aria-label="New tag name"
-						bind:value={newTagName}
-						placeholder="New tag name"
-						class="rounded-md border border-zinc-300 px-3 py-2 text-sm"
-					/>
-					<input
-						aria-label="New tag color"
-						type="color"
-						bind:value={newTagColor}
-						class="h-10 w-full rounded-md border border-zinc-300 bg-white p-1 sm:w-12"
-					/>
+							<span
+								class="size-2.5 rounded-full"
+								style={`background:${tag.color ?? '#a1a1aa'}`}
+							></span>
+							{tag.name}
+							<span class="text-xs font-normal text-zinc-400">
+								{tag.fileCount}
+							</span>
+						</button>
+					{/each}
 					<button
 						type="button"
-						disabled={!newTagName.trim() || managing}
-						class="rounded-md bg-zinc-950 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-						onclick={() => void addTag()}>Create</button
+						class="inline-flex items-center gap-2 rounded-md border border-dashed border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-500 transition hover:border-zinc-400 hover:text-zinc-800"
+						onclick={() => (tagManagerOpen = true)}
 					>
+						<svg
+							class="size-4"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="1.8"
+							aria-hidden="true"
+						>
+							<path d="M12 5v14M5 12h14" />
+						</svg>
+						Manage tags
+					</button>
 				</div>
-				{#if tags.length > 0}
-					<div
-						class="mt-4 grid gap-3 border-t border-zinc-100 pt-4 sm:grid-cols-[1fr_1fr_auto_auto_auto]"
-					>
-						<select
-							aria-label="Tag to edit"
-							value={manageTagId}
-							class="rounded-md border border-zinc-300 px-3 py-2 text-sm"
-							onchange={(event) => selectManagedTag(event.currentTarget.value)}
-						>
-							<option value="">Choose a tag</option>
-							{#each tags as tag (tag.id)}
-								<option value={tag.id}>{tag.name}</option>
-							{/each}
-						</select>
-						<input
-							aria-label="Tag display name"
-							bind:value={manageName}
-							disabled={!manageTagId}
-							class="rounded-md border border-zinc-300 px-3 py-2 text-sm disabled:bg-zinc-50"
-						/>
-						<input
-							aria-label="Tag color"
-							type="color"
-							bind:value={manageColor}
-							disabled={!manageTagId}
-							class="h-10 w-full rounded-md border border-zinc-300 bg-white p-1 sm:w-12"
-						/>
-						<button
-							type="button"
-							disabled={!manageTagId || !manageName.trim() || managing}
-							class="rounded-md border border-zinc-200 px-3 py-2 text-sm font-medium disabled:opacity-50"
-							onclick={() => void saveManagedTag()}>Save</button
-						>
-						<button
-							type="button"
-							disabled={!manageTagId || managing}
-							class="rounded-md px-3 py-2 text-sm font-medium text-red-600 disabled:opacity-50"
-							onclick={() => void removeManagedTag()}>Delete</button
-						>
-					</div>
-				{/if}
-				{#if tagMessage}
-					<p class="mt-3 text-sm text-zinc-600" aria-live="polite">
-						{tagMessage}
-					</p>
-				{/if}
-			</section>
-
-			<section
-				class="mt-6 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm sm:p-6"
-			>
-				<h2 class="text-sm font-semibold text-zinc-900">API keys</h2>
-				<p class="mt-1 text-xs leading-5 text-zinc-500">
-					Keys have full access. New secrets are shown once and stored only as
-					hashes.
-				</p>
-				<form
-					class="mt-3 flex max-w-xl gap-2"
-					onsubmit={(event) => {
-						event.preventDefault();
-						void mintApiKey();
-					}}
-				>
-					<input
-						bind:value={apiKeyName}
-						placeholder="Key name, e.g. backup agent"
-						class="min-w-0 flex-1 rounded-md border border-zinc-300 px-3 py-2 text-sm"
-					/>
-					<button
-						type="submit"
-						disabled={!apiKeyName.trim() || managingAuth}
-						class="rounded-md bg-zinc-950 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-						>Create key</button
-					>
-				</form>
-				{#if createdApiKey}
-					<div class="mt-3 rounded-md bg-amber-50 p-3">
-						<p class="text-xs font-medium text-amber-900">Copy this key now</p>
-						<code class="mt-1 block break-all text-xs text-amber-900"
-							>{createdApiKey}</code
-						>
-					</div>
-				{/if}
-				{#if apiKeys.length > 0}
-					<ul class="mt-4 divide-y divide-zinc-100 border-t border-zinc-100">
-						{#each apiKeys as key (key.id)}
-							<li class="flex items-center justify-between gap-3 py-3">
-								<div class="min-w-0">
-									<p class="truncate text-sm font-medium text-zinc-800">
-										{key.name}
-									</p>
-									<p class="mt-0.5 text-xs text-zinc-400">
-										adr_{key.prefix}_… · created {formatDate(key.createdAt)}
-										{key.revokedAt ? ' · revoked' : ''}
-									</p>
-								</div>
-								{#if !key.revokedAt}
-									<button
-										type="button"
-										disabled={managingAuth}
-										class="text-xs font-medium text-red-600 disabled:opacity-50"
-										onclick={() => void removeApiKey(key.id)}>Revoke</button
-									>
-								{/if}
-							</li>
-						{/each}
-					</ul>
-				{/if}
-				{#if authMessage}
-					<p class="mt-3 text-sm text-zinc-600" aria-live="polite">
-						{authMessage}
-					</p>
-				{/if}
 			</section>
 		{/if}
 
-		<section
-			class="mt-8 overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm"
-		>
+		<section class="mt-10">
 			<div
-				class="flex items-center justify-between border-b border-zinc-200 px-4 py-3 sm:px-5"
+				class="flex items-center justify-between border-b border-zinc-200 pb-3"
 			>
-				<p class="text-sm font-medium text-zinc-900">
+				<p class="text-sm font-medium text-zinc-700">
 					{files.length}
 					{files.length === 1 ? 'file' : 'files'}
 				</p>
@@ -816,16 +921,29 @@
 				{/if}
 			</div>
 			{#if loadError}
-				<div
-					class="border-b border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700"
+				<p
+					class="mt-4 border-l-2 border-red-500 pl-3 text-sm text-red-700"
 					role="alert"
 				>
 					{loadError}
-				</div>
+				</p>
 			{/if}
 			{#if !loading && files.length === 0}
-				<div class="px-6 py-16 text-center">
-					<p class="text-sm font-medium text-zinc-700">
+				<div class="py-20 text-center">
+					<svg
+						class="mx-auto size-12 text-zinc-300"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="1.4"
+						aria-hidden="true"
+					>
+						<path
+							d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"
+						/>
+						<path d="M14 2v6h6M8 13h8M8 17h5" />
+					</svg>
+					<p class="mt-4 text-sm font-medium text-zinc-700">
 						{showTrash
 							? 'Trash is empty'
 							: params.q || params.tags.length
@@ -834,93 +952,201 @@
 					</p>
 				</div>
 			{:else}
-				<ul class="divide-y divide-zinc-100">
+				<ul
+					class="grid grid-cols-2 gap-x-4 gap-y-8 py-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6"
+				>
 					{#each files as file (file.id)}
-						<li
-							class="flex flex-col gap-4 px-4 py-4 sm:flex-row sm:items-center sm:px-5"
-						>
-							<div class="min-w-0 flex-1">
-								<a
-									href={`/files/${file.id}`}
-									class="block truncate text-sm font-medium text-zinc-900 hover:text-accent-600"
-								>
-									{file.displayName}
-								</a>
-								<div
-									class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-zinc-400"
-								>
-									<span>{formatBytes(file.sizeBytes)}</span>
-									<span>· v{file.version} ·</span>
-									<span>{formatDate(file.updatedAt)}</span>
-									{#if file.kind === 'site'}
-										<span
-											class="rounded-full bg-accent-50 px-2 py-0.5 text-accent-700"
-											>Site</span
-										>
-									{/if}
+						<li class="group min-w-0">
+							<a
+								href={`/files/${file.id}`}
+								class="flex aspect-[4/3] items-center justify-center rounded-xl bg-zinc-100 transition group-hover:bg-zinc-200/70"
+								aria-label={`Open ${file.displayName}`}
+							>
+								<div class="text-center">
+									<svg
+										class="mx-auto size-9 text-zinc-400"
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.4"
+										aria-hidden="true"
+									>
+										{#if file.kind === 'site'}
+											<rect x="3" y="4" width="18" height="16" rx="2" />
+											<path d="M3 9h18M7 6.5h.01M10 6.5h.01" />
+										{:else}
+											<path
+												d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"
+											/>
+											<path d="M14 2v6h6" />
+										{/if}
+									</svg>
 									<span
-										class="rounded-full px-2 py-0.5 {file.public
-											? 'bg-emerald-50 text-emerald-700'
-											: 'bg-zinc-100 text-zinc-600'}"
-										>{file.public ? 'Public' : 'Private'}</span
+										class="mt-2 block text-[10px] font-semibold tracking-wider text-zinc-400"
 									>
-									{#each file.tags as tag (tag.id)}
-										<span
-											class="rounded-full bg-zinc-100 px-2 py-0.5 text-zinc-600"
-											>{tag.name}</span
-										>
-									{/each}
+										{fileLabel(file)}
+									</span>
 								</div>
+							</a>
+							<div class="mt-3 flex items-start gap-2">
+								<div class="min-w-0 flex-1">
+									<a
+										href={`/files/${file.id}`}
+										class="block truncate text-sm font-medium text-zinc-900 hover:text-accent-600"
+									>
+										{file.displayName}
+									</a>
+									<p class="mt-0.5 truncate text-xs text-zinc-400">
+										{formatBytes(file.sizeBytes)} · {formatDate(file.updatedAt)}
+									</p>
+								</div>
+								<details class="relative shrink-0">
+									<summary
+										class="flex size-7 list-none items-center justify-center rounded-md text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-800 [&::-webkit-details-marker]:hidden"
+										aria-label={`Actions for ${file.displayName}`}
+									>
+										<span aria-hidden="true">•••</span>
+									</summary>
+									<div
+										class="absolute top-8 right-0 z-20 w-36 rounded-lg border border-zinc-200 bg-white py-1 shadow-lg"
+									>
+										{#if !showTrash}
+											{#if file.public}
+												<a
+													href={`${contentOrigin}/${file.kind === 'site' ? 's' : 'f'}/${file.id}${file.kind === 'site' ? '/' : ''}`}
+													target="_blank"
+													rel="noreferrer"
+													class="block px-3 py-2 text-xs text-zinc-700 hover:bg-zinc-50"
+													>Open</a
+												>
+											{:else}
+												<button
+													type="button"
+													class="block w-full px-3 py-2 text-left text-xs text-zinc-700 hover:bg-zinc-50"
+													onclick={() => void openLink(file)}>Download</button
+												>
+											{/if}
+											<button
+												type="button"
+												class="block w-full px-3 py-2 text-left text-xs text-zinc-700 hover:bg-zinc-50"
+												onclick={() => void copyLink(file)}
+											>
+												{copiedId === file.id ? 'Copied' : 'Copy link'}
+											</button>
+											<button
+												type="button"
+												class="block w-full px-3 py-2 text-left text-xs text-red-600 hover:bg-red-50"
+												onclick={() => void changeState(file, 'trash')}
+												>Trash</button
+											>
+										{:else}
+											<button
+												type="button"
+												class="block w-full px-3 py-2 text-left text-xs text-zinc-700 hover:bg-zinc-50"
+												onclick={() => void changeState(file, 'restore')}
+												>Restore</button
+											>
+										{/if}
+									</div>
+								</details>
 							</div>
-							<div class="flex items-center gap-2">
-								{#if !showTrash}
-									<button
-										type="button"
-										class="rounded-md border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-600"
-										onclick={() => void copyLink(file)}
+							<div class="mt-2 flex min-w-0 items-center gap-1.5">
+								<span
+									class="size-1.5 shrink-0 rounded-full {file.public
+										? 'bg-emerald-500'
+										: 'bg-zinc-400'}"
+								></span>
+								<span class="text-[11px] text-zinc-400">
+									{file.public ? 'Public' : 'Private'}
+								</span>
+								{#each file.tags.slice(0, 2) as tag (tag.id)}
+									<span
+										class="truncate rounded-full bg-zinc-100 px-1.5 py-0.5 text-[10px] text-zinc-500"
+										>{tag.name}</span
 									>
-										{copiedId === file.id
-											? file.public || file.kind === 'site'
-												? 'Copied'
-												: 'Copied · 15 min'
-											: file.public || file.kind === 'site'
-												? 'Copy link'
-												: 'Copy 15 min link'}
-									</button>
-									{#if file.public}
-										<a
-											href={`${contentOrigin}/${file.kind === 'site' ? 's' : 'f'}/${file.id}${file.kind === 'site' ? '/' : ''}`}
-											target="_blank"
-											rel="noreferrer"
-											class="rounded-md border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-600"
-											>Open</a
-										>
-									{:else}
-										<button
-											type="button"
-											class="rounded-md border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-600"
-											onclick={() => void openLink(file)}>Download</button
-										>
-									{/if}
-									<button
-										type="button"
-										class="rounded-md px-3 py-1.5 text-xs font-medium text-zinc-500 hover:bg-red-50 hover:text-red-700"
-										onclick={() => void changeState(file, 'trash')}
-										>Trash</button
-									>
-								{:else}
-									<button
-										type="button"
-										class="rounded-md border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700"
-										onclick={() => void changeState(file, 'restore')}
-										>Restore</button
-									>
-								{/if}
+								{/each}
 							</div>
 						</li>
 					{/each}
 				</ul>
 			{/if}
 		</section>
+
+		{#if !showTrash}
+			<div class="mt-10">
+				<details class="border-t border-zinc-200 py-5">
+					<summary
+						title="API keys have full access"
+						class="flex list-none items-center justify-between text-sm font-medium text-zinc-800 [&::-webkit-details-marker]:hidden"
+					>
+						<span>API keys</span>
+						<span class="text-xs font-normal text-zinc-400">Manage</span>
+					</summary>
+					<div class="mt-5 max-w-3xl">
+						<form
+							class="flex max-w-xl gap-2"
+							onsubmit={(event) => {
+								event.preventDefault();
+								void mintApiKey();
+							}}
+						>
+							<input
+								bind:value={apiKeyName}
+								placeholder="Key name, e.g. backup agent"
+								class="min-w-0 flex-1 rounded-md border border-zinc-300 px-3 py-2 text-sm"
+							/>
+							<button
+								type="submit"
+								disabled={!apiKeyName.trim() || managingAuth}
+								class="rounded-md bg-zinc-950 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+								>Create key</button
+							>
+						</form>
+						{#if createdApiKey}
+							<div class="mt-3 border-l-2 border-amber-400 pl-3">
+								<p class="text-xs font-medium text-amber-900">
+									Copy this key now
+								</p>
+								<code class="mt-1 block break-all text-xs text-amber-900"
+									>{createdApiKey}</code
+								>
+							</div>
+						{/if}
+						{#if apiKeys.length > 0}
+							<ul
+								class="mt-4 divide-y divide-zinc-100 border-t border-zinc-100"
+							>
+								{#each apiKeys as key (key.id)}
+									<li class="flex items-center justify-between gap-3 py-3">
+										<div class="min-w-0">
+											<p class="truncate text-sm font-medium text-zinc-800">
+												{key.name}
+											</p>
+											<p class="mt-0.5 text-xs text-zinc-400">
+												adr_{key.prefix}_… · created {formatDate(key.createdAt)}
+												{key.revokedAt ? ' · revoked' : ''}
+											</p>
+										</div>
+										{#if !key.revokedAt}
+											<button
+												type="button"
+												disabled={managingAuth}
+												class="text-xs font-medium text-red-600 disabled:opacity-50"
+												onclick={() => void removeApiKey(key.id)}>Revoke</button
+											>
+										{/if}
+									</li>
+								{/each}
+							</ul>
+						{/if}
+						{#if authMessage}
+							<p class="mt-3 text-sm text-zinc-600" aria-live="polite">
+								{authMessage}
+							</p>
+						{/if}
+					</div>
+				</details>
+			</div>
+		{/if}
 	{/if}
 </main>

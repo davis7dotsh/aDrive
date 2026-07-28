@@ -144,6 +144,22 @@ export const getFile = async (
 	return (await response.json()) as FileDetailResponse;
 };
 
+export const getFilePreview = async (
+	token: string,
+	id: string,
+	signal?: AbortSignal
+) => {
+	const response = await request(
+		`/api/files/${encodeURIComponent(id)}/preview`,
+		token,
+		{ signal }
+	);
+	return {
+		kind: response.headers.get('X-Adrive-Preview-Kind') ?? 'text',
+		text: await response.text()
+	};
+};
+
 export const getContentLink = async (
 	token: string,
 	id: string,

@@ -18,19 +18,12 @@
 	/>
 </svelte:head>
 
-<div class="min-h-screen">
+<div class="min-h-screen bg-white">
 	<header class="border-b border-zinc-200 bg-white">
 		<div
-			class="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6"
+			class="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6"
 		>
-			<a
-				href="/"
-				class="flex items-center gap-2 text-sm font-semibold tracking-tight text-zinc-950"
-			>
-				<span
-					class="flex size-7 items-center justify-center rounded-md bg-zinc-950 text-xs font-bold text-white"
-					aria-hidden="true">a</span
-				>
+			<a href="/" class="text-sm font-semibold tracking-tight text-zinc-950">
 				adrive
 			</a>
 			{#if session.token}

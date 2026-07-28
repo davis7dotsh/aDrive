@@ -3,7 +3,7 @@ import { InvalidRequest, StorageError } from './errors';
 export interface UploadBucket {
 	put(
 		key: string,
-		value: ReadableStream<Uint8Array>,
+		value: ReadableStream<Uint8Array> | ArrayBuffer,
 		options: R2PutOptions
 	): Promise<{ readonly size: number; readonly httpEtag: string } | null>;
 }
@@ -48,9 +48,42 @@ export const streamIntoBucket = async (
 	body: ReadableStream<Uint8Array> | null,
 	size: number,
 	contentType: string,
-	makeFixedLengthStream = defaultFixedLengthStream
+	makeFixedLengthStream?: FixedLengthStreamFactory
 ) => {
-	const { readable, writable } = makeFixedLengthStream(size);
+	if (
+		makeFixedLengthStream === undefined &&
+		typeof FixedLengthStream === 'undefined'
+	) {
+		try {
+			const value =
+				body === null
+					? new ArrayBuffer(0)
+					: await new Response(body).arrayBuffer();
+			if (value.byteLength !== size) {
+				throw new StorageError({
+					operation: 'stream blob',
+					cause: new Error('Upload length changed while buffering locally')
+				});
+			}
+			const object = await bucket.put(key, value, {
+				httpMetadata: { contentType }
+			});
+			if (object === null) {
+				throw new StorageError({
+					operation: 'put blob',
+					cause: new Error('R2 precondition failed')
+				});
+			}
+			return { size: object.size, etag: object.httpEtag };
+		} catch (cause) {
+			if (cause instanceof StorageError) throw cause;
+			throw new StorageError({ operation: 'stream blob', cause });
+		}
+	}
+
+	const { readable, writable } = (
+		makeFixedLengthStream ?? defaultFixedLengthStream
+	)(size);
 	const source =
 		body ??
 		new ReadableStream<Uint8Array>({
