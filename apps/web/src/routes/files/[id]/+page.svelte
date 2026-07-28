@@ -122,15 +122,31 @@
 
 	const copyLink = async (version?: number) => {
 		if (!detail) return;
-		const suffix = version === undefined ? '' : `?v=${version}`;
+		const isSite = detail.file.kind === 'site';
+		const suffix = isSite || version === undefined ? '' : `?v=${version}`;
 		try {
-			await copyText(`${detail.contentOrigin}/f/${detail.file.id}${suffix}`);
+			await copyText(
+				`${detail.contentOrigin}/${isSite ? 's' : 'f'}/${detail.file.id}${isSite ? '/' : ''}${suffix}`
+			);
 			copied = version === undefined ? 'current' : String(version);
 			window.setTimeout(() => {
 				copied = '';
 			}, 1500);
 		} catch {
 			error = 'Could not copy the link.';
+		}
+	};
+
+	const copyRepublishCommand = async () => {
+		if (!detail) return;
+		try {
+			await copyText(`adrive site put ./dist --id ${detail.file.id}`);
+			copied = 'command';
+			window.setTimeout(() => {
+				copied = '';
+			}, 1500);
+		} catch {
+			error = 'Could not copy the republish command.';
 		}
 	};
 
@@ -266,6 +282,12 @@
 						>
 							{detail.file.public ? 'Public' : 'Private'}
 						</span>
+						{#if detail.file.kind === 'site'}
+							<span
+								class="rounded-full bg-accent-50 px-2 py-0.5 text-xs font-medium text-accent-700"
+								>Site</span
+							>
+						{/if}
 					</div>
 					<p class="mt-2 text-sm text-zinc-500">
 						{formatBytes(detail.file.sizeBytes)} · Version {detail.file.version}
@@ -291,7 +313,7 @@
 						</button>
 						{#if detail.file.public}
 							<a
-								href={`${detail.contentOrigin}/f/${detail.file.id}`}
+								href={`${detail.contentOrigin}/${detail.file.kind === 'site' ? 's' : 'f'}/${detail.file.id}${detail.file.kind === 'site' ? '/' : ''}`}
 								target="_blank"
 								rel="noreferrer"
 								class="rounded-md bg-zinc-950 px-3 py-2 text-sm font-medium text-white transition hover:bg-zinc-800"
@@ -327,7 +349,9 @@
 					<div>
 						<p class="text-sm font-medium text-zinc-900">Visibility</p>
 						<p class="mt-1 text-xs leading-5 text-zinc-500">
-							Public files work for anyone with the content link.
+							{detail.file.kind === 'site'
+								? 'Sites are always public.'
+								: 'Public files work for anyone with the content link.'}
 						</p>
 						<label
 							class="mt-3 inline-flex items-center gap-3 text-sm text-zinc-700"
@@ -335,7 +359,9 @@
 							<input
 								type="checkbox"
 								checked={detail.file.public}
-								disabled={mutating || detail.file.htmlForcedPublic}
+								disabled={mutating ||
+									detail.file.htmlForcedPublic ||
+									detail.file.kind === 'site'}
 								class="size-4 rounded border-zinc-300 accent-accent-600 disabled:opacity-50"
 								onchange={(event) =>
 									void changeVisibility(event.currentTarget.checked)}
@@ -350,26 +376,44 @@
 						{/if}
 					</div>
 					<div>
-						<p class="text-sm font-medium text-zinc-900">New version</p>
-						<p class="mt-1 text-xs leading-5 text-zinc-500">
-							Replaces the current bytes while preserving every prior version.
+						<p class="text-sm font-medium text-zinc-900">
+							{detail.file.kind === 'site' ? 'Republish site' : 'New version'}
 						</p>
-						<label
-							class="mt-3 inline-flex rounded-md border border-zinc-200 px-3 py-2 text-sm font-medium text-zinc-700 transition hover:border-zinc-300"
-						>
-							{uploading ? 'Uploading…' : 'Choose file'}
-							<input
-								type="file"
-								class="sr-only"
-								disabled={uploading}
-								onchange={(event) => {
-									const input = event.currentTarget;
-									const file = input.files?.[0];
-									if (file) void putVersion(file);
-									input.value = '';
-								}}
-							/>
-						</label>
+						{#if detail.file.kind === 'site'}
+							<p class="mt-1 text-xs leading-5 text-zinc-500">
+								Publish a new directory version from the CLI. Only the newest
+								site remains servable.
+							</p>
+							<button
+								type="button"
+								class="mt-3 inline-flex rounded-md border border-zinc-200 px-3 py-2 font-mono text-xs font-medium text-zinc-700 transition hover:border-zinc-300"
+								onclick={() => void copyRepublishCommand()}
+							>
+								{copied === 'command'
+									? 'Copied'
+									: `adrive site put ./dist --id ${detail.file.id}`}
+							</button>
+						{:else}
+							<p class="mt-1 text-xs leading-5 text-zinc-500">
+								Replaces the current bytes while preserving every prior version.
+							</p>
+							<label
+								class="mt-3 inline-flex rounded-md border border-zinc-200 px-3 py-2 text-sm font-medium text-zinc-700 transition hover:border-zinc-300"
+							>
+								{uploading ? 'Uploading…' : 'Choose file'}
+								<input
+									type="file"
+									class="sr-only"
+									disabled={uploading}
+									onchange={(event) => {
+										const input = event.currentTarget;
+										const file = input.files?.[0];
+										if (file) void putVersion(file);
+										input.value = '';
+									}}
+								/>
+							</label>
+						{/if}
 					</div>
 				</div>
 				<div class="mt-6 border-t border-zinc-100 pt-5">
@@ -442,7 +486,9 @@
 			<div class="border-b border-zinc-200 px-5 py-4">
 				<h2 class="text-sm font-semibold text-zinc-900">Version history</h2>
 				<p class="mt-1 text-xs text-zinc-500">
-					Append-only history. Individual versions cannot be deleted.
+					{detail.file.kind === 'site'
+						? 'Audit history. Prior site assets are removed and cannot be served.'
+						: 'Append-only history. Individual versions cannot be deleted.'}
 				</p>
 			</div>
 			<ol class="divide-y divide-zinc-100">
@@ -468,7 +514,7 @@
 								{formatDate(version.createdAt)}
 							</p>
 						</div>
-						{#if !detail.file.deletedAt}
+						{#if !detail.file.deletedAt && (detail.file.kind === 'file' || version.version === detail.file.version)}
 							<div class="flex items-center gap-2">
 								<button
 									type="button"
@@ -479,7 +525,7 @@
 								</button>
 								{#if detail.file.public}
 									<a
-										href={`${detail.contentOrigin}/f/${detail.file.id}?v=${version.version}`}
+										href={`${detail.contentOrigin}/${detail.file.kind === 'site' ? 's' : 'f'}/${detail.file.id}${detail.file.kind === 'site' ? '/' : `?v=${version.version}`}`}
 										target="_blank"
 										rel="noreferrer"
 										class="rounded-md border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-700 hover:border-zinc-300"

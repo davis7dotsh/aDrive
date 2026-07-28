@@ -86,7 +86,7 @@ export interface FilesShape {
 	readonly setVisibility: (
 		id: string,
 		isPublic: boolean
-	) => Effect.Effect<MutationResult, NotFound | StorageError>;
+	) => Effect.Effect<MutationResult, InvalidRequest | NotFound | StorageError>;
 	readonly trash: (
 		id: string
 	) => Effect.Effect<MutationResult, NotFound | StorageError>;
@@ -358,6 +358,7 @@ const makeFiles = Effect.gen(function* () {
 					id,
 					displayName,
 					contentType,
+					kind: 'file',
 					version: 1,
 					sizeBytes: stored.size,
 					public: visibility.public,
@@ -370,6 +371,12 @@ const makeFiles = Effect.gen(function* () {
 			const current = yield* findDashboardFile(input.id);
 			if (current.deletedAt !== null)
 				return yield* new NotFound({ id: input.id });
+			if (current.kind === 'site') {
+				return yield* new InvalidRequest({
+					status: 400,
+					message: 'Republish sites with `adrive site put`'
+				});
+			}
 			const size = yield* Effect.try({
 				try: () =>
 					validateUploadLength(input.contentLength, config.maxUploadBytes),
@@ -458,6 +465,12 @@ const makeFiles = Effect.gen(function* () {
 		}),
 		setVisibility: Effect.fn('Files.setVisibility')(function* (id, isPublic) {
 			const current = yield* findDashboardFile(id);
+			if (current.kind === 'site' && !isPublic) {
+				return yield* new InvalidRequest({
+					status: 400,
+					message: 'Sites are always public'
+				});
+			}
 			const visibility = visibilityForFile(
 				current.displayName,
 				current.htmlForcedPublic ? 'text/html' : current.contentType,
@@ -539,6 +552,7 @@ const makeFiles = Effect.gen(function* () {
 							JOIN file_versions v
 								ON v.file_id = f.id AND v.version = f.current_version
 							WHERE f.id = ${id} AND f.deleted_at IS NULL
+								AND f.is_site = 0
 							LIMIT 1
 						`.pipe(
 							Effect.mapError(
@@ -552,6 +566,7 @@ const makeFiles = Effect.gen(function* () {
 							FROM files f
 							JOIN file_versions v ON v.file_id = f.id
 							WHERE f.id = ${id} AND v.version = ${version} AND f.deleted_at IS NULL
+								AND f.is_site = 0
 							LIMIT 1
 						`.pipe(
 							Effect.mapError(
@@ -566,6 +581,7 @@ const makeFiles = Effect.gen(function* () {
 					id: row.id,
 					displayName: row.display_name,
 					contentType: row.content_type,
+					kind: 'file',
 					version: row.version,
 					sizeBytes: row.size_bytes,
 					public: row.is_public === 1,

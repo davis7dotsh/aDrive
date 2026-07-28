@@ -1,9 +1,61 @@
 import { Schema } from 'effect';
 
+const CONFUSABLE_SEPARATORS =
+	/[\u2044\u2215\u2216\u2572\u29f5\u29f8\u29f9\ufe68\uff0f\uff3c]/u;
+const CONTROL_OR_BIDI =
+	/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/u;
+const WINDOWS_DRIVE = /^[a-zA-Z]:/;
+
+export class InvalidSitePath extends Error {
+	readonly name = 'InvalidSitePath';
+}
+
+export const normalizeSitePath = (value: string) => {
+	if (
+		value.length === 0 ||
+		value.length > 768 ||
+		value.startsWith('/') ||
+		value.startsWith('\\') ||
+		WINDOWS_DRIVE.test(value) ||
+		value.includes('\\') ||
+		CONFUSABLE_SEPARATORS.test(value) ||
+		CONTROL_OR_BIDI.test(value) ||
+		value.normalize('NFKC') !== value
+	) {
+		throw new InvalidSitePath('Site asset path is unsafe');
+	}
+
+	const segments = value.split('/');
+	if (
+		segments.some(
+			(segment) =>
+				segment.length === 0 ||
+				segment.length > 255 ||
+				segment === '.' ||
+				segment === '..'
+		)
+	) {
+		throw new InvalidSitePath('Site asset path is unsafe');
+	}
+
+	return segments.join('/');
+};
+
+export const sitePathCandidates = (value: string) => {
+	if (value === '') return ['index.html'];
+	if (value.endsWith('/')) {
+		const directory = normalizeSitePath(value.slice(0, -1));
+		return [`${directory}/index.html`];
+	}
+	const exact = normalizeSitePath(value);
+	return [exact, `${exact}/index.html`];
+};
+
 export const FileSummarySchema = Schema.Struct({
 	id: Schema.String,
 	displayName: Schema.String,
 	contentType: Schema.String,
+	kind: Schema.Literals(['file', 'site']),
 	version: Schema.Int,
 	sizeBytes: Schema.Int,
 	public: Schema.Boolean,
@@ -27,6 +79,7 @@ export const DashboardFileSchema = Schema.Struct({
 	id: Schema.String,
 	displayName: Schema.String,
 	contentType: Schema.String,
+	kind: Schema.Literals(['file', 'site']),
 	version: Schema.Int,
 	sizeBytes: Schema.Int,
 	public: Schema.Boolean,
@@ -141,6 +194,48 @@ export const UploadResponseSchema = Schema.Struct({
 });
 
 export type UploadResponse = typeof UploadResponseSchema.Type;
+
+export const SiteManifestAssetSchema = Schema.Struct({
+	path: Schema.String,
+	sizeBytes: Schema.Int,
+	contentType: Schema.String
+});
+
+export type SiteManifestAsset = typeof SiteManifestAssetSchema.Type;
+
+export const SiteSessionCreateSchema = Schema.Struct({
+	displayName: Schema.String,
+	fileId: Schema.optionalKey(Schema.String),
+	assets: Schema.Array(SiteManifestAssetSchema)
+});
+
+export type SiteSessionCreate = typeof SiteSessionCreateSchema.Type;
+
+export const SiteSessionResponseSchema = Schema.Struct({
+	sessionId: Schema.String,
+	fileId: Schema.String,
+	version: Schema.Int,
+	expiresAt: Schema.String
+});
+
+export type SiteSessionResponse = typeof SiteSessionResponseSchema.Type;
+
+export const SiteAssetResponseSchema = Schema.Struct({
+	path: Schema.String,
+	sizeBytes: Schema.Int,
+	contentType: Schema.String
+});
+
+export type SiteAssetResponse = typeof SiteAssetResponseSchema.Type;
+
+export const SiteCommitResponseSchema = Schema.Struct({
+	file: FileSummarySchema,
+	url: Schema.String,
+	assetCount: Schema.Int,
+	cleanupPending: Schema.Boolean
+});
+
+export type SiteCommitResponse = typeof SiteCommitResponseSchema.Type;
 
 export const AuthCheckResponseSchema = Schema.Struct({
 	ok: Schema.Literal(true)

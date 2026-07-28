@@ -152,7 +152,9 @@
 
 	const copyLink = async (file: DashboardFile) => {
 		try {
-			await copyText(`${contentOrigin}/f/${file.id}`);
+			await copyText(
+				`${contentOrigin}/${file.kind === 'site' ? 's' : 'f'}/${file.id}${file.kind === 'site' ? '/' : ''}`
+			);
 			copiedId = file.id;
 			window.setTimeout(() => {
 				if (copiedId === file.id) copiedId = '';
@@ -605,6 +607,12 @@
 									<span>{formatBytes(file.sizeBytes)}</span>
 									<span>· v{file.version} ·</span>
 									<span>{formatDate(file.updatedAt)}</span>
+									{#if file.kind === 'site'}
+										<span
+											class="rounded-full bg-accent-50 px-2 py-0.5 text-accent-700"
+											>Site</span
+										>
+									{/if}
 									<span
 										class="rounded-full px-2 py-0.5 {file.public
 											? 'bg-emerald-50 text-emerald-700'
@@ -628,6 +636,15 @@
 									>
 										{copiedId === file.id ? 'Copied' : 'Copy link'}
 									</button>
+									{#if file.public}
+										<a
+											href={`${contentOrigin}/${file.kind === 'site' ? 's' : 'f'}/${file.id}${file.kind === 'site' ? '/' : ''}`}
+											target="_blank"
+											rel="noreferrer"
+											class="rounded-md border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-600"
+											>Open</a
+										>
+									{/if}
 									<button
 										type="button"
 										class="rounded-md px-3 py-1.5 text-xs font-medium text-zinc-500 hover:bg-red-50 hover:text-red-700"

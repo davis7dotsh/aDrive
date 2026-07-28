@@ -23,6 +23,9 @@ export interface BlobsShape {
 		maxBytes: number
 	) => Effect.Effect<string, StorageError>;
 	readonly delete: (key: string) => Effect.Effect<void, StorageError>;
+	readonly deleteMany: (
+		keys: ReadonlyArray<string>
+	) => Effect.Effect<void, StorageError>;
 }
 
 export class Blobs extends Context.Service<Blobs, BlobsShape>()('app/Blobs') {}
@@ -73,6 +76,13 @@ const makeBlobs = Effect.gen(function* () {
 			yield* Effect.tryPromise({
 				try: () => bucket.delete(key),
 				catch: (cause) => new StorageError({ operation: 'delete blob', cause })
+			});
+		}),
+		deleteMany: Effect.fn('Blobs.deleteMany')(function* (keys) {
+			if (keys.length === 0) return;
+			yield* Effect.tryPromise({
+				try: () => bucket.delete([...keys]),
+				catch: (cause) => new StorageError({ operation: 'delete blobs', cause })
 			});
 		})
 	});

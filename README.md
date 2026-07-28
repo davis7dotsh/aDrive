@@ -1,11 +1,12 @@
 # adrive
 
-The first three phases are working: a Cloudflare-backed file spine, responsive
-dashboard, tags, and typo-tolerant keyword search. Uploads stream directly to R2,
-metadata and append-only version history live in D1, and file bytes are served
-from a separate cookie-less content origin. Search combines weighted FTS5 BM25
-results with a filename trigram index, then applies tag filters against canonical
-D1 rows. A minimal `login` / `put` / `get` CLI uses the same API.
+The first four phases are working: a Cloudflare-backed file spine, responsive
+dashboard, tags, typo-tolerant keyword search, and static-site publishing.
+Uploads stream directly to R2, metadata and append-only version history live in
+D1, and file/site bytes are served from a separate cookie-less content origin.
+Search combines weighted FTS5 BM25 results with a filename trigram index, then
+applies tag filters against canonical D1 rows. The CLI supports file transfer and
+safe, staged directory publishing.
 
 ## Local setup
 
@@ -40,12 +41,20 @@ pnpm adrive login http://siva.otter-hawksbill.ts.net:5173
 pnpm adrive put ./path/to/file.pdf
 pnpm adrive put ./path/to/private.bin --private
 pnpm adrive get <file-uuid> --output ./downloaded-file
+pnpm adrive site put ./dist
+pnpm adrive site put ./dist --id <existing-site-uuid>
 ```
 
 `login` prompts for the key without echoing it and saves credentials at mode
 `0600` under `$XDG_CONFIG_HOME/adrive/config.json` (or
 `~/.config/adrive/config.json`). Uploads default public; HTML is always made
 public. Public URLs come back on their own line.
+
+`site put` walks regular files without following symlinks, declares the complete
+manifest, streams assets with four uploads at a time, and atomically publishes
+only after every asset is present. A republish records a new audit version,
+switches the stable `/s/<uuid>/` URL to it, and removes the prior R2 asset set.
+Site versions are intentionally not addressable with `?v=`.
 
 ## Checks
 

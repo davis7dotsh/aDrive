@@ -19,6 +19,7 @@ describe('host gate', () => {
 
 	it('classifies only file-serving paths as content routes', () => {
 		expect(classifyRoute('/f/3f9f')).toBe('content');
+		expect(classifyRoute('/s/3f9f/assets/app.js')).toBe('content');
 		expect(classifyRoute('/api/files')).toBe('dashboard');
 		expect(classifyRoute('/')).toBe('dashboard');
 	});

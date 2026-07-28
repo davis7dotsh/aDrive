@@ -25,7 +25,12 @@ export const normalizeOrigins = (config: OriginConfig) => {
 };
 
 export const classifyRoute = (pathname: string) =>
-	pathname === '/f' || pathname.startsWith('/f/') ? 'content' : 'dashboard';
+	pathname === '/f' ||
+	pathname.startsWith('/f/') ||
+	pathname === '/s' ||
+	pathname.startsWith('/s/')
+		? 'content'
+		: 'dashboard';
 
 export const assertHostRoute = (requestUrl: URL, config: OriginConfig) => {
 	const origins = normalizeOrigins(config);
