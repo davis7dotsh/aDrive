@@ -8,6 +8,9 @@ import { FilesLive } from './services/files';
 import { SearchLive } from './services/search';
 import { SitesLive } from './services/sites';
 import { TagsLive } from './services/tags';
+import { SemanticBindingsLive } from './services/semantic';
+import { IndexingLive } from './services/indexing';
+import { LifecycleLive } from './services/lifecycle';
 
 const SqlLive = Layer.unwrap(Effect.map(Db, (db) => D1.layer({ db })));
 
@@ -20,13 +23,32 @@ export const requestLayer = (env: Env) => {
 	const sql = SqlLive.pipe(Layer.provide(bindings));
 	const blobs = BlobsLive.pipe(Layer.provide(bindings));
 	const infrastructure = Layer.mergeAll(bindings, sql, blobs);
+	const semantic = SemanticBindingsLive(env);
 	const auth = AuthLive.pipe(Layer.provide(infrastructure));
 	const tags = TagsLive.pipe(Layer.provide(infrastructure));
-	const search = SearchLive.pipe(Layer.provide(infrastructure));
+	const search = SearchLive.pipe(
+		Layer.provide(Layer.merge(infrastructure, semantic))
+	);
 	const sites = SitesLive.pipe(Layer.provide(infrastructure));
 	const files = FilesLive.pipe(
 		Layer.provide(Layer.mergeAll(infrastructure, tags))
 	);
+	const indexing = IndexingLive.pipe(
+		Layer.provide(Layer.mergeAll(infrastructure, semantic))
+	);
+	const lifecycle = LifecycleLive.pipe(
+		Layer.provide(Layer.mergeAll(infrastructure, auth, sites, files, indexing))
+	);
 
-	return Layer.mergeAll(infrastructure, auth, tags, search, sites, files);
+	return Layer.mergeAll(
+		infrastructure,
+		semantic,
+		auth,
+		tags,
+		search,
+		sites,
+		files,
+		indexing,
+		lifecycle
+	);
 };

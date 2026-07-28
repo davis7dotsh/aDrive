@@ -7,7 +7,14 @@
 	"vars": {
 		"DASHBOARD_ORIGIN": "http://siva.otter-hawksbill.ts.net:5173",
 		"CONTENT_ORIGIN": "http://siva.otter-hawksbill.ts.net:5174",
-		"MAX_UPLOAD_BYTES": "99614720"
+		"MAX_UPLOAD_BYTES": "99614720",
+		"SEMANTIC_SEARCH": "auto",
+		"EMBEDDING_MODEL": "@cf/baai/bge-small-en-v1.5",
+		"EMBEDDING_POOLING": "cls",
+		"EMBEDDING_DIMENSIONS": "384"
+	},
+	"triggers": {
+		"crons": ["*/5 * * * *"]
 	},
 	"d1_databases": [
 		{
@@ -33,4 +40,9 @@
 			"head_sampling_rate": 0.01
 		}
 	}
+	// Semantic search is deliberately optional. To enable it, create the
+	// 384-dimension cosine index and its metadata indexes, then add:
+	// "ai": { "binding": "AI" },
+	// "vectorize": [{ "binding": "VECTORIZE", "index_name": "adrive" }]
+	// Run `pnpm types:worker` after changing bindings. See README.md.
 }

@@ -1,11 +1,12 @@
 import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
-import { runEdge } from '$lib/server/edge';
+import { runEdge, runEdgeWithEvent, runWorkerProgram } from '$lib/server/edge';
 import { AppConfig } from '$lib/server/config';
 import { validateExpiration } from '$lib/server/auth-policy';
 import { InvalidRequest } from '$lib/server/errors';
 import { Auth, authorizeRequest } from '$lib/server/services/auth';
 import { Files } from '$lib/server/services/files';
+import { Indexing } from '$lib/server/services/indexing';
 import { Tags } from '$lib/server/services/tags';
 
 const decodeName = (value: string | null) => {
@@ -65,6 +66,7 @@ export const GET: RequestHandler = ({ request, url }) =>
 			const auth = yield* Auth;
 			const files = yield* Files;
 			const tags = yield* Tags;
+			const indexing = yield* Indexing;
 			const config = yield* AppConfig;
 			yield* authorizeRequest(auth, request, url);
 			const trashed = url.searchParams.get('trashed') === 'true';
@@ -72,13 +74,16 @@ export const GET: RequestHandler = ({ request, url }) =>
 				files: yield* files.list(trashed),
 				tags: yield* tags.list,
 				contentOrigin: config.contentOrigin,
-				maxUploadBytes: config.maxUploadBytes
+				maxUploadBytes: config.maxUploadBytes,
+				semantic: yield* indexing.status
 			});
 		})
 	);
 
-export const PUT: RequestHandler = ({ request, url }) =>
-	runEdge(
+export const PUT: RequestHandler = async (event) => {
+	const { request, url } = event;
+	const output = await runEdgeWithEvent(
+		event,
 		Effect.gen(function* () {
 			const auth = yield* Auth;
 			const files = yield* Files;
@@ -133,13 +138,29 @@ export const PUT: RequestHandler = ({ request, url }) =>
 								})
 				})
 			});
-			return Response.json(
-				{
-					file: result.file,
-					url: `${config.contentOrigin}/f/${result.file.id}`,
-					forcedPublic: result.forcedPublic
-				},
-				{ status: 201 }
-			);
+			return {
+				fileId: result.file.id,
+				response: Response.json(
+					{
+						file: result.file,
+						url: `${config.contentOrigin}/f/${result.file.id}`,
+						forcedPublic: result.forcedPublic
+					},
+					{ status: 201 }
+				)
+			};
 		})
 	);
+	if (event.platform) {
+		event.platform.ctx.waitUntil(
+			runWorkerProgram(
+				event.platform.env,
+				Effect.gen(function* () {
+					const indexing = yield* Indexing;
+					yield* indexing.process(output.fileId);
+				})
+			)
+		);
+	}
+	return output.response;
+};

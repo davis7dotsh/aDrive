@@ -16,6 +16,16 @@ export const DashboardFileRow = Schema.Struct({
 	expires_at: Schema.NullOr(Schema.String),
 	download_count: Schema.Int,
 	last_download_at: Schema.NullOr(Schema.String),
+	index_state: Schema.Literals([
+		'pending',
+		'running',
+		'ready',
+		'failed',
+		'disabled'
+	]),
+	indexed_version: Schema.NullOr(Schema.Int),
+	index_attempts: Schema.Int,
+	index_error: Schema.NullOr(Schema.String),
 	tags_json: Schema.String
 });
 
@@ -38,6 +48,10 @@ export const dashboardFileColumns = `
 	f.expires_at,
 	f.download_count,
 	f.last_download_at,
+	f.index_state,
+	f.indexed_version,
+	f.index_attempts,
+	f.index_error,
 	COALESCE((
 		SELECT json_group_array(json_object(
 			'id', t.id,
@@ -89,5 +103,9 @@ export const toDashboardFile = (
 	expiresAt: row.expires_at,
 	downloadCount: row.download_count,
 	lastDownloadAt: row.last_download_at,
+	indexState: row.index_state,
+	indexedVersion: row.indexed_version,
+	indexAttempts: row.index_attempts,
+	indexError: row.index_error,
 	tags: decodeTags(row.tags_json)
 });

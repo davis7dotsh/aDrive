@@ -6,11 +6,26 @@ export interface AppConfigShape {
 	readonly contentOrigin: string;
 	readonly maxUploadBytes: number;
 	readonly passcode: string;
+	readonly semanticSearch: 'off' | 'auto' | 'required';
+	readonly embeddingModel: '@cf/baai/bge-small-en-v1.5';
+	readonly embeddingPooling: 'cls';
+	readonly embeddingDimensions: 384;
 }
 
 export class AppConfig extends Context.Service<AppConfig, AppConfigShape>()(
 	'app/AppConfig'
 ) {}
+
+const semanticMode = (value: string) => {
+	switch (value) {
+		case 'off':
+		case 'auto':
+		case 'required':
+			return value;
+		default:
+			throw new Error('SEMANTIC_SEARCH must be off, auto, or required');
+	}
+};
 
 export const configFromEnv = (env: Env) => {
 	const origins = normalizeOrigins({
@@ -24,7 +39,25 @@ export const configFromEnv = (env: Env) => {
 	if (typeof env.PASSCODE !== 'string' || env.PASSCODE.length < 12) {
 		throw new Error('PASSCODE must contain at least 12 characters');
 	}
-	return { ...origins, maxUploadBytes, passcode: env.PASSCODE };
+	const semanticSearch = semanticMode(String(env.SEMANTIC_SEARCH));
+	if (env.EMBEDDING_MODEL !== '@cf/baai/bge-small-en-v1.5') {
+		throw new Error('EMBEDDING_MODEL must stay pinned to bge-small-en-v1.5');
+	}
+	if (env.EMBEDDING_POOLING !== 'cls') {
+		throw new Error('EMBEDDING_POOLING must stay pinned to cls');
+	}
+	if (env.EMBEDDING_DIMENSIONS !== '384') {
+		throw new Error('EMBEDDING_DIMENSIONS must stay pinned to 384');
+	}
+	return {
+		...origins,
+		maxUploadBytes,
+		passcode: env.PASSCODE,
+		semanticSearch,
+		embeddingModel: '@cf/baai/bge-small-en-v1.5',
+		embeddingPooling: 'cls',
+		embeddingDimensions: 384
+	} satisfies AppConfigShape;
 };
 
 export const ConfigLive = (env: Env) =>

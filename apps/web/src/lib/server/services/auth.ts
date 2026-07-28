@@ -99,6 +99,7 @@ export interface AuthShape {
 		DevicePollResult,
 		InvalidRequest | Unauthorized | StorageError
 	>;
+	readonly sweepExpired: (limit: number) => Effect.Effect<number, StorageError>;
 }
 
 export class Auth extends Context.Service<Auth, AuthShape>()('app/Auth') {}
@@ -586,6 +587,50 @@ const makeAuth = Effect.gen(function* () {
 				});
 			}
 			return { status: 'complete' as const, apiKey: generated.token };
+		}),
+		sweepExpired: Effect.fn('Auth.sweepExpired')(function* (limit) {
+			const bounded = Math.max(1, Math.min(limit, 100));
+			const now = new Date().toISOString();
+			const cutoff = new Date(
+				new Date(now).getTime() - 24 * 60 * 60 * 1_000
+			).toISOString();
+			const results = yield* Effect.tryPromise({
+				try: () =>
+					db.batch([
+						db
+							.prepare(
+								`DELETE FROM dashboard_sessions
+								WHERE token_hash IN (
+									SELECT token_hash FROM dashboard_sessions
+									WHERE expires_at <= ?
+									ORDER BY expires_at
+									LIMIT ?
+								)`
+							)
+							.bind(now, bounded),
+						db
+							.prepare(
+								`DELETE FROM device_codes
+								WHERE device_code_hash IN (
+									SELECT device_code_hash FROM device_codes
+									WHERE expires_at <= ?
+										OR (status = 'consumed' AND consumed_at <= ?)
+									ORDER BY expires_at
+									LIMIT ?
+								)`
+							)
+							.bind(now, cutoff, bounded)
+					]),
+				catch: (cause) =>
+					new StorageError({
+						operation: 'sweep expired authentication state',
+						cause
+					})
+			});
+			return results.reduce(
+				(count, result) => count + (result.meta.changes ?? 0),
+				0
+			);
 		})
 	});
 });

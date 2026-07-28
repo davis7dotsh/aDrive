@@ -17,6 +17,9 @@ import type { Files } from './services/files';
 import type { Search } from './services/search';
 import type { Sites } from './services/sites';
 import type { Tags } from './services/tags';
+import type { Embedder, VectorIndex } from './services/semantic';
+import type { Indexing } from './services/indexing';
+import type { Lifecycle } from './services/lifecycle';
 
 type AppServices =
 	| SqlClient.SqlClient
@@ -26,7 +29,11 @@ type AppServices =
 	| Files
 	| Search
 	| Sites
-	| Tags;
+	| Tags
+	| Embedder
+	| VectorIndex
+	| Indexing
+	| Lifecycle;
 
 const throwCauseAsHttp = (cause: Cause.Cause<unknown>): never => {
 	for (const reason of cause.reasons) {
@@ -105,3 +112,14 @@ export const runEdge = <A, E>(program: Effect.Effect<A, E, AppServices>) => {
 
 export const runEdgeWithEvent = runWithEvent;
 export const handleCause = throwCauseAsHttp;
+
+export const runWorkerProgram = async <A, E>(
+	env: Env,
+	program: Effect.Effect<A, E, AppServices>
+) => {
+	const exit = await Effect.runPromiseExit(
+		program.pipe(Effect.provide(requestLayer(env)))
+	);
+	if (Exit.isSuccess(exit)) return exit.value;
+	throw new Error(Cause.pretty(exit.cause));
+};

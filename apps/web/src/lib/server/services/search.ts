@@ -13,6 +13,7 @@ import {
 	sanitizeTrigramQuery
 } from '../search-ranking';
 import { Db } from './bindings';
+import { Embedder, VectorIndex } from './semantic';
 
 interface RankedRow {
 	readonly file_id: string;
@@ -36,6 +37,8 @@ export class Search extends Context.Service<Search, SearchShape>()(
 
 const makeSearch = Effect.gen(function* () {
 	const db = yield* Db;
+	const embedder = yield* Embedder;
+	const vectorIndex = yield* VectorIndex;
 
 	const runRanked = (
 		statement: D1PreparedStatement
@@ -161,6 +164,20 @@ const makeSearch = Effect.gen(function* () {
 							.bind(trigramMatch)
 					)
 				: [];
+			const semantic = yield* embedder.query(trimmedQuery).pipe(
+				Effect.flatMap((embedding) => vectorIndex.search(embedding)),
+				Effect.catch((failure) =>
+					Effect.sync(() => {
+						console.error(
+							JSON.stringify({
+								message: 'semantic search degraded to keyword search',
+								operation: failure.operation
+							})
+						);
+						return [];
+					})
+				)
+			);
 			const fused = reciprocalRankFusion({
 				keyword: {
 					results: keyword.map((row) => ({ fileId: row.file_id })),
@@ -169,6 +186,10 @@ const makeSearch = Effect.gen(function* () {
 				trigram: {
 					results: trigram.map((row) => ({ fileId: row.file_id })),
 					weight: 0.5
+				},
+				semantic: {
+					results: semantic,
+					weight: 1
 				}
 			});
 			const hydrated = yield* hydrate(

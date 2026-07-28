@@ -15,7 +15,7 @@ import {
 	visibilityForFile
 } from '../file-policy';
 import { fileIndexStatements } from '../search-index';
-import { isSearchableText, searchTextLimit } from '../search-text';
+import { retryAt, safeIndexError } from '../semantic-policy';
 import { validateUploadLength } from '../upload-stream';
 import { Blobs } from './blobs';
 import { Db } from './bindings';
@@ -93,12 +93,13 @@ export interface FilesShape {
 	) => Effect.Effect<MutationResult, NotFound | StorageError>;
 	readonly restore: (
 		id: string
-	) => Effect.Effect<MutationResult, NotFound | StorageError>;
+	) => Effect.Effect<MutationResult, InvalidRequest | NotFound | StorageError>;
 	readonly setExpiration: (
 		id: string,
 		expiresAt: string | null
 	) => Effect.Effect<MutationResult, InvalidRequest | NotFound | StorageError>;
 	readonly recordDownload: (id: string) => Effect.Effect<void, StorageError>;
+	readonly sweepPurges: (limit: number) => Effect.Effect<number, StorageError>;
 	readonly findContent: (
 		id: string,
 		version?: number
@@ -135,30 +136,6 @@ const makeFiles = Effect.gen(function* () {
 	const config = yield* AppConfig;
 	const tags = yield* Tags;
 
-	const readStoredSearchText = Effect.fn('Files.readStoredSearchText')(
-		function* (name: string, contentType: string, r2Key: string) {
-			if (!isSearchableText(name, contentType)) return null;
-			return yield* blobs.readTextPrefix(r2Key, searchTextLimit).pipe(
-				Effect.catch((failure) =>
-					blobs.delete(r2Key).pipe(
-						Effect.catchCause((cleanupCause) =>
-							Effect.sync(() => {
-								console.error(
-									JSON.stringify({
-										message: 'search text compensation failed',
-										r2Key,
-										cause: String(cleanupCause)
-									})
-								);
-							})
-						),
-						Effect.andThen(Effect.fail(failure))
-					)
-				)
-			);
-		}
-	);
-
 	const findDashboardFile = Effect.fn('Files.findDashboardFile')(function* (
 		id: string
 	) {
@@ -185,8 +162,7 @@ const makeFiles = Effect.gen(function* () {
 		current: DashboardFile,
 		r2Key: string,
 		size: number,
-		contentType: string,
-		textContent: string | null
+		contentType: string
 	) {
 		const version = current.version + 1;
 		const updatedAt = new Date().toISOString();
@@ -200,7 +176,9 @@ const makeFiles = Effect.gen(function* () {
 				.prepare(
 					`UPDATE files
 						SET current_version = ?, size_bytes = ?, content_type = ?,
-							public = ?, updated_at = ?
+							public = ?, updated_at = ?, index_state = 'pending',
+							index_cursor = 0, index_attempts = 0, index_error = NULL,
+							index_next_run_at = NULL
 						WHERE id = ? AND current_version = ? AND deleted_at IS NULL`
 				)
 				.bind(
@@ -231,7 +209,7 @@ const makeFiles = Effect.gen(function* () {
 					size,
 					contentType,
 					updatedAt,
-					textContent,
+					null,
 					current.id,
 					version
 				),
@@ -256,10 +234,13 @@ const makeFiles = Effect.gen(function* () {
 				public: visibility.public,
 				htmlForcedPublic:
 					current.htmlForcedPublic || contentType === 'text/html',
-				updatedAt
+				updatedAt,
+				indexState: 'pending',
+				indexAttempts: 0,
+				indexError: null
 			},
 			forcedPublic: visibility.forcedPublic
-		};
+		} satisfies MutationResult;
 	});
 
 	return Files.of({
@@ -296,19 +277,13 @@ const makeFiles = Effect.gen(function* () {
 			const r2Key = `v/${id}/${crypto.randomUUID()}`;
 			const createdAt = new Date().toISOString();
 			const stored = yield* blobs.put(r2Key, input.body, size, contentType);
-			const textContent = yield* readStoredSearchText(
-				displayName,
-				contentType,
-				r2Key
-			);
-
 			const statements = [
 				db
 					.prepare(
 						`INSERT INTO files (
 							id, display_name, content_type, kind, current_version, size_bytes,
 							public, is_site, created_at, updated_at, expires_at, index_state
-						) VALUES (?, ?, ?, 'file', 1, ?, ?, 0, ?, ?, ?, 'disabled')`
+						) VALUES (?, ?, ?, 'file', 1, ?, ?, 0, ?, ?, ?, 'pending')`
 					)
 					.bind(
 						id,
@@ -327,7 +302,7 @@ const makeFiles = Effect.gen(function* () {
 							text_content
 						) VALUES (?, 1, ?, ?, NULL, ?, ?, ?)`
 					)
-					.bind(id, r2Key, stored.size, contentType, createdAt, textContent),
+					.bind(id, r2Key, stored.size, contentType, createdAt, null),
 				...resolvedTags.map((tag) =>
 					db
 						.prepare('INSERT INTO file_tags (file_id, tag_id) VALUES (?, ?)')
@@ -372,7 +347,11 @@ const makeFiles = Effect.gen(function* () {
 					createdAt,
 					expiresAt: input.expiresAt,
 					downloadCount: 0,
-					lastDownloadAt: null
+					lastDownloadAt: null,
+					indexState: 'pending',
+					indexedVersion: null,
+					indexAttempts: 0,
+					indexError: null
 				},
 				forcedPublic: visibility.forcedPublic
 			};
@@ -404,17 +383,11 @@ const makeFiles = Effect.gen(function* () {
 			);
 			const r2Key = `v/${current.id}/${crypto.randomUUID()}`;
 			const stored = yield* blobs.put(r2Key, input.body, size, contentType);
-			const textContent = yield* readStoredSearchText(
-				current.displayName,
-				contentType,
-				r2Key
-			);
 			const commit = commitStoredVersion(
 				current,
 				r2Key,
 				stored.size,
-				contentType,
-				textContent
+				contentType
 			);
 			return yield* commit.pipe(
 				Effect.catch((failure) =>
@@ -512,16 +485,22 @@ const makeFiles = Effect.gen(function* () {
 		trash: Effect.fn('Files.trash')(function* (id) {
 			const current = yield* findDashboardFile(id);
 			const { deletedAt, purgeAt } = trashWindow(current.deletedAt, new Date());
-			yield* sql`
-				UPDATE files
-				SET deleted_at = ${deletedAt}, purge_at = ${purgeAt}, purge_state = 'none',
-					updated_at = ${deletedAt}
-				WHERE id = ${id}
-			`.pipe(
-				Effect.mapError(
-					(cause) => new StorageError({ operation: 'trash file', cause })
-				)
-			);
+			const result = yield* Effect.tryPromise({
+				try: () =>
+					db
+						.prepare(
+							`UPDATE files
+							SET deleted_at = ?, purge_at = ?, purge_state = 'none',
+								purge_error = NULL, purge_next_run_at = NULL, updated_at = ?
+							WHERE id = ? AND purge_state <> 'pending'`
+						)
+						.bind(deletedAt, purgeAt, deletedAt, id)
+						.run(),
+				catch: (cause) => new StorageError({ operation: 'trash file', cause })
+			});
+			if (result.meta.changes !== 1) {
+				return yield* new NotFound({ id });
+			}
 			return {
 				file: { ...current, deletedAt, updatedAt: deletedAt },
 				forcedPublic: false
@@ -530,16 +509,26 @@ const makeFiles = Effect.gen(function* () {
 		restore: Effect.fn('Files.restore')(function* (id) {
 			const current = yield* findDashboardFile(id);
 			const updatedAt = new Date().toISOString();
-			yield* sql`
-				UPDATE files
-				SET deleted_at = NULL, purge_at = NULL, purge_state = 'none',
-					updated_at = ${updatedAt}
-				WHERE id = ${id}
-			`.pipe(
-				Effect.mapError(
-					(cause) => new StorageError({ operation: 'restore file', cause })
-				)
-			);
+			const result = yield* Effect.tryPromise({
+				try: () =>
+					db
+						.prepare(
+							`UPDATE files
+							SET deleted_at = NULL, purge_at = NULL, purge_state = 'none',
+								purge_error = NULL, purge_next_run_at = NULL,
+								updated_at = ?
+							WHERE id = ? AND purge_state <> 'pending'`
+						)
+						.bind(updatedAt, id)
+						.run(),
+				catch: (cause) => new StorageError({ operation: 'restore file', cause })
+			});
+			if (result.meta.changes !== 1) {
+				return yield* new InvalidRequest({
+					status: 409,
+					message: 'This file is already being purged'
+				});
+			}
 			return {
 				file: { ...current, deletedAt: null, updatedAt },
 				forcedPublic: false
@@ -575,6 +564,181 @@ const makeFiles = Effect.gen(function* () {
 						new StorageError({ operation: 'record file download', cause })
 				)
 			);
+		}),
+		sweepPurges: Effect.fn('Files.sweepPurges')(function* (limit) {
+			const bounded = Math.max(1, Math.min(limit, 10));
+			const now = new Date().toISOString();
+			const due = yield* Effect.tryPromise({
+				try: async () => {
+					const result = await db
+						.prepare(
+							`SELECT id
+							FROM files
+							WHERE (
+								(
+									(expires_at IS NOT NULL AND expires_at <= ?)
+									OR (deleted_at IS NOT NULL AND purge_at IS NOT NULL AND purge_at <= ?)
+								)
+								AND purge_state IN ('none', 'failed')
+								AND (purge_next_run_at IS NULL OR purge_next_run_at <= ?)
+							) OR (
+								purge_state = 'pending'
+								AND (purge_next_run_at IS NULL OR purge_next_run_at <= ?)
+							)
+							ORDER BY COALESCE(purge_at, expires_at), id
+							LIMIT ?`
+						)
+						.bind(now, now, now, now, bounded)
+						.all<{ id: string }>();
+					if (!result.success)
+						throw new Error(result.error ?? 'Purge listing failed');
+					return result.results;
+				},
+				catch: (cause) =>
+					new StorageError({ operation: 'list files due for purge', cause })
+			});
+
+			for (const row of due) {
+				const claimed = yield* Effect.tryPromise({
+					try: () =>
+						db
+							.prepare(
+								`UPDATE files
+								SET purge_state = 'pending',
+									deleted_at = COALESCE(deleted_at, ?),
+									purge_at = COALESCE(purge_at, ?),
+									purge_attempts = purge_attempts + 1,
+									purge_error = NULL, purge_next_run_at = ?
+								WHERE id = ? AND (
+									(
+										purge_state IN ('none', 'failed')
+										AND (
+											(expires_at IS NOT NULL AND expires_at <= ?)
+											OR (deleted_at IS NOT NULL AND purge_at IS NOT NULL AND purge_at <= ?)
+										)
+									)
+									OR (
+										purge_state = 'pending'
+										AND (purge_next_run_at IS NULL OR purge_next_run_at <= ?)
+									)
+								)`
+							)
+							.bind(
+								now,
+								now,
+								new Date(Date.now() + 5 * 60 * 1_000).toISOString(),
+								row.id,
+								now,
+								now,
+								now
+							)
+							.run(),
+					catch: (cause) =>
+						new StorageError({ operation: 'claim file purge', cause })
+				});
+				if (claimed.meta.changes !== 1) continue;
+
+				const keys = yield* Effect.tryPromise({
+					try: async () => {
+						const [versions, assets] = await Promise.all([
+							db
+								.prepare(
+									'SELECT r2_key FROM file_versions WHERE file_id = ? AND r2_key NOT LIKE ?'
+								)
+								.bind(row.id, 'site-version/%')
+								.all<{ r2_key: string }>(),
+							db
+								.prepare('SELECT r2_key FROM site_assets WHERE file_id = ?')
+								.bind(row.id)
+								.all<{ r2_key: string }>()
+						]);
+						if (!versions.success || !assets.success) {
+							throw new Error(
+								versions.error ?? assets.error ?? 'Purge key listing failed'
+							);
+						}
+						return [
+							...versions.results.map((item) => item.r2_key),
+							...assets.results.map((item) => item.r2_key)
+						];
+					},
+					catch: (cause) =>
+						new StorageError({ operation: 'list file purge keys', cause })
+				});
+
+				const deleted = yield* blobs.deleteMany(keys).pipe(
+					Effect.as(true),
+					Effect.catch((failure) =>
+						Effect.tryPromise({
+							try: async () => {
+								const attempts =
+									(
+										await db
+											.prepare('SELECT purge_attempts FROM files WHERE id = ?')
+											.bind(row.id)
+											.first<{ purge_attempts: number }>()
+									)?.purge_attempts ?? 1;
+								await db
+									.prepare(
+										`UPDATE files
+										SET purge_state = 'failed', purge_error = ?,
+											purge_next_run_at = ?
+										WHERE id = ? AND purge_state = 'pending'`
+									)
+									.bind(
+										safeIndexError(failure.cause),
+										retryAt(attempts),
+										row.id
+									)
+									.run();
+							},
+							catch: (cause) =>
+								new StorageError({
+									operation: 'record file purge failure',
+									cause
+								})
+						}).pipe(Effect.as(false))
+					)
+				);
+				if (!deleted) continue;
+
+				yield* Effect.tryPromise({
+					try: async () => {
+						const results = await db.batch([
+							db
+								.prepare(
+									`INSERT INTO pending_vector_deletes (vector_id, queued_at)
+									SELECT vector_id, ? FROM file_chunks WHERE file_id = ?
+									ON CONFLICT(vector_id) DO NOTHING`
+								)
+								.bind(now, row.id),
+							db
+								.prepare(
+									`UPDATE files
+									SET purge_state = 'done', purge_error = NULL,
+										purge_next_run_at = NULL
+									WHERE id = ? AND purge_state = 'pending'`
+								)
+								.bind(row.id),
+							db
+								.prepare(
+									`DELETE FROM files
+									WHERE id = ? AND purge_state = 'done'`
+								)
+								.bind(row.id)
+						]);
+						if (
+							results[1]?.meta.changes !== 1 ||
+							results[2]?.meta.changes !== 1
+						) {
+							throw new Error('File purge state changed before completion');
+						}
+					},
+					catch: (cause) =>
+						new StorageError({ operation: 'finish file purge', cause })
+				});
+			}
+			return due.length;
 		}),
 		findContent: Effect.fn('Files.findContent')(function* (id, version) {
 			if (
@@ -634,7 +798,11 @@ const makeFiles = Effect.gen(function* () {
 					createdAt: row.created_at,
 					expiresAt: null,
 					downloadCount: 0,
-					lastDownloadAt: null
+					lastDownloadAt: null,
+					indexState: 'disabled',
+					indexedVersion: null,
+					indexAttempts: 0,
+					indexError: null
 				},
 				r2Key: row.r2_key
 			};

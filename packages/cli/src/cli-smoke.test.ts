@@ -22,7 +22,11 @@ const file = {
 	createdAt: '2026-07-27T00:00:00.000Z',
 	expiresAt: null,
 	downloadCount: 0,
-	lastDownloadAt: null
+	lastDownloadAt: null,
+	indexState: 'disabled',
+	indexedVersion: null,
+	indexAttempts: 0,
+	indexError: null
 };
 
 beforeAll(async () => {

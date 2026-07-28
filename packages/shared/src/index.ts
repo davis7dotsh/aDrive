@@ -62,7 +62,17 @@ export const FileSummarySchema = Schema.Struct({
 	createdAt: Schema.String,
 	expiresAt: Schema.NullOr(Schema.String),
 	downloadCount: Schema.Int,
-	lastDownloadAt: Schema.NullOr(Schema.String)
+	lastDownloadAt: Schema.NullOr(Schema.String),
+	indexState: Schema.Literals([
+		'pending',
+		'running',
+		'ready',
+		'failed',
+		'disabled'
+	]),
+	indexedVersion: Schema.NullOr(Schema.Int),
+	indexAttempts: Schema.Int,
+	indexError: Schema.NullOr(Schema.String)
 });
 
 export type FileSummary = typeof FileSummarySchema.Type;
@@ -93,6 +103,16 @@ export const DashboardFileSchema = Schema.Struct({
 	expiresAt: Schema.NullOr(Schema.String),
 	downloadCount: Schema.Int,
 	lastDownloadAt: Schema.NullOr(Schema.String),
+	indexState: Schema.Literals([
+		'pending',
+		'running',
+		'ready',
+		'failed',
+		'disabled'
+	]),
+	indexedVersion: Schema.NullOr(Schema.Int),
+	indexAttempts: Schema.Int,
+	indexError: Schema.NullOr(Schema.String),
 	tags: Schema.Array(TagSchema)
 });
 
@@ -118,7 +138,14 @@ export const FileListResponseSchema = Schema.Struct({
 	files: Schema.Array(DashboardFileSchema),
 	tags: Schema.Array(TagSchema),
 	contentOrigin: Schema.String,
-	maxUploadBytes: Schema.Int
+	maxUploadBytes: Schema.Int,
+	semantic: Schema.Struct({
+		enabled: Schema.Boolean,
+		indexedChunks: Schema.Int,
+		dimensions: Schema.Int,
+		model: Schema.String,
+		costNotice: Schema.String
+	})
 });
 
 export type FileListResponse = typeof FileListResponseSchema.Type;
@@ -128,7 +155,8 @@ export const FileDetailResponseSchema = Schema.Struct({
 	versions: Schema.Array(FileVersionSchema),
 	availableTags: Schema.Array(TagSchema),
 	contentOrigin: Schema.String,
-	maxUploadBytes: Schema.Int
+	maxUploadBytes: Schema.Int,
+	semanticEnabled: Schema.Boolean
 });
 
 export type FileDetailResponse = typeof FileDetailResponseSchema.Type;
@@ -147,6 +175,9 @@ export const FileMutationSchema = Schema.Union([
 	Schema.Struct({
 		action: Schema.Literal('expiration'),
 		expiresAt: Schema.NullOr(Schema.String)
+	}),
+	Schema.Struct({
+		action: Schema.Literal('reindex')
 	})
 ]);
 

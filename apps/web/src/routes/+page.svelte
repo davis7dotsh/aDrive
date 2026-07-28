@@ -36,6 +36,7 @@
 	let tags = $state<ReadonlyArray<Tag>>([]);
 	let contentOrigin = $state('');
 	let maxUploadBytes = $state(0);
+	let semantic = $state<FileListPayload['semantic'] | null>(null);
 	let refresh = $state(0);
 	let loading = $state(false);
 	let loadError = $state('');
@@ -109,6 +110,7 @@
 					tags = result.tags;
 					contentOrigin = result.contentOrigin;
 					maxUploadBytes = result.maxUploadBytes;
+					semantic = result.semantic;
 					uploadTagIds = uploadTagIds.filter((id) =>
 						result.tags.some((tag) => tag.id === id)
 					);
@@ -517,6 +519,25 @@
 							Tags use OR: a file matching any selected tag is included.
 						</p>
 					{/if}
+				{/if}
+				{#if semantic}
+					<div class="mt-4 border-t border-zinc-100 pt-4">
+						<div class="flex flex-wrap items-center justify-between gap-2">
+							<p class="text-xs font-medium text-zinc-700">
+								Semantic search {semantic.enabled ? 'enabled' : 'off'}
+							</p>
+							<p class="text-xs text-zinc-400">
+								{semantic.indexedChunks} indexed
+								{semantic.indexedChunks === 1 ? 'chunk' : 'chunks'} ·
+								{semantic.dimensions} dimensions
+							</p>
+						</div>
+						<p class="mt-1 text-xs leading-5 text-zinc-500">
+							{semantic.enabled
+								? semantic.costNotice
+								: 'Name, tag, typo-tolerant, and extracted-text search remain fully available without AI bindings.'}
+						</p>
+					</div>
 				{/if}
 			</section>
 

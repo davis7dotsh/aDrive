@@ -128,6 +128,27 @@
 		}
 	};
 
+	const reindex = async () => {
+		if (!detail || mutating) return;
+		mutating = true;
+		error = '';
+		message = '';
+		try {
+			const result = await mutateFile(session.token, detail.file.id, {
+				action: 'reindex'
+			});
+			detail = { ...detail, file: result.file };
+			message =
+				'Indexing queued. Extracted-text search updates in the background.';
+			refreshing += 1;
+		} catch (cause) {
+			error =
+				cause instanceof Error ? cause.message : 'Could not queue indexing';
+		} finally {
+			mutating = false;
+		}
+	};
+
 	const putVersion = async (file: File) => {
 		if (!detail || uploading) return;
 		if (file.size > detail.maxUploadBytes) {
@@ -474,6 +495,46 @@
 								class="rounded-md border border-zinc-200 px-3 py-2 text-sm font-medium disabled:opacity-50"
 								onclick={() => void saveExpiration()}>Save expiration</button
 							>
+						</div>
+					</div>
+					<div class="sm:col-span-2">
+						<div class="flex flex-wrap items-start justify-between gap-3">
+							<div>
+								<p class="text-sm font-medium text-zinc-900">Search index</p>
+								<p class="mt-1 text-xs leading-5 text-zinc-500">
+									{detail.file.indexState === 'ready'
+										? `Semantic index ready for version ${detail.file.indexedVersion}.`
+										: detail.file.indexState === 'disabled'
+											? 'Extracted-text search is ready. Semantic search is disabled because AI bindings are absent.'
+											: detail.file.indexState === 'failed'
+												? `Indexing stopped after ${detail.file.indexAttempts} attempts.`
+												: 'Extraction and semantic enrichment are queued in the background.'}
+								</p>
+								{#if detail.file.indexError}
+									<p class="mt-1 max-w-2xl text-xs text-amber-700">
+										{detail.file.indexError}
+									</p>
+								{/if}
+								{#if detail.semanticEnabled}
+									<p class="mt-1 text-xs text-zinc-400">
+										Vectorize queries are usage-billed against stored vectors ×
+										384 dimensions.
+									</p>
+								{/if}
+							</div>
+							<div class="flex items-center gap-2">
+								<span
+									class="rounded-full bg-zinc-100 px-2 py-1 text-xs font-medium text-zinc-600"
+								>
+									{detail.file.indexState}
+								</span>
+								<button
+									type="button"
+									disabled={mutating}
+									class="rounded-md border border-zinc-200 px-3 py-2 text-sm font-medium disabled:opacity-50"
+									onclick={() => void reindex()}>Reindex</button
+								>
+							</div>
 						</div>
 					</div>
 				</div>

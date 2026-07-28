@@ -85,7 +85,11 @@ const makeBlobs = Effect.gen(function* () {
 		deleteMany: Effect.fn('Blobs.deleteMany')(function* (keys) {
 			if (keys.length === 0) return;
 			yield* Effect.tryPromise({
-				try: () => bucket.delete([...keys]),
+				try: async () => {
+					for (let index = 0; index < keys.length; index += 500) {
+						await bucket.delete(keys.slice(index, index + 500));
+					}
+				},
 				catch: (cause) => new StorageError({ operation: 'delete blobs', cause })
 			});
 		})

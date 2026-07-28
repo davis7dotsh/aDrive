@@ -1,11 +1,14 @@
 import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
-import { runEdge } from '$lib/server/edge';
+import { runEdgeWithEvent, runWorkerProgram } from '$lib/server/edge';
 import { Auth, authorizeRequest } from '$lib/server/services/auth';
 import { Files } from '$lib/server/services/files';
+import { Indexing } from '$lib/server/services/indexing';
 
-export const PUT: RequestHandler = ({ params, request, url }) =>
-	runEdge(
+export const PUT: RequestHandler = async (event) => {
+	const { params, request, url } = event;
+	const output = await runEdgeWithEvent(
+		event,
 		Effect.gen(function* () {
 			const auth = yield* Auth;
 			const files = yield* Files;
@@ -17,6 +20,22 @@ export const PUT: RequestHandler = ({ params, request, url }) =>
 				contentLength: request.headers.get('content-length'),
 				body: request.body
 			});
-			return Response.json(result, { status: 201 });
+			return {
+				fileId: params.id,
+				response: Response.json(result, { status: 201 })
+			};
 		})
 	);
+	if (event.platform) {
+		event.platform.ctx.waitUntil(
+			runWorkerProgram(
+				event.platform.env,
+				Effect.gen(function* () {
+					const indexing = yield* Indexing;
+					yield* indexing.process(output.fileId);
+				})
+			)
+		);
+	}
+	return output.response;
+};

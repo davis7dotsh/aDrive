@@ -41,6 +41,43 @@ describe('reciprocal rank fusion', () => {
 			0.5 / 62
 		);
 	});
+
+	it('fuses a max-pooled semantic file list as an equal third source', () => {
+		const result = reciprocalRankFusion({
+			keyword: {
+				results: [{ fileId: 'keyword' }, { fileId: 'shared' }],
+				weight: 1
+			},
+			trigram: { results: [{ fileId: 'typo' }], weight: 0.5 },
+			semantic: {
+				results: [{ fileId: 'meaning' }, { fileId: 'shared' }],
+				weight: 1
+			}
+		});
+		expect(result.map((row) => row.fileId)).toEqual([
+			'shared',
+			'keyword',
+			'meaning',
+			'typo'
+		]);
+		expect(result[0]?.ranks).toEqual({ keyword: 2, semantic: 2 });
+	});
+
+	it('keeps keyword-only ordering and scores identical with an empty semantic source', () => {
+		const sources = {
+			keyword: {
+				results: [{ fileId: 'first' }, { fileId: 'second' }],
+				weight: 1
+			},
+			trigram: { results: [{ fileId: 'second' }], weight: 0.5 }
+		};
+		expect(
+			reciprocalRankFusion({
+				...sources,
+				semantic: { results: [], weight: 1 }
+			})
+		).toEqual(reciprocalRankFusion(sources));
+	});
 });
 
 describe('authoritative result helpers', () => {

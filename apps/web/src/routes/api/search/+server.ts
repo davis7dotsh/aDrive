@@ -5,6 +5,7 @@ import { runEdge } from '$lib/server/edge';
 import { Auth, authorizeRequest } from '$lib/server/services/auth';
 import { Search } from '$lib/server/services/search';
 import { Tags } from '$lib/server/services/tags';
+import { Indexing } from '$lib/server/services/indexing';
 
 export const GET: RequestHandler = ({ request, url }) =>
 	runEdge(
@@ -12,6 +13,7 @@ export const GET: RequestHandler = ({ request, url }) =>
 			const auth = yield* Auth;
 			const search = yield* Search;
 			const tags = yield* Tags;
+			const indexing = yield* Indexing;
 			const config = yield* AppConfig;
 			yield* authorizeRequest(auth, request, url);
 			return Response.json({
@@ -21,7 +23,8 @@ export const GET: RequestHandler = ({ request, url }) =>
 				}),
 				tags: yield* tags.list,
 				contentOrigin: config.contentOrigin,
-				maxUploadBytes: config.maxUploadBytes
+				maxUploadBytes: config.maxUploadBytes,
+				semantic: yield* indexing.status
 			});
 		})
 	);

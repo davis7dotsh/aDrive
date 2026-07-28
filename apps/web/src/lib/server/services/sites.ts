@@ -123,6 +123,9 @@ export interface SitesShape {
 		fileId: string,
 		requestPath: string
 	) => Effect.Effect<SiteContent, InvalidRequest | NotFound | StorageError>;
+	readonly sweepLifecycle: (
+		limit: number
+	) => Effect.Effect<number, StorageError>;
 }
 
 export class Sites extends Context.Service<Sites, SitesShape>()('app/Sites') {}
@@ -376,8 +379,9 @@ const makeSites = Effect.gen(function* () {
 	});
 
 	const sweepExpiredSessions = Effect.fn('Sites.sweepExpiredSessions')(
-		function* () {
+		function* (limit = 10) {
 			const now = new Date().toISOString();
+			const bounded = Math.max(1, Math.min(limit, 25));
 			const rows = yield* all(
 				db
 					.prepare(
@@ -386,9 +390,9 @@ const makeSites = Effect.gen(function* () {
 						FROM site_upload_sessions
 						WHERE status = 'open' AND expires_at <= ?
 						ORDER BY expires_at
-						LIMIT 10`
+						LIMIT ?`
 					)
-					.bind(now),
+					.bind(now, bounded),
 				SiteSessionRow,
 				'list expired site upload sessions'
 			);
@@ -402,8 +406,36 @@ const makeSites = Effect.gen(function* () {
 					'aborted'
 				);
 			}
+			return rows.length;
 		}
 	);
+
+	const sweepPendingDeletes = Effect.fn('Sites.sweepPendingDeletes')(function* (
+		limit: number
+	) {
+		const bounded = Math.max(1, Math.min(limit, 25));
+		const rows = yield* Effect.tryPromise({
+			try: async () => {
+				const result = await db
+					.prepare(
+						`SELECT DISTINCT file_id
+							FROM pending_site_asset_deletes
+							ORDER BY queued_at
+							LIMIT ?`
+					)
+					.bind(bounded)
+					.all<{ file_id: string }>();
+				if (!result.success) {
+					throw new Error(result.error ?? 'Site cleanup listing failed');
+				}
+				return result.results;
+			},
+			catch: (cause) =>
+				new StorageError({ operation: 'list pending site cleanup', cause })
+		});
+		for (const row of rows) yield* drainDeletes(row.file_id);
+		return rows.length;
+	});
 
 	return Sites.of({
 		createSession: Effect.fn('Sites.createSession')(function* (input) {
@@ -652,7 +684,7 @@ const makeSites = Effect.gen(function* () {
 							public, is_site, created_at, updated_at, index_state
 						)
 						SELECT file_id, display_name, 'text/html', 'site', 1, ?, 1, 1,
-							?, ?, 'disabled'
+							?, ?, 'pending'
 						FROM site_upload_sessions
 						WHERE id = ? AND status = 'committing' AND version = 1
 						ON CONFLICT(id) DO NOTHING`
@@ -662,7 +694,9 @@ const makeSites = Effect.gen(function* () {
 					.prepare(
 						`UPDATE files
 						SET current_version = ?, size_bytes = ?, content_type = 'text/html',
-							public = 1, updated_at = ?
+							public = 1, updated_at = ?, index_state = 'pending',
+							index_cursor = 0, index_attempts = 0, index_error = NULL,
+							index_next_run_at = NULL
 						WHERE id = ? AND current_version = ? AND is_site = 1
 							AND EXISTS (
 								SELECT 1 FROM site_upload_sessions
@@ -828,7 +862,11 @@ const makeSites = Effect.gen(function* () {
 					createdAt: file.created_at,
 					expiresAt: file.expires_at,
 					downloadCount: file.download_count,
-					lastDownloadAt: file.last_download_at
+					lastDownloadAt: file.last_download_at,
+					indexState: 'pending',
+					indexedVersion: null,
+					indexAttempts: 0,
+					indexError: null
 				},
 				assetCount: assets.length,
 				cleanupPending
@@ -878,6 +916,11 @@ const makeSites = Effect.gen(function* () {
 				contentType: asset.content_type,
 				sizeBytes: asset.size_bytes
 			};
+		}),
+		sweepLifecycle: Effect.fn('Sites.sweepLifecycle')(function* (limit) {
+			const expired = yield* sweepExpiredSessions(limit);
+			const pending = yield* sweepPendingDeletes(limit);
+			return expired + pending;
 		})
 	});
 });
