@@ -1,10 +1,21 @@
 import { Cause, Context, Effect, Layer, Schema } from 'effect';
 import { StorageError } from '../errors';
-import { fileIndexStatements } from '../search-index';
+import {
+	claimIndexCommand,
+	extractedTextCommands,
+	finishKeywordOnlyCommand,
+	indexFailureCommands,
+	semanticCommitCommands,
+	type IndexLease,
+	type SqlCommand,
+	vectorDeleteFailureCommand,
+	vectorDeleteSuccessCommand
+} from '../indexing-sql';
 import {
 	MAX_INDEX_ATTEMPTS,
 	chunkSearchText,
 	indexFailureDisposition,
+	newIndexLeaseToken,
 	retryAt,
 	safeIndexError,
 	vectorIdForChunk
@@ -74,6 +85,9 @@ const makeIndexing = Effect.gen(function* () {
 	const embedder = yield* Embedder;
 	const vectors = yield* VectorIndex;
 
+	const prepareCommand = (command: SqlCommand) =>
+		db.prepare(command.sql).bind(...command.bindings);
+
 	const all = Effect.fn('Indexing.all')(function* <A, I>(
 		statement: D1PreparedStatement,
 		schema: Schema.Codec<A, I, never>,
@@ -113,37 +127,37 @@ const makeIndexing = Effect.gen(function* () {
 	});
 
 	const markFailure = Effect.fn('Indexing.markFailure')(function* (
-		fileId: string,
+		lease: IndexLease,
+		vectorIds: ReadonlyArray<string>,
 		cause: unknown
 	) {
-		const row = yield* findJob(fileId);
-		if (!row) return;
-		const disposition = indexFailureDisposition(row.index_attempts);
+		const disposition = indexFailureDisposition(lease.attempt);
 		const error = safeIndexError(cause);
-		yield* Effect.tryPromise({
-			try: () =>
-				db
-					.prepare(
-						`UPDATE files
-						SET index_state = ?, index_error = ?, index_next_run_at = ?
-						WHERE id = ? AND index_state = 'running'`
-					)
-					.bind(disposition.state, error, disposition.nextRunAt, fileId)
-					.run(),
+		const commands = indexFailureCommands(
+			lease,
+			vectorIds,
+			{ ...disposition, error },
+			new Date().toISOString()
+		);
+		const results = yield* Effect.tryPromise({
+			try: () => db.batch(commands.map(prepareCommand)),
 			catch: (failure) =>
 				new StorageError({
 					operation: 'record indexing failure',
 					cause: failure
 				})
 		});
+		const stateChanged = results.at(-1)?.meta.changes === 1;
 		console.error(
 			JSON.stringify({
-				message:
-					disposition.state === 'failed'
+				message: !stateChanged
+					? 'stale semantic indexing failure ignored'
+					: disposition.state === 'failed'
 						? 'semantic indexing reached its retry limit'
 						: 'semantic indexing will retry',
-				fileId,
-				attempt: row.index_attempts,
+				fileId: lease.fileId,
+				version: lease.version,
+				attempt: lease.attempt,
 				error
 			})
 		);
@@ -174,22 +188,15 @@ const makeIndexing = Effect.gen(function* () {
 				Effect.catch((failure) =>
 					Effect.tryPromise({
 						try: () =>
-							db.batch(
-								rows.map((row) =>
-									db
-										.prepare(
-											`UPDATE pending_vector_deletes
-											SET attempts = attempts + 1, last_error = ?,
-												next_run_at = ?
-											WHERE vector_id = ?`
-										)
-										.bind(
-											safeIndexError(failure.cause),
-											retryAt(row.attempts + 1),
-											row.vector_id
-										)
+							prepareCommand(
+								vectorDeleteFailureCommand(
+									rows.map((row) => ({
+										vectorId: row.vector_id,
+										nextRunAt: retryAt(row.attempts + 1)
+									})),
+									safeIndexError(failure.cause)
 								)
-							),
+							).run(),
 						catch: (cause) =>
 							new StorageError({
 								operation: 'record vector cleanup failure',
@@ -200,16 +207,7 @@ const makeIndexing = Effect.gen(function* () {
 			);
 			if (!removed) return 0;
 			yield* Effect.tryPromise({
-				try: () =>
-					db.batch(
-						ids.map((id) =>
-							db
-								.prepare(
-									'DELETE FROM pending_vector_deletes WHERE vector_id = ?'
-								)
-								.bind(id)
-						)
-					),
+				try: () => prepareCommand(vectorDeleteSuccessCommand(ids)).run(),
 				catch: (cause) =>
 					new StorageError({
 						operation: 'finish vector cleanup',
@@ -225,167 +223,162 @@ const makeIndexing = Effect.gen(function* () {
 		if (!initial) return;
 		const now = new Date();
 		const leaseUntil = new Date(now.getTime() + INDEX_LEASE_MS).toISOString();
+		const lease = {
+			fileId,
+			version: initial.current_version,
+			attempt: initial.index_attempts + 1,
+			token: newIndexLeaseToken()
+		} satisfies IndexLease;
 		const claim = yield* Effect.tryPromise({
 			try: () =>
-				db
-					.prepare(
-						`UPDATE files
-						SET index_state = 'running', index_attempts = index_attempts + 1,
-							index_error = NULL, index_next_run_at = ?
-						WHERE id = ? AND current_version = ? AND deleted_at IS NULL
-							AND (expires_at IS NULL OR expires_at > ?)
-							AND index_attempts < ?
-							AND (
-								index_state IN ('pending', 'disabled')
-								OR (index_state = 'running' AND index_next_run_at <= ?)
-							)`
-					)
-					.bind(
-						leaseUntil,
-						fileId,
-						initial.current_version,
+				prepareCommand(
+					claimIndexCommand(
+						lease,
 						now.toISOString(),
-						MAX_INDEX_ATTEMPTS,
-						now.toISOString()
+						leaseUntil,
+						MAX_INDEX_ATTEMPTS
 					)
-					.run(),
+				).run(),
 			catch: (cause) =>
 				new StorageError({ operation: 'claim indexing job', cause })
 		});
 		if (claim.meta.changes !== 1) return;
 
-		const text =
-			initial.index_cursor >= 1 && initial.text_content !== null
-				? initial.text_content
-				: initial.kind === 'file' &&
-					  isSearchableText(initial.display_name, initial.content_type)
-					? yield* blobs.readTextPrefix(initial.r2_key, searchTextLimit)
-					: '';
+		let attemptVectorIds: ReadonlyArray<string> = [];
+		yield* Effect.gen(function* () {
+			const text =
+				initial.index_cursor >= 1 && initial.text_content !== null
+					? initial.text_content
+					: initial.kind === 'file' &&
+						  isSearchableText(initial.display_name, initial.content_type)
+						? yield* blobs.readTextPrefix(initial.r2_key, searchTextLimit)
+						: '';
 
-		yield* Effect.tryPromise({
-			try: () =>
-				db.batch([
-					db
-						.prepare(
-							`UPDATE file_versions SET text_content = ?
-							WHERE file_id = ? AND version = ?`
-						)
-						.bind(text, fileId, initial.current_version),
-					db
-						.prepare(
-							`UPDATE files SET index_cursor = 1
-							WHERE id = ? AND current_version = ? AND index_state = 'running'`
-						)
-						.bind(fileId, initial.current_version),
-					...fileIndexStatements(db, fileId)
-				]),
-			catch: (cause) =>
-				new StorageError({ operation: 'store extracted search text', cause })
-		});
-
-		if (!embedder.enabled || !vectors.enabled) {
-			yield* Effect.tryPromise({
+			const extracted = yield* Effect.tryPromise({
 				try: () =>
-					db
-						.prepare(
-							`UPDATE files
-							SET index_state = 'disabled', indexed_version = NULL,
-								index_attempts = 0, index_error = NULL,
-								index_next_run_at = NULL
-							WHERE id = ? AND current_version = ? AND index_state = 'running'`
-						)
-						.bind(fileId, initial.current_version)
-						.run(),
+					db.batch(extractedTextCommands(lease, text).map(prepareCommand)),
 				catch: (cause) =>
 					new StorageError({
-						operation: 'finish keyword-only indexing',
+						operation: 'store extracted search text',
 						cause
 					})
 			});
-			return;
-		}
-
-		const chunks = chunkSearchText(initial.display_name, text);
-		const embeddings = yield* embedder.documents(
-			chunks.map((chunk) => chunk.text)
-		);
-		if (embeddings.length !== chunks.length) {
-			return yield* new StorageError({
-				operation: 'validate embeddings',
-				cause: 'Workers AI returned a different number of embeddings'
-			});
-		}
-
-		const vectorRecords = chunks.map((chunk, index) => ({
-			id: vectorIdForChunk(fileId, initial.current_version, chunk.ordinal),
-			values: embeddings[index] ?? [],
-			metadata: {
-				fileId,
-				version: initial.current_version,
-				deleted: false,
-				kind: initial.kind,
-				visibility: initial.is_public === 1 ? 'public' : 'private'
-			}
-		}));
-		yield* vectors.upsert(vectorRecords);
-
-		const indexedAt = new Date().toISOString();
-		const statements = [
-			db
-				.prepare(
-					`INSERT INTO pending_vector_deletes (vector_id, queued_at)
-					SELECT vector_id, ? FROM file_chunks
-					WHERE file_id = ? AND version <> ?
-					ON CONFLICT(vector_id) DO NOTHING`
-				)
-				.bind(indexedAt, fileId, initial.current_version),
-			db.prepare('DELETE FROM file_chunks WHERE file_id = ?').bind(fileId),
-			...chunks.map((chunk) =>
-				db
-					.prepare(
-						`INSERT INTO file_chunks (
-							vector_id, file_id, version, ordinal, char_start, char_end
-						) VALUES (?, ?, ?, ?, ?, ?)`
-					)
-					.bind(
-						vectorIdForChunk(fileId, initial.current_version, chunk.ordinal),
+			if (extracted[1]?.meta.changes !== 1) {
+				console.log(
+					JSON.stringify({
+						message: 'stale semantic extraction ignored',
 						fileId,
-						initial.current_version,
-						chunk.ordinal,
-						chunk.charStart,
-						chunk.charEnd
-					)
-			),
-			db
-				.prepare(
-					`UPDATE files
-					SET index_state = 'ready', indexed_version = ?, index_cursor = ?,
-						index_attempts = 0, index_error = NULL, index_next_run_at = NULL
-					WHERE id = ? AND current_version = ? AND index_state = 'running'`
-				)
-				.bind(
-					initial.current_version,
-					chunks.length,
-					fileId,
-					initial.current_version
-				)
-		];
-		yield* Effect.tryPromise({
-			try: () => db.batch(statements),
-			catch: (cause) =>
-				new StorageError({ operation: 'commit semantic index state', cause })
-		});
-		yield* retryVectorDeletes(100).pipe(
-			Effect.catchCause((cause) =>
-				Effect.sync(() => {
-					console.error(
+						version: lease.version,
+						attempt: lease.attempt
+					})
+				);
+				return;
+			}
+
+			if (!embedder.enabled || !vectors.enabled) {
+				const finished = yield* Effect.tryPromise({
+					try: () => prepareCommand(finishKeywordOnlyCommand(lease)).run(),
+					catch: (cause) =>
+						new StorageError({
+							operation: 'finish keyword-only indexing',
+							cause
+						})
+				});
+				if (finished.meta.changes !== 1) {
+					console.log(
 						JSON.stringify({
-							message: 'vector cleanup remains pending',
+							message: 'stale keyword-only indexing completion ignored',
 							fileId,
-							cause: String(cause)
+							version: lease.version,
+							attempt: lease.attempt
 						})
 					);
-				})
+				}
+				return;
+			}
+
+			const chunks = chunkSearchText(initial.display_name, text);
+			const embeddings = yield* embedder.documents(
+				chunks.map((chunk) => chunk.text)
+			);
+			if (embeddings.length !== chunks.length) {
+				return yield* new StorageError({
+					operation: 'validate embeddings',
+					cause: 'Workers AI returned a different number of embeddings'
+				});
+			}
+
+			const vectorRecords = chunks.map((chunk, index) => ({
+				id: vectorIdForChunk(fileId, lease.token, chunk.ordinal),
+				values: embeddings[index] ?? [],
+				metadata: {
+					fileId,
+					version: lease.version,
+					deleted: false,
+					kind: initial.kind,
+					visibility: initial.is_public === 1 ? 'public' : 'private'
+				}
+			}));
+			attemptVectorIds = vectorRecords.map((record) => record.id);
+			yield* vectors.upsert(vectorRecords);
+
+			const results = yield* Effect.tryPromise({
+				try: () =>
+					db.batch(
+						semanticCommitCommands(
+							lease,
+							chunks,
+							attemptVectorIds,
+							new Date().toISOString()
+						).map(prepareCommand)
+					),
+				catch: (cause) =>
+					new StorageError({
+						operation: 'commit semantic index state',
+						cause
+					})
+			});
+			if (results.at(-1)?.meta.changes !== 1) {
+				console.log(
+					JSON.stringify({
+						message: 'stale semantic indexing completion cleaned up',
+						fileId,
+						version: lease.version,
+						attempt: lease.attempt
+					})
+				);
+			}
+
+			yield* retryVectorDeletes(100).pipe(
+				Effect.catchCause((cause) =>
+					Effect.sync(() => {
+						console.error(
+							JSON.stringify({
+								message: 'vector cleanup remains pending',
+								fileId,
+								cause: String(cause)
+							})
+						);
+					})
+				)
+			);
+		}).pipe(
+			Effect.catchCause((cause) =>
+				markFailure(lease, attemptVectorIds, Cause.pretty(cause)).pipe(
+					Effect.catchCause((recordCause) =>
+						Effect.sync(() => {
+							console.error(
+								JSON.stringify({
+									message: 'could not persist indexing failure',
+									fileId,
+									version: lease.version,
+									attempt: lease.attempt,
+									cause: String(recordCause)
+								})
+							);
+						})
+					)
+				)
 			)
 		);
 	});
@@ -393,19 +386,15 @@ const makeIndexing = Effect.gen(function* () {
 	const process = Effect.fn('Indexing.process')(function* (fileId: string) {
 		yield* perform(fileId).pipe(
 			Effect.catchCause((cause) =>
-				markFailure(fileId, Cause.pretty(cause)).pipe(
-					Effect.catchCause((recordCause) =>
-						Effect.sync(() => {
-							console.error(
-								JSON.stringify({
-									message: 'could not persist indexing failure',
-									fileId,
-									cause: String(recordCause)
-								})
-							);
+				Effect.sync(() => {
+					console.error(
+						JSON.stringify({
+							message: 'could not start indexing job',
+							fileId,
+							cause: Cause.pretty(cause)
 						})
-					)
-				)
+					);
+				})
 			)
 		);
 	});
@@ -452,7 +441,8 @@ const makeIndexing = Effect.gen(function* () {
 					.prepare(
 						`UPDATE files
 						SET index_state = 'pending', index_cursor = 0, index_attempts = 0,
-							index_error = NULL, index_next_run_at = NULL
+							index_error = NULL, index_next_run_at = NULL,
+							index_lease_token = NULL
 						WHERE id = ? AND deleted_at IS NULL
 							AND (expires_at IS NULL OR expires_at > ?)`
 					)

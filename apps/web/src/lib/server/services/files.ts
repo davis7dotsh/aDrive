@@ -178,7 +178,7 @@ const makeFiles = Effect.gen(function* () {
 						SET current_version = ?, size_bytes = ?, content_type = ?,
 							public = ?, updated_at = ?, index_state = 'pending',
 							index_cursor = 0, index_attempts = 0, index_error = NULL,
-							index_next_run_at = NULL
+							index_next_run_at = NULL, index_lease_token = NULL
 						WHERE id = ? AND current_version = ? AND deleted_at IS NULL`
 				)
 				.bind(

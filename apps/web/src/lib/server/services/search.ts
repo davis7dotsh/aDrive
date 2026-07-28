@@ -12,6 +12,11 @@ import {
 	sanitizeMatchQuery,
 	sanitizeTrigramQuery
 } from '../search-ranking';
+import {
+	eligibleSemanticCommand,
+	rankedSearchCommand,
+	type SearchCommand
+} from '../search-candidates';
 import { Db } from './bindings';
 import { Embedder, VectorIndex } from './semantic';
 
@@ -41,16 +46,44 @@ const makeSearch = Effect.gen(function* () {
 	const vectorIndex = yield* VectorIndex;
 
 	const runRanked = (
-		statement: D1PreparedStatement
+		command: SearchCommand
 	): Effect.Effect<ReadonlyArray<RankedRow>, StorageError> =>
 		Effect.tryPromise({
 			try: async () => {
-				const result = await statement.all<RankedRow>();
+				const result = await db
+					.prepare(command.sql)
+					.bind(...command.bindings)
+					.all<RankedRow>();
 				if (!result.success) throw new Error(result.error ?? 'Search failed');
 				return result.results;
 			},
 			catch: (cause) => new StorageError({ operation: 'search index', cause })
 		});
+
+	const filterSemantic = Effect.fn('Search.filterSemantic')(function* (
+		fileIds: ReadonlyArray<string>,
+		tagIds: ReadonlyArray<string>,
+		now: string
+	) {
+		if (fileIds.length === 0) return [];
+		const command = eligibleSemanticCommand(fileIds, now, tagIds);
+		return yield* Effect.tryPromise({
+			try: async () => {
+				const result = await db
+					.prepare(command.sql)
+					.bind(...command.bindings)
+					.all<{ file_id: string; ordinal: number }>();
+				if (!result.success)
+					throw new Error(result.error ?? 'Semantic filtering failed');
+				return result.results.map((row) => ({ fileId: row.file_id }));
+			},
+			catch: (cause) =>
+				new StorageError({
+					operation: 'filter semantic search candidates',
+					cause
+				})
+		});
+	});
 
 	const hydrate = Effect.fn('Search.hydrate')(function* (
 		fileIds: ReadonlyArray<string>,
@@ -140,37 +173,40 @@ const makeSearch = Effect.gen(function* () {
 			if (!keywordMatch) return yield* filteredRecent(selectedTagIds);
 
 			const trigramMatch = sanitizeTrigramQuery(trimmedQuery);
+			const now = new Date().toISOString();
 			const keyword = yield* runRanked(
-				db
-					.prepare(
-						`SELECT file_id, bm25(files_fts, 10.0, 5.0, 1.0) AS score
-						FROM files_fts
-						WHERE files_fts MATCH ?
-						ORDER BY score ASC, file_id
-						LIMIT 50`
-					)
-					.bind(keywordMatch)
+				rankedSearchCommand('files_fts', keywordMatch, now, selectedTagIds)
 			);
 			const trigram = trigramMatch
 				? yield* runRanked(
-						db
-							.prepare(
-								`SELECT file_id, bm25(files_trgm) AS score
-								FROM files_trgm
-								WHERE files_trgm MATCH ?
-								ORDER BY score ASC, file_id
-								LIMIT 50`
-							)
-							.bind(trigramMatch)
+						rankedSearchCommand('files_trgm', trigramMatch, now, selectedTagIds)
 					)
 				: [];
-			const semantic = yield* embedder.query(trimmedQuery).pipe(
+			const semanticCandidates = yield* embedder.query(trimmedQuery).pipe(
 				Effect.flatMap((embedding) => vectorIndex.search(embedding)),
 				Effect.catch((failure) =>
 					Effect.sync(() => {
 						console.error(
 							JSON.stringify({
 								message: 'semantic search degraded to keyword search',
+								operation: failure.operation
+							})
+						);
+						return [];
+					})
+				)
+			);
+			const semantic = yield* filterSemantic(
+				semanticCandidates.map((candidate) => candidate.fileId),
+				selectedTagIds,
+				now
+			).pipe(
+				Effect.catch((failure) =>
+					Effect.sync(() => {
+						console.error(
+							JSON.stringify({
+								message:
+									'semantic candidate filtering degraded to keyword search',
 								operation: failure.operation
 							})
 						);

@@ -160,7 +160,7 @@ const liveLayers = (env: SemanticBoundEnv) => {
 					: Effect.tryPromise({
 							try: () =>
 								env.VECTORIZE.query([...vector], {
-									topK: 50,
+									topK: 100,
 									returnMetadata: false
 								}),
 							catch: (cause) =>

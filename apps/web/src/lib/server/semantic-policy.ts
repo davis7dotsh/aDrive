@@ -41,11 +41,20 @@ export const chunkSearchText = (
 	return chunks;
 };
 
+export const newIndexLeaseToken = () => {
+	const bytes = new Uint8Array(16);
+	crypto.getRandomValues(bytes);
+	return btoa(String.fromCharCode(...bytes))
+		.replaceAll('+', '-')
+		.replaceAll('/', '_')
+		.replaceAll('=', '');
+};
+
 export const vectorIdForChunk = (
 	fileId: string,
-	version: number,
+	leaseToken: string,
 	ordinal: number
-) => `${fileId}:${version}:${ordinal}`;
+) => `${fileId}:${leaseToken}:${ordinal.toString(36)}`;
 
 export const fileIdFromVectorId = (vectorId: string) => {
 	const last = vectorId.lastIndexOf(':');
