@@ -1,0 +1,10 @@
+node_modules/
+.notes/
+.svelte-kit/
+.svelte-check/
+.wrangler/
+dist/
+build/
+coverage/
+pnpm-lock.yaml
+apps/web/worker-configuration.d.ts

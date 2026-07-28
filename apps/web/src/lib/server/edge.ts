@@ -1,0 +1,96 @@
+import { getRequestEvent } from '$app/server';
+import {
+	error,
+	isHttpError,
+	isRedirect,
+	isValidationError,
+	type RequestEvent
+} from '@sveltejs/kit';
+import { Cause, Effect, Exit } from 'effect';
+import type { SqlClient } from 'effect/unstable/sql';
+import type { AppError } from './errors';
+import { requestLayer } from './layer';
+import type { AppConfig } from './config';
+import type { Auth } from './services/auth';
+import type { Blobs } from './services/blobs';
+import type { Files } from './services/files';
+
+type AppServices = SqlClient.SqlClient | AppConfig | Auth | Blobs | Files;
+
+const throwCauseAsHttp = (cause: Cause.Cause<unknown>): never => {
+	for (const reason of cause.reasons) {
+		if (reason._tag !== 'Die') continue;
+		const defect = reason.defect;
+		if (
+			isHttpError(defect) ||
+			isRedirect(defect) ||
+			isValidationError(defect)
+		) {
+			throw defect;
+		}
+	}
+
+	if (cause.reasons.some((reason) => reason._tag === 'Die')) {
+		console.error(
+			JSON.stringify({
+				message: 'unhandled Effect defect',
+				cause: Cause.pretty(cause)
+			})
+		);
+		error(500, 'Internal error');
+	}
+
+	for (const reason of cause.reasons) {
+		if (reason._tag !== 'Fail') continue;
+		const failure = reason.error as AppError;
+		switch (failure._tag) {
+			case 'InvalidRequest':
+				error(failure.status, failure.message);
+			case 'MisdirectedRequest':
+				error(421, failure.message);
+			case 'Unauthorized':
+				error(401, failure.message);
+			case 'NotFound':
+				error(404, 'Not found');
+			case 'StorageError':
+				console.error(
+					JSON.stringify({
+						message: 'storage operation failed',
+						operation: failure.operation,
+						cause: Cause.pretty(cause)
+					})
+				);
+				error(502, 'Storage unavailable');
+		}
+	}
+
+	console.error(
+		JSON.stringify({
+			message: 'unhandled Effect cause',
+			cause: Cause.pretty(cause)
+		})
+	);
+	error(500, 'Internal error');
+};
+
+const runWithEvent = async <A, E>(
+	event: RequestEvent,
+	program: Effect.Effect<A, E, AppServices>
+) => {
+	const env = event.platform?.env;
+	if (!env) error(500, 'Cloudflare bindings unavailable');
+
+	const exit = await Effect.runPromiseExit(
+		program.pipe(Effect.provide(requestLayer(env)))
+	);
+	if (Exit.isSuccess(exit)) return exit.value;
+	return throwCauseAsHttp(exit.cause);
+};
+
+export const runEdge = <A, E>(program: Effect.Effect<A, E, AppServices>) => {
+	const event = getRequestEvent();
+	return runWithEvent(event, program);
+};
+
+export const runEdgeWithEvent = runWithEvent;
+export const handleCause = throwCauseAsHttp;

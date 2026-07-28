@@ -1,0 +1,36 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "adrive",
+	"main": ".svelte-kit/cloudflare/_worker.js",
+	"compatibility_date": "2026-07-27",
+	"compatibility_flags": ["nodejs_compat"],
+	"vars": {
+		"DASHBOARD_ORIGIN": "http://siva.otter-hawksbill.ts.net:5173",
+		"CONTENT_ORIGIN": "http://siva.otter-hawksbill.ts.net:5174",
+		"MAX_UPLOAD_BYTES": "99614720"
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "adrive",
+			"database_id": "replace-with-your-d1-database-id",
+			"migrations_dir": "migrations"
+		}
+	],
+	"r2_buckets": [
+		{
+			"binding": "BUCKET",
+			"bucket_name": "adrive"
+		}
+	],
+	"observability": {
+		"enabled": true,
+		"logs": {
+			"head_sampling_rate": 1
+		},
+		"traces": {
+			"enabled": true,
+			"head_sampling_rate": 0.01
+		}
+	}
+}

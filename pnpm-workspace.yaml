@@ -1,0 +1,16 @@
+packages:
+  - apps/*
+  - packages/*
+
+onlyBuiltDependencies:
+  - esbuild
+  - msgpackr-extract
+  - workerd
+
+minimumReleaseAgeStrict: true
+allowBuilds:
+  esbuild: true
+  msgpackr-extract: true
+  workerd: true
+minimumReleaseAgeExclude:
+  - svelte-check@4.7.4

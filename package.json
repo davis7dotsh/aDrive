@@ -1,0 +1,22 @@
+{
+	"name": "adrive",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"packageManager": "pnpm@11.10.0",
+	"scripts": {
+		"adrive": "pnpm --filter @adrive/cli adrive",
+		"check": "pnpm -r --if-present check && pnpm check:forbidden",
+		"check:forbidden": "node scripts/check-forbidden.mjs",
+		"db:migrate:local": "pnpm --filter @adrive/web exec wrangler d1 migrations apply DB --local",
+		"format": "prettier --write .",
+		"format:check": "prettier --check .",
+		"key:create:local": "node scripts/create-local-key.mjs",
+		"test": "vitest run"
+	},
+	"devDependencies": {
+		"prettier": "^3.9.6",
+		"prettier-plugin-svelte": "^4.1.1",
+		"vitest": "^4.1.10"
+	}
+}

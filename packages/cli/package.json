@@ -1,0 +1,28 @@
+{
+	"name": "@adrive/cli",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"bin": {
+		"adrive": "./src/main.ts"
+	},
+	"scripts": {
+		"adrive": "node --experimental-strip-types src/main.ts",
+		"check": "pnpm check:types && pnpm check:effect",
+		"check:effect": "effect-tsgo diagnostics --project tsconfig.json --format pretty",
+		"check:types": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@adrive/shared": "workspace:^",
+		"@effect/platform-node": "4.0.0-beta.102",
+		"effect": "4.0.0-beta.102",
+		"mime": "^4.1.0"
+	},
+	"devDependencies": {
+		"@effect/language-service": "0.87.1",
+		"@effect/tsgo": "0.24.3",
+		"@types/node": "^26.1.1",
+		"@typescript/native": "npm:typescript@^7.0.2",
+		"typescript": "~6.0.3"
+	}
+}

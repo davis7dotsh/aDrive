@@ -1,0 +1,36 @@
+{
+	"name": "@adrive/web",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"check": "svelte-kit sync && pnpm check:types && pnpm check:effect && pnpm check:svelte",
+		"check:types": "tsc --noEmit",
+		"check:effect": "effect-tsgo diagnostics --project tsconfig.json --format pretty",
+		"check:svelte": "svelte-check --tsconfig ./tsconfig.json --tsgo",
+		"dev": "concurrently --kill-others --names dashboard,content \"pnpm dev:dashboard\" \"pnpm dev:content\"",
+		"dev:content": "node scripts/content-proxy.mjs",
+		"dev:dashboard": "vite dev --host 0.0.0.0 --port 5173",
+		"types:worker": "wrangler types"
+	},
+	"dependencies": {
+		"@adrive/shared": "workspace:^",
+		"@effect/sql-d1": "4.0.0-beta.102",
+		"effect": "4.0.0-beta.102"
+	},
+	"devDependencies": {
+		"@effect/language-service": "0.87.1",
+		"@effect/tsgo": "0.24.3",
+		"@sveltejs/adapter-cloudflare": "7.2.9",
+		"@sveltejs/kit": "2.70.1",
+		"@sveltejs/vite-plugin-svelte": "^7.2.0",
+		"@types/node": "^26.1.1",
+		"@typescript/native": "npm:typescript@^7.0.2",
+		"concurrently": "^10.0.4",
+		"svelte": "5.56.8",
+		"svelte-check": "4.7.4",
+		"typescript": "~6.0.3",
+		"vite": "^8.1.5",
+		"wrangler": "4.114.0"
+	}
+}
