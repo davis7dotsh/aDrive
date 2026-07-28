@@ -11,6 +11,7 @@ import { TagsLive } from './services/tags';
 import { SemanticBindingsLive } from './services/semantic';
 import { IndexingLive } from './services/indexing';
 import { LifecycleLive } from './services/lifecycle';
+import { GrantSecretsLive } from './services/grant-secrets';
 
 const SqlLive = Layer.unwrap(Effect.map(Db, (db) => D1.layer({ db })));
 
@@ -25,6 +26,7 @@ export const requestLayer = (env: Env) => {
 	const infrastructure = Layer.mergeAll(bindings, sql, blobs);
 	const semantic = SemanticBindingsLive(env);
 	const auth = AuthLive.pipe(Layer.provide(infrastructure));
+	const grantSecrets = GrantSecretsLive.pipe(Layer.provide(infrastructure));
 	const tags = TagsLive.pipe(Layer.provide(infrastructure));
 	const search = SearchLive.pipe(
 		Layer.provide(Layer.merge(infrastructure, semantic))
@@ -44,6 +46,7 @@ export const requestLayer = (env: Env) => {
 		infrastructure,
 		semantic,
 		auth,
+		grantSecrets,
 		tags,
 		search,
 		sites,

@@ -1,5 +1,5 @@
 import { createServer, type Server } from 'node:http';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -15,6 +15,10 @@ let configHome = '';
 let linkAuthorization: string | undefined;
 let contentAuthorization: string | undefined;
 let contentRequestUrl = '';
+let devicePolls = 0;
+let deviceAuthorizations = 0;
+
+const deviceApiKey = 'adr_login123_123456789012345678901234';
 
 const file = {
 	id: '11111111-1111-4111-8111-111111111111',
@@ -62,6 +66,39 @@ beforeAll(async () => {
 	contentEndpoint = `http://127.0.0.1:${contentAddress.port}`;
 
 	dashboardServer = createServer((request, response) => {
+		if (request.method === 'POST' && request.url === '/api/auth/device') {
+			deviceAuthorizations += 1;
+			devicePolls = 0;
+			response.statusCode = 201;
+			response.setHeader('Content-Type', 'application/json');
+			response.end(
+				JSON.stringify({
+					deviceCode: `device-${deviceAuthorizations}`,
+					userCode: 'ABCD-2345',
+					verificationUri: `${endpoint}/`,
+					verificationUriComplete: `${endpoint}/?device=ABCD-2345`,
+					expiresIn: 600,
+					interval: 0
+				})
+			);
+			return;
+		}
+		if (request.method === 'POST' && request.url === '/api/auth/device/token') {
+			devicePolls += 1;
+			response.setHeader('Content-Type', 'application/json');
+			if (devicePolls === 1) {
+				response.statusCode = 202;
+				response.end(JSON.stringify({ status: 'authorization_pending' }));
+				return;
+			}
+			if (devicePolls === 2) {
+				response.statusCode = 429;
+				response.end(JSON.stringify({ status: 'slow_down' }));
+				return;
+			}
+			response.end(JSON.stringify({ apiKey: deviceApiKey }));
+			return;
+		}
 		if (request.method === 'PUT' && request.url === '/api/files') {
 			const chunks: Array<Buffer> = [];
 			request.on('data', (chunk: Buffer) => chunks.push(chunk));
@@ -208,5 +245,49 @@ describe('CLI stream and JSON contracts', () => {
 		expect(result.status).toBe(0);
 		expect(result.stderr.toString()).toBe('');
 		expect(JSON.parse(result.stdout.toString())).toEqual({ tags: [] });
+	});
+
+	it('continues headless login through pending and slow-down responses', async () => {
+		const result = await run(['login', endpoint, '--headless']);
+
+		expect(result.status).toBe(0);
+		expect(result.stderr.toString()).toBe('');
+		expect(result.stdout.toString().trim().split('\n')).toEqual([
+			'Approve this device with code ABCD-2345',
+			`${endpoint}/?device=ABCD-2345`,
+			`Logged in to ${endpoint}`
+		]);
+		expect(devicePolls).toBe(3);
+		const saved = JSON.parse(
+			await readFile(join(configHome, 'adrive', 'config.json'), 'utf8')
+		);
+		expect(saved).toEqual({ endpoint, apiKey: deviceApiKey });
+	});
+
+	it('keeps JSON login output parseable while polling pending states', async () => {
+		const result = await run(['--json', 'login', endpoint, '--headless']);
+
+		expect(result.status).toBe(0);
+		expect(result.stderr.toString()).toBe('');
+		expect(
+			result.stdout
+				.toString()
+				.trim()
+				.split('\n')
+				.map((line) => JSON.parse(line))
+		).toEqual([
+			{
+				status: 'authorization_required',
+				userCode: 'ABCD-2345',
+				verificationUri: `${endpoint}/`,
+				verificationUriComplete: `${endpoint}/?device=ABCD-2345`
+			},
+			{ status: 'authenticated', endpoint }
+		]);
+		expect(devicePolls).toBe(3);
+		const saved = JSON.parse(
+			await readFile(join(configHome, 'adrive', 'config.json'), 'utf8')
+		);
+		expect(saved).toEqual({ endpoint, apiKey: deviceApiKey });
 	});
 });

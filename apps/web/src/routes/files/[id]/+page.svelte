@@ -9,7 +9,12 @@
 		uploadVersion,
 		type FileDetailPayload
 	} from '$lib/dashboard/api';
-	import { copyText, formatBytes, formatDate } from '$lib/dashboard/format';
+	import {
+		copyText,
+		formatBytes,
+		formatDate,
+		toLocalDateTimeInput
+	} from '$lib/dashboard/format';
 	import { getDashboardSession } from '$lib/dashboard/session.svelte';
 
 	const session = getDashboardSession();
@@ -44,9 +49,7 @@
 			.then((result) => {
 				if (mine === run) {
 					detail = result;
-					expirationInput = result.file.expiresAt
-						? result.file.expiresAt.slice(0, 16)
-						: '';
+					expirationInput = toLocalDateTimeInput(result.file.expiresAt);
 				}
 			})
 			.catch((cause: unknown) => {

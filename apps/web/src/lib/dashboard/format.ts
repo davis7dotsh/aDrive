@@ -17,6 +17,18 @@ export const formatDate = (value: string) =>
 		timeStyle: 'short'
 	}).format(new Date(value));
 
+const padDatePart = (value: number) => String(value).padStart(2, '0');
+
+export const toLocalDateTimeInput = (value: string | null | undefined) => {
+	if (!value) return '';
+	const date = new Date(value);
+	if (Number.isNaN(date.getTime())) return '';
+	return [
+		`${date.getFullYear()}-${padDatePart(date.getMonth() + 1)}-${padDatePart(date.getDate())}`,
+		`${padDatePart(date.getHours())}:${padDatePart(date.getMinutes())}`
+	].join('T');
+};
+
 export const isHtmlFile = (name: string, contentType: string) =>
 	contentType === 'text/html' || /\.html?$/i.test(name);
 

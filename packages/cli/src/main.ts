@@ -291,10 +291,10 @@ const login = Command.make(
 							})
 						});
 						const body: unknown = await response.json();
-						if (response.ok) return { kind: 'complete' as const, body };
 						if (response.status === 202 || response.status === 429) {
 							return { kind: 'pending' as const, body };
 						}
+						if (response.ok) return { kind: 'complete' as const, body };
 						throw new Error(`Device authorization failed (${response.status})`);
 					},
 					catch: (cause) =>

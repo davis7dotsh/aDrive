@@ -9,9 +9,9 @@ import { shouldCountDownload } from '$lib/server/auth-policy';
 import { decodeRangeHeader, rangeHeaders } from '$lib/server/download-response';
 import { runEdge } from '$lib/server/edge';
 import { NotFound } from '$lib/server/errors';
-import { verifyPrivateGrant } from '$lib/server/private-grant';
 import { Blobs } from '$lib/server/services/blobs';
 import { Files } from '$lib/server/services/files';
+import { GrantSecrets } from '$lib/server/services/grant-secrets';
 
 const requestedVersion = (url: URL) => {
 	const value = url.searchParams.get('v');
@@ -25,23 +25,21 @@ export const GET: RequestHandler = ({ params, request, url }) =>
 		Effect.gen(function* () {
 			const config = yield* AppConfig;
 			const files = yield* Files;
+			const grantSecrets = yield* GrantSecrets;
 			const version = requestedVersion(url);
 			if (version === null) return yield* new NotFound({ id: params.id });
 			const content = yield* files.findContent(params.id, version);
 			if (!content.file.public) {
 				const expiresAtSeconds = Number(url.searchParams.get('e'));
 				const signature = url.searchParams.get('g') ?? '';
-				const granted = yield* Effect.promise(() =>
-					verifyPrivateGrant({
-						secret: config.passcode,
-						contentOrigin: config.contentOrigin,
-						requestOrigin: url.origin,
-						fileId: params.id,
-						version: content.file.version,
-						expiresAtSeconds,
-						signature
-					})
-				);
+				const granted = yield* grantSecrets.verify({
+					contentOrigin: config.contentOrigin,
+					requestOrigin: url.origin,
+					fileId: params.id,
+					version: content.file.version,
+					expiresAtSeconds,
+					signature
+				});
 				if (!granted) return yield* new NotFound({ id: params.id });
 			}
 			const blobs = yield* Blobs;

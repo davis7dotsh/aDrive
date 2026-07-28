@@ -1,8 +1,9 @@
 import type { FileContentLinkResponse, FileSummary } from '@adrive/shared';
 import { Effect } from 'effect';
 import { AppConfig } from './config';
-import { mintPrivateGrant } from './private-grant';
+import type { PrivateGrant } from './private-grant';
 import { Files } from './services/files';
+import { GrantSecrets } from './services/grant-secrets';
 
 interface ResolvedFileContent {
 	readonly file: FileSummary;
@@ -10,14 +11,13 @@ interface ResolvedFileContent {
 
 interface ContentLinkConfig {
 	readonly contentOrigin: string;
-	readonly passcode: string;
 }
 
 export const buildFileContentLink = async (
 	config: ContentLinkConfig,
 	content: ResolvedFileContent,
 	requestedVersion?: number,
-	now?: Date
+	privateGrant?: PrivateGrant
 ): Promise<FileContentLinkResponse> => {
 	const url = new URL(
 		`/f/${encodeURIComponent(content.file.id)}`,
@@ -35,19 +35,13 @@ export const buildFileContentLink = async (
 		};
 	}
 
-	const grant = await mintPrivateGrant({
-		secret: config.passcode,
-		contentOrigin: config.contentOrigin,
-		fileId: content.file.id,
-		version: content.file.version,
-		now
-	});
+	if (!privateGrant) throw new Error('A private content grant is required');
 	url.searchParams.set('v', String(content.file.version));
-	url.searchParams.set('e', String(grant.expiresAtSeconds));
-	url.searchParams.set('g', grant.signature);
+	url.searchParams.set('e', String(privateGrant.expiresAtSeconds));
+	url.searchParams.set('g', privateGrant.signature);
 	return {
 		url: url.href,
-		expiresAt: new Date(grant.expiresAtSeconds * 1_000).toISOString(),
+		expiresAt: new Date(privateGrant.expiresAtSeconds * 1_000).toISOString(),
 		version: content.file.version,
 		public: false
 	};
@@ -57,9 +51,17 @@ export const resolveFileContentLink = (id: string, version?: number) =>
 	Effect.gen(function* () {
 		const config = yield* AppConfig;
 		const files = yield* Files;
+		const grantSecrets = yield* GrantSecrets;
 		const content = yield* files.findContent(id, version);
+		const grant = content.file.public
+			? undefined
+			: yield* grantSecrets.mint({
+					contentOrigin: config.contentOrigin,
+					fileId: content.file.id,
+					version: content.file.version
+				});
 		return yield* Effect.promise(() =>
-			buildFileContentLink(config, content, version)
+			buildFileContentLink(config, content, version, grant)
 		);
 	});
 

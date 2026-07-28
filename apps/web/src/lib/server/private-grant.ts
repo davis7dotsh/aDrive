@@ -10,19 +10,24 @@ interface PrivateGrantScope {
 	readonly expiresAtSeconds: number;
 }
 
-interface MintPrivateGrantOptions extends Omit<
+export interface MintPrivateGrantOptions extends Omit<
 	PrivateGrantScope,
 	'expiresAtSeconds'
 > {
-	readonly secret: string;
+	readonly signingKey: string;
 	readonly now?: Date;
 }
 
-interface VerifyPrivateGrantOptions extends PrivateGrantScope {
-	readonly secret: string;
+export interface VerifyPrivateGrantOptions extends PrivateGrantScope {
+	readonly signingKey: string;
 	readonly requestOrigin: string;
 	readonly signature: string;
 	readonly now?: Date;
+}
+
+export interface PrivateGrant {
+	readonly expiresAtSeconds: number;
+	readonly signature: string;
 }
 
 const grantPayload = ({
@@ -39,10 +44,10 @@ const grantPayload = ({
 		String(expiresAtSeconds)
 	].join('\n');
 
-const signingKey = (secret: string) =>
+const importSigningKey = (signingKey: string) =>
 	crypto.subtle.importKey(
 		'raw',
-		textEncoder.encode(secret),
+		textEncoder.encode(signingKey),
 		{ name: 'HMAC', hash: 'SHA-256' },
 		false,
 		['sign', 'verify']
@@ -76,7 +81,7 @@ const validScope = ({ fileId, version, expiresAtSeconds }: PrivateGrantScope) =>
 	expiresAtSeconds > 0;
 
 export const mintPrivateGrant = async ({
-	secret,
+	signingKey,
 	contentOrigin,
 	fileId,
 	version,
@@ -85,7 +90,7 @@ export const mintPrivateGrant = async ({
 	const expiresAtSeconds =
 		Math.floor(now.getTime() / 1_000) + PRIVATE_GRANT_TTL_SECONDS;
 	const scope = { contentOrigin, fileId, version, expiresAtSeconds };
-	const key = await signingKey(secret);
+	const key = await importSigningKey(signingKey);
 	const signature = base64Url(
 		await crypto.subtle.sign(
 			'HMAC',
@@ -97,7 +102,7 @@ export const mintPrivateGrant = async ({
 };
 
 export const verifyPrivateGrant = async ({
-	secret,
+	signingKey,
 	requestOrigin,
 	signature,
 	now = new Date(),
@@ -114,7 +119,7 @@ export const verifyPrivateGrant = async ({
 	}
 	const decoded = decodeBase64Url(signature);
 	if (!decoded) return false;
-	const key = await signingKey(secret);
+	const key = await importSigningKey(signingKey);
 	return crypto.subtle.verify(
 		'HMAC',
 		key,

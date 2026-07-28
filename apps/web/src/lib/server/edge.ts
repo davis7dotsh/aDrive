@@ -20,6 +20,7 @@ import type { Tags } from './services/tags';
 import type { Embedder, VectorIndex } from './services/semantic';
 import type { Indexing } from './services/indexing';
 import type { Lifecycle } from './services/lifecycle';
+import type { GrantSecrets } from './services/grant-secrets';
 
 type AppServices =
 	| SqlClient.SqlClient
@@ -33,7 +34,8 @@ type AppServices =
 	| Embedder
 	| VectorIndex
 	| Indexing
-	| Lifecycle;
+	| Lifecycle
+	| GrantSecrets;
 
 const throwCauseAsHttp = (cause: Cause.Cause<unknown>): never => {
 	for (const reason of cause.reasons) {

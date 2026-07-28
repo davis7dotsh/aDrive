@@ -1,5 +1,6 @@
 import type { FileSummary } from '@adrive/shared';
 import { describe, expect, it } from 'vitest';
+import { mintPrivateGrant } from './private-grant';
 import {
 	buildFileContentLink,
 	contentLinkJsonResponse,
@@ -25,8 +26,7 @@ const file = (isPublic: boolean): FileSummary => ({
 });
 
 const config = {
-	contentOrigin: 'https://content.example.test',
-	passcode: 'a deployment-only passcode'
+	contentOrigin: 'https://content.example.test'
 };
 
 describe('file content links', () => {
@@ -46,11 +46,18 @@ describe('file content links', () => {
 	});
 
 	it('always scopes private links to the resolved version and an expiry', async () => {
+		const grant = await mintPrivateGrant({
+			signingKey: 'kS0x8xqQZ2mcYYhBBLVBn1dnlTjluNkETdn3_1v4Gxw',
+			contentOrigin: config.contentOrigin,
+			fileId: file(false).id,
+			version: 3,
+			now: new Date('2026-07-27T12:00:00.000Z')
+		});
 		const link = await buildFileContentLink(
 			config,
 			{ file: file(false) },
 			undefined,
-			new Date('2026-07-27T12:00:00.000Z')
+			grant
 		);
 		const url = new URL(link.url);
 

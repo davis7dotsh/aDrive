@@ -5,13 +5,13 @@ import {
 	verifyPrivateGrant
 } from './private-grant';
 
-const secret = 'a deployment-only passcode';
+const signingKey = 'kS0x8xqQZ2mcYYhBBLVBn1dnlTjluNkETdn3_1v4Gxw';
 const contentOrigin = 'https://content.example.test';
 const now = new Date('2026-07-27T12:00:00.000Z');
 
 const mint = () =>
 	mintPrivateGrant({
-		secret,
+		signingKey,
 		contentOrigin,
 		fileId: 'file-1',
 		version: 4,
@@ -23,7 +23,7 @@ describe('private file grants', () => {
 		const grant = await mint();
 		const verify = (at: Date) =>
 			verifyPrivateGrant({
-				secret,
+				signingKey,
 				contentOrigin,
 				requestOrigin: contentOrigin,
 				fileId: 'file-1',
@@ -45,7 +45,7 @@ describe('private file grants', () => {
 	it('binds grants to the configured host, file, and resolved version', async () => {
 		const grant = await mint();
 		const base = {
-			secret,
+			signingKey,
 			contentOrigin,
 			requestOrigin: contentOrigin,
 			fileId: 'file-1',
@@ -72,7 +72,7 @@ describe('private file grants', () => {
 	it('rejects expired and tampered grants', async () => {
 		const grant = await mint();
 		const base = {
-			secret,
+			signingKey,
 			contentOrigin,
 			requestOrigin: contentOrigin,
 			fileId: 'file-1',
