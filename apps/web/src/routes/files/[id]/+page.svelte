@@ -2,6 +2,7 @@
 	import { page } from '$app/state';
 	import {
 		createTag,
+		getContentLink,
 		getFile,
 		mutateFile,
 		setFileTags,
@@ -174,18 +175,43 @@
 
 	const copyLink = async (version?: number) => {
 		if (!detail) return;
+		const fileId = detail.file.id;
 		const isSite = detail.file.kind === 'site';
+		const isPublic = detail.file.public;
 		const suffix = isSite || version === undefined ? '' : `?v=${version}`;
 		try {
-			await copyText(
-				`${detail.contentOrigin}/${isSite ? 's' : 'f'}/${detail.file.id}${isSite ? '/' : ''}${suffix}`
-			);
+			const link =
+				isSite || isPublic
+					? {
+							url: `${detail.contentOrigin}/${isSite ? 's' : 'f'}/${fileId}${isSite ? '/' : ''}${suffix}`,
+							expiresAt: null
+						}
+					: await getContentLink(session.token, fileId, version);
+			if (detail?.file.id !== fileId) return;
+			await copyText(link.url);
 			copied = version === undefined ? 'current' : String(version);
+			message = link.expiresAt
+				? `Private download link copied. It expires ${formatDate(link.expiresAt)} (15 minutes).`
+				: 'Stable public link copied.';
 			window.setTimeout(() => {
 				copied = '';
 			}, 1500);
-		} catch {
-			error = 'Could not copy the link.';
+		} catch (cause) {
+			error =
+				cause instanceof Error ? cause.message : 'Could not copy the link.';
+		}
+	};
+
+	const downloadPrivate = async (version?: number) => {
+		if (!detail) return;
+		const fileId = detail.file.id;
+		try {
+			const link = await getContentLink(session.token, fileId, version);
+			if (detail?.file.id !== fileId) return;
+			window.location.assign(link.url);
+		} catch (cause) {
+			error =
+				cause instanceof Error ? cause.message : 'Could not download the file.';
 		}
 	};
 
@@ -360,7 +386,7 @@
 					</p>
 					{#if !detail.file.public && !detail.file.deletedAt}
 						<p class="mt-2 text-xs text-zinc-500">
-							The share link returns 404 while this file is private.
+							Private download links are signed and expire after 15 minutes.
 						</p>
 					{/if}
 				</div>
@@ -371,7 +397,13 @@
 							class="rounded-md border border-zinc-200 px-3 py-2 text-sm font-medium text-zinc-700 transition hover:border-zinc-300"
 							onclick={() => void copyLink()}
 						>
-							{copied === 'current' ? 'Copied' : 'Copy link'}
+							{copied === 'current'
+								? detail.file.public
+									? 'Copied'
+									: 'Copied · 15 min'
+								: detail.file.public
+									? 'Copy link'
+									: 'Copy 15 min link'}
 						</button>
 						{#if detail.file.public}
 							<a
@@ -382,6 +414,12 @@
 							>
 								Open
 							</a>
+						{:else}
+							<button
+								type="button"
+								class="rounded-md bg-zinc-950 px-3 py-2 text-sm font-medium text-white transition hover:bg-zinc-800"
+								onclick={() => void downloadPrivate()}>Download</button
+							>
 						{/if}
 					</div>
 				{/if}
@@ -643,7 +681,13 @@
 									class="rounded-md px-2.5 py-1.5 text-xs font-medium text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
 									onclick={() => void copyLink(version.version)}
 								>
-									{copied === String(version.version) ? 'Copied' : 'Copy link'}
+									{copied === String(version.version)
+										? detail.file.public
+											? 'Copied'
+											: 'Copied · 15 min'
+										: detail.file.public
+											? 'Copy link'
+											: 'Copy 15 min link'}
 								</button>
 								{#if detail.file.public}
 									<a
@@ -654,6 +698,13 @@
 									>
 										Open
 									</a>
+								{:else}
+									<button
+										type="button"
+										class="rounded-md border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-700 hover:border-zinc-300"
+										onclick={() => void downloadPrivate(version.version)}
+										>Download</button
+									>
 								{/if}
 							</div>
 						{/if}

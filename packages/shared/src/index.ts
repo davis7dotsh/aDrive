@@ -161,6 +161,15 @@ export const FileDetailResponseSchema = Schema.Struct({
 
 export type FileDetailResponse = typeof FileDetailResponseSchema.Type;
 
+export const FileContentLinkResponseSchema = Schema.Struct({
+	url: Schema.String,
+	expiresAt: Schema.NullOr(Schema.String),
+	version: Schema.Int,
+	public: Schema.Boolean
+});
+
+export type FileContentLinkResponse = typeof FileContentLinkResponseSchema.Type;
+
 export const FileMutationSchema = Schema.Union([
 	Schema.Struct({
 		action: Schema.Literal('visibility'),

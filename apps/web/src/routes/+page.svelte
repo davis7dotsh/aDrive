@@ -7,6 +7,7 @@
 		createApiKey,
 		deleteTag,
 		approveDevice,
+		getContentLink,
 		listFiles,
 		listApiKeys,
 		mutateFile,
@@ -234,17 +235,33 @@
 	};
 
 	const copyLink = async (file: DashboardFile) => {
+		const fileId = file.id;
 		try {
-			await copyText(
-				`${contentOrigin}/${file.kind === 'site' ? 's' : 'f'}/${file.id}${file.kind === 'site' ? '/' : ''}`
-			);
-			copiedId = file.id;
+			const url =
+				file.kind === 'site' || file.public
+					? `${contentOrigin}/${file.kind === 'site' ? 's' : 'f'}/${file.id}${file.kind === 'site' ? '/' : ''}`
+					: (await getContentLink(session.token, file.id)).url;
+			if (!files.some((candidate) => candidate.id === fileId)) return;
+			await copyText(url);
+			copiedId = fileId;
 			window.setTimeout(() => {
-				if (copiedId === file.id) copiedId = '';
+				if (copiedId === fileId) copiedId = '';
 			}, 1500);
 		} catch {
 			loadError =
 				'Could not copy the link. Open the file detail to copy it manually.';
+		}
+	};
+
+	const openLink = async (file: DashboardFile) => {
+		const fileId = file.id;
+		try {
+			const link = await getContentLink(session.token, fileId);
+			if (!files.some((candidate) => candidate.id === fileId)) return;
+			window.location.assign(link.url);
+		} catch (cause) {
+			loadError =
+				cause instanceof Error ? cause.message : 'Could not download the file';
 		}
 	};
 
@@ -862,7 +879,13 @@
 										class="rounded-md border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-600"
 										onclick={() => void copyLink(file)}
 									>
-										{copiedId === file.id ? 'Copied' : 'Copy link'}
+										{copiedId === file.id
+											? file.public || file.kind === 'site'
+												? 'Copied'
+												: 'Copied · 15 min'
+											: file.public || file.kind === 'site'
+												? 'Copy link'
+												: 'Copy 15 min link'}
 									</button>
 									{#if file.public}
 										<a
@@ -871,6 +894,12 @@
 											rel="noreferrer"
 											class="rounded-md border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-600"
 											>Open</a
+										>
+									{:else}
+										<button
+											type="button"
+											class="rounded-md border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-600"
+											onclick={() => void openLink(file)}>Download</button
 										>
 									{/if}
 									<button

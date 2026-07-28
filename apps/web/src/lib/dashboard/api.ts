@@ -1,16 +1,19 @@
-import type {
-	ApiKey,
-	FileDetailResponse,
-	FileListResponse,
-	FileMutation,
-	FileMutationResponse,
-	FileTagsResponse,
-	Tag,
-	TagCreate,
-	TagResponse,
-	TagUpdate,
-	UploadResponse
+import {
+	FileContentLinkResponseSchema,
+	type ApiKey,
+	type FileContentLinkResponse,
+	type FileDetailResponse,
+	type FileListResponse,
+	type FileMutation,
+	type FileMutationResponse,
+	type FileTagsResponse,
+	type Tag,
+	type TagCreate,
+	type TagResponse,
+	type TagUpdate,
+	type UploadResponse
 } from '@adrive/shared';
+import { Schema } from 'effect';
 
 export const BROWSER_SESSION = '__browser_session__';
 
@@ -139,6 +142,22 @@ export const getFile = async (
 		}
 	);
 	return (await response.json()) as FileDetailResponse;
+};
+
+export const getContentLink = async (
+	token: string,
+	id: string,
+	version?: number
+) => {
+	const params = new URLSearchParams();
+	if (version !== undefined) params.set('v', String(version));
+	const response = await request(
+		`/api/files/${encodeURIComponent(id)}/link${params.size > 0 ? `?${params}` : ''}`,
+		token
+	);
+	return Schema.decodeUnknownPromise(FileContentLinkResponseSchema)(
+		await response.json()
+	) satisfies Promise<FileContentLinkResponse>;
 };
 
 export const uploadFile = async (

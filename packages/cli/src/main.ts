@@ -4,6 +4,7 @@ import {
 	DeviceAuthorizationResponseSchema,
 	DevicePendingResponseSchema,
 	DeviceTokenResponseSchema,
+	FileContentLinkResponseSchema,
 	FileTagsResponseSchema,
 	normalizeSitePath,
 	SiteAssetResponseSchema,
@@ -494,14 +495,20 @@ const get = Command.make(
 					message: '`--json` cannot be combined with `--output -`'
 				});
 			}
-			const response = yield* client
+			const linkResponse = yield* client
 				.execute(
 					apiRequest(
 						'GET',
-						`${config.endpoint}/api/files/${encodeURIComponent(id)}/content`,
+						`${config.endpoint}/api/files/${encodeURIComponent(id)}/link`,
 						config.apiKey
 					)
 				)
+				.pipe(Effect.flatMap(ensureOk));
+			const link = yield* HttpClientResponse.schemaBodyJson(
+				FileContentLinkResponseSchema
+			)(linkResponse);
+			const response = yield* client
+				.execute(HttpClientRequest.get(link.url))
 				.pipe(Effect.flatMap(ensureOk));
 			const destination = Option.getOrElse(
 				output,

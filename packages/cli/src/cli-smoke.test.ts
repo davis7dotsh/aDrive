@@ -7,9 +7,14 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const downloaded = Buffer.from([0, 255, 17, 128, 42]);
 let uploaded = Buffer.alloc(0);
-let server: Server;
+let dashboardServer: Server;
+let contentServer: Server;
 let endpoint = '';
+let contentEndpoint = '';
 let configHome = '';
+let linkAuthorization: string | undefined;
+let contentAuthorization: string | undefined;
+let contentRequestUrl = '';
 
 const file = {
 	id: '11111111-1111-4111-8111-111111111111',
@@ -30,7 +35,33 @@ const file = {
 };
 
 beforeAll(async () => {
-	server = createServer((request, response) => {
+	contentServer = createServer((request, response) => {
+		if (
+			request.method === 'GET' &&
+			request.url?.startsWith(`/f/${file.id}?v=1&e=`)
+		) {
+			contentAuthorization = request.headers.authorization;
+			contentRequestUrl = request.url;
+			response.setHeader(
+				'Content-Disposition',
+				`attachment; filename="${file.displayName}"`
+			);
+			response.end(downloaded);
+			return;
+		}
+		response.statusCode = 404;
+		response.end();
+	});
+	await new Promise<void>((resolve) =>
+		contentServer.listen(0, '127.0.0.1', resolve)
+	);
+	const contentAddress = contentServer.address();
+	if (contentAddress === null || typeof contentAddress === 'string') {
+		throw new Error('Content test server did not bind a TCP port');
+	}
+	contentEndpoint = `http://127.0.0.1:${contentAddress.port}`;
+
+	dashboardServer = createServer((request, response) => {
 		if (request.method === 'PUT' && request.url === '/api/files') {
 			const chunks: Array<Buffer> = [];
 			request.on('data', (chunk: Buffer) => chunks.push(chunk));
@@ -49,13 +80,26 @@ beforeAll(async () => {
 		}
 		if (
 			request.method === 'GET' &&
+			request.url === `/api/files/${file.id}/link`
+		) {
+			linkAuthorization = request.headers.authorization;
+			response.setHeader('Content-Type', 'application/json');
+			response.end(
+				JSON.stringify({
+					url: `${contentEndpoint}/f/${file.id}?v=1&e=1785154500&g=test`,
+					expiresAt: '2026-07-27T12:15:00.000Z',
+					version: 1,
+					public: false
+				})
+			);
+			return;
+		}
+		if (
+			request.method === 'GET' &&
 			request.url === `/api/files/${file.id}/content`
 		) {
-			response.setHeader(
-				'Content-Disposition',
-				`attachment; filename="${file.displayName}"`
-			);
-			response.end(downloaded);
+			response.statusCode = 500;
+			response.end('CLI must not use the redirect endpoint');
 			return;
 		}
 		if (request.method === 'GET' && request.url === '/api/tags') {
@@ -66,8 +110,10 @@ beforeAll(async () => {
 		response.statusCode = 404;
 		response.end();
 	});
-	await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-	const address = server.address();
+	await new Promise<void>((resolve) =>
+		dashboardServer.listen(0, '127.0.0.1', resolve)
+	);
+	const address = dashboardServer.address();
 	if (address === null || typeof address === 'string') {
 		throw new Error('Test server did not bind a TCP port');
 	}
@@ -87,7 +133,10 @@ beforeAll(async () => {
 
 afterAll(async () => {
 	await new Promise<void>((resolve, reject) =>
-		server.close((cause) => (cause ? reject(cause) : resolve()))
+		dashboardServer.close((cause) => (cause ? reject(cause) : resolve()))
+	);
+	await new Promise<void>((resolve, reject) =>
+		contentServer.close((cause) => (cause ? reject(cause) : resolve()))
 	);
 	await rm(configHome, { recursive: true, force: true });
 });
@@ -147,6 +196,11 @@ describe('CLI stream and JSON contracts', () => {
 		expect(result.status).toBe(0);
 		expect(result.stderr.toString()).toBe('');
 		expect(result.stdout).toEqual(downloaded);
+		expect(linkAuthorization).toBe(
+			'Bearer adr_12345678_123456789012345678901234'
+		);
+		expect(contentAuthorization).toBeUndefined();
+		expect(contentRequestUrl).toContain(`/f/${file.id}?v=1&e=`);
 	});
 
 	it('keeps JSON tag output machine-parseable', async () => {

@@ -67,7 +67,12 @@ and expire after ten minutes.
 Uploads default public; HTML is always made public. Human-mode upload and site
 success output keeps the public URL alone on its own line. Put `--json` before a
 command for JSON stdout. Downloading with `--output -` writes only file bytes to
-stdout and cannot be combined with `--json`; diagnostics remain on stderr.
+stdout and cannot be combined with `--json`; diagnostics remain on stderr. The
+CLI first requests a typed content link from the authenticated dashboard API,
+then downloads directly from the cookie-less content origin without forwarding
+its API key. Public links are stable. Private file links are scoped to one exact
+version, signed with a deployment-only HMAC, and expire after 15 minutes; the
+dashboard clearly labels these expiring links when copying them.
 
 `site put` walks regular files without following symlinks, declares the complete
 manifest, streams assets with four uploads at a time, and atomically publishes
