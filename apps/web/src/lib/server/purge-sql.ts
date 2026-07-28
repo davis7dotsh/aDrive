@@ -11,17 +11,32 @@ export const purgeCompletionCommands = (
 ): ReadonlyArray<PurgeSqlCommand> => [
 	{
 		sql: `INSERT INTO pending_vector_deletes (vector_id, queued_at)
-			SELECT vector_id, ? FROM file_chunks WHERE file_id = ?
+			SELECT vector_id, ? FROM file_chunks
+			WHERE file_id = ?
+				AND EXISTS (
+					SELECT 1 FROM files
+					WHERE id = ? AND purge_state = 'pending'
+				)
 			ON CONFLICT(vector_id) DO NOTHING`,
-		bindings: [queuedAt, fileId]
+		bindings: [queuedAt, fileId, fileId]
 	},
 	{
-		sql: 'DELETE FROM files_fts WHERE file_id = ?',
-		bindings: [fileId]
+		sql: `DELETE FROM files_fts
+			WHERE file_id = ?
+				AND EXISTS (
+					SELECT 1 FROM files
+					WHERE id = ? AND purge_state = 'pending'
+				)`,
+		bindings: [fileId, fileId]
 	},
 	{
-		sql: 'DELETE FROM files_trgm WHERE file_id = ?',
-		bindings: [fileId]
+		sql: `DELETE FROM files_trgm
+			WHERE file_id = ?
+				AND EXISTS (
+					SELECT 1 FROM files
+					WHERE id = ? AND purge_state = 'pending'
+				)`,
+		bindings: [fileId, fileId]
 	},
 	{
 		sql: `UPDATE files

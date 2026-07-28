@@ -230,4 +230,37 @@ describe('canonical purge completion SQL', () => {
 			]);
 		}
 	);
+
+	it.each(['file', 'site'] as const)(
+		'makes stale %s completion a no-op when purge ownership is no longer pending',
+		(kind) => {
+			const database = makeDatabase();
+			const fileId = `purge-${kind}-stale`;
+			seedPurgingFile(database, fileId, kind);
+			database
+				.prepare(
+					`UPDATE files
+					SET purge_state = 'failed', purge_error = 'ownership changed'
+					WHERE id = ?`
+				)
+				.run(fileId);
+
+			const changes = runCommands(
+				database,
+				purgeCompletionCommands(fileId, '2026-07-27T00:01:00.000Z')
+			);
+
+			expect(changes).toEqual([0, 0, 0, 0, 0]);
+			expect(counts(database, fileId)).toEqual({
+				files: 1,
+				versions: 1,
+				file_tags: 1,
+				site_assets: kind === 'site' ? 1 : 0,
+				fts: 2,
+				trgm: 1,
+				chunks: 2,
+				pending_vectors: 0
+			});
+		}
+	);
 });
