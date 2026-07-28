@@ -6,7 +6,9 @@
 	let { children } = $props();
 	const session = createDashboardSession();
 
-	onMount(() => session.restore());
+	onMount(() => {
+		void session.restore();
+	});
 </script>
 
 <svelte:head>

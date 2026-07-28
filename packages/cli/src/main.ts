@@ -1,37 +1,47 @@
 #!/usr/bin/env -S node --experimental-strip-types
 
 import {
+	DeviceAuthorizationResponseSchema,
+	DevicePendingResponseSchema,
+	DeviceTokenResponseSchema,
+	FileTagsResponseSchema,
 	normalizeSitePath,
 	SiteAssetResponseSchema,
 	SiteCommitResponseSchema,
 	SiteSessionResponseSchema,
+	TagListResponseSchema,
+	TagResponseSchema,
 	UploadResponseSchema,
 	type SiteManifestAsset
 } from '@adrive/shared';
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
+import { createWriteStream } from 'node:fs';
 import {
 	chmod,
 	lstat,
 	mkdir,
+	mkdtemp,
 	readFile,
 	readdir,
 	realpath,
+	rm,
+	stat,
 	writeFile
 } from 'node:fs/promises';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join, relative, sep } from 'node:path';
+import { spawn } from 'node:child_process';
+import { pipeline } from 'node:stream/promises';
 import {
-	Config,
 	Console,
 	Data,
 	Effect,
 	FileSystem,
 	Option,
-	Redacted,
 	Schema,
 	Stream
 } from 'effect';
-import { Argument, Command, Flag, Prompt } from 'effect/unstable/cli';
+import { Argument, Command, Flag } from 'effect/unstable/cli';
 import {
 	FetchHttpClient,
 	HttpBody,
@@ -40,6 +50,11 @@ import {
 	HttpClientResponse
 } from 'effect/unstable/http';
 import mime from 'mime';
+
+const JSON_MODE = process.argv.includes('--json');
+if (JSON_MODE) {
+	process.argv = process.argv.filter((argument) => argument !== '--json');
+}
 
 const CliConfigSchema = Schema.Struct({
 	endpoint: Schema.String,
@@ -115,7 +130,7 @@ const loadConfig = Effect.tryPromise({
 );
 
 const apiRequest = (
-	method: 'DELETE' | 'GET' | 'POST' | 'PUT',
+	method: 'DELETE' | 'GET' | 'PATCH' | 'POST' | 'PUT',
 	url: string,
 	apiKey: string,
 	options: {
@@ -127,9 +142,11 @@ const apiRequest = (
 		? HttpClientRequest.get
 		: method === 'POST'
 			? HttpClientRequest.post
-			: method === 'DELETE'
-				? HttpClientRequest.delete
-				: HttpClientRequest.put)(url, {
+			: method === 'PATCH'
+				? HttpClientRequest.patch
+				: method === 'DELETE'
+					? HttpClientRequest.delete
+					: HttpClientRequest.put)(url, {
 		body: options.body,
 		headers: {
 			authorization: `Bearer ${apiKey}`,
@@ -140,70 +157,286 @@ const apiRequest = (
 const ensureOk = (response: HttpClientResponse.HttpClientResponse) =>
 	HttpClientResponse.filterStatusOk(response);
 
+const wantsJson = () => JSON_MODE;
+
+const emit = (value: unknown) =>
+	Console.log(wantsJson() ? JSON.stringify(value) : String(value));
+
+const responseError = async (response: Response) => {
+	try {
+		const value: unknown = await response.json();
+		if (
+			typeof value === 'object' &&
+			value !== null &&
+			'message' in value &&
+			typeof value.message === 'string'
+		) {
+			return value.message;
+		}
+	} catch {
+		// Fall through to the status.
+	}
+	return `Request failed (${response.status})`;
+};
+
+const openBrowser = (url: string) =>
+	Effect.tryPromise({
+		try: () =>
+			new Promise<void>((resolve, reject) => {
+				const command =
+					process.platform === 'darwin'
+						? 'open'
+						: process.platform === 'win32'
+							? 'cmd'
+							: 'xdg-open';
+				const args =
+					process.platform === 'win32' ? ['/c', 'start', '', url] : [url];
+				const child = spawn(command, args, {
+					detached: true,
+					stdio: 'ignore'
+				});
+				child.once('error', reject);
+				child.once('spawn', () => {
+					child.unref();
+					resolve();
+				});
+			}),
+		catch: (cause) =>
+			new CliFailure({ message: 'Could not open a browser', cause })
+	});
+
 const login = Command.make(
 	'login',
 	{
 		endpoint: Argument.string('server-url'),
-		apiKey: Flag.redacted('api-key').pipe(
-			Flag.optional,
-			Flag.withDescription('API key (prompted securely when omitted)')
+		headless: Flag.boolean('headless').pipe(
+			Flag.withDescription('Print the approval URL without opening a browser')
+		),
+		name: Flag.string('name').pipe(
+			Flag.withDefault('adrive CLI'),
+			Flag.withDescription('Name for the full-access key created on approval')
 		)
 	},
-	({ endpoint: rawEndpoint, apiKey: apiKeyOption }) =>
+	({ endpoint: rawEndpoint, headless, name }) =>
 		Effect.gen(function* () {
 			const endpoint = yield* Effect.try({
 				try: () => normalizeEndpoint(rawEndpoint),
 				catch: (cause) =>
 					new CliFailure({ message: 'The server URL is invalid', cause })
 			});
-			const redacted = Option.isSome(apiKeyOption)
-				? apiKeyOption.value
-				: yield* Prompt.hidden({ message: 'API key' });
-			const apiKey = Redacted.value(redacted);
-			const client = yield* HttpClient.HttpClient;
-			yield* client
-				.execute(apiRequest('GET', `${endpoint}/api/auth/check`, apiKey))
-				.pipe(Effect.flatMap(ensureOk));
+			const authorizationBody = yield* Effect.tryPromise({
+				try: async () => {
+					const response = await fetch(`${endpoint}/api/auth/device`, {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ name })
+					});
+					if (!response.ok) throw new Error(await responseError(response));
+					return response.json();
+				},
+				catch: (cause) =>
+					new CliFailure({
+						message:
+							cause instanceof Error
+								? cause.message
+								: 'Could not start device authorization',
+						cause
+					})
+			});
+			const authorization = yield* Schema.decodeUnknownEffect(
+				DeviceAuthorizationResponseSchema
+			)(authorizationBody).pipe(
+				Effect.mapError(
+					(cause) =>
+						new CliFailure({
+							message: 'The server returned an invalid device authorization',
+							cause
+						})
+				)
+			);
+			if (wantsJson()) {
+				yield* emit({
+					status: 'authorization_required',
+					userCode: authorization.userCode,
+					verificationUri: authorization.verificationUri,
+					verificationUriComplete: authorization.verificationUriComplete
+				});
+			} else {
+				yield* Console.log(
+					`Approve this device with code ${authorization.userCode}`
+				);
+				yield* Console.log(authorization.verificationUriComplete);
+				if (!headless) {
+					yield* openBrowser(authorization.verificationUriComplete).pipe(
+						Effect.catch(() =>
+							Console.error(
+								'Could not open a browser; open the URL above on any machine.'
+							)
+						)
+					);
+				}
+			}
+
+			let apiKey = '';
+			while (!apiKey) {
+				yield* Effect.sleep(`${authorization.interval} seconds`);
+				const pollResponse = yield* Effect.tryPromise({
+					try: async () => {
+						const response = await fetch(`${endpoint}/api/auth/device/token`, {
+							method: 'POST',
+							headers: { 'Content-Type': 'application/json' },
+							body: JSON.stringify({
+								deviceCode: authorization.deviceCode
+							})
+						});
+						const body: unknown = await response.json();
+						if (response.ok) return { kind: 'complete' as const, body };
+						if (response.status === 202 || response.status === 429) {
+							return { kind: 'pending' as const, body };
+						}
+						throw new Error(`Device authorization failed (${response.status})`);
+					},
+					catch: (cause) =>
+						new CliFailure({
+							message:
+								cause instanceof Error
+									? cause.message
+									: 'Could not poll device authorization',
+							cause
+						})
+				});
+				const poll =
+					pollResponse.kind === 'complete'
+						? yield* Schema.decodeUnknownEffect(DeviceTokenResponseSchema)(
+								pollResponse.body
+							).pipe(
+								Effect.mapError(
+									(cause) =>
+										new CliFailure({
+											message: 'The server returned an invalid API key',
+											cause
+										})
+								)
+							)
+						: yield* Schema.decodeUnknownEffect(DevicePendingResponseSchema)(
+								pollResponse.body
+							).pipe(
+								Effect.mapError(
+									(cause) =>
+										new CliFailure({
+											message:
+												'The server returned an invalid authorization status',
+											cause
+										})
+								)
+							);
+				if ('apiKey' in poll) {
+					apiKey = poll.apiKey;
+				} else if (poll.status === 'slow_down') {
+					yield* Effect.sleep(`${authorization.interval} seconds`);
+				}
+			}
 			yield* saveConfig(endpoint, apiKey);
-			yield* Console.log(`Logged in to ${endpoint}`);
+			yield* emit(
+				wantsJson()
+					? { status: 'authenticated', endpoint }
+					: `Logged in to ${endpoint}`
+			);
 		})
-).pipe(Command.withDescription('Validate and save an API key'));
+).pipe(Command.withDescription('Authorize this CLI through the dashboard'));
+
+const prepareUpload = (file: string, suppliedName: Option.Option<string>) =>
+	Effect.tryPromise({
+		try: async () => {
+			if (file !== '-') {
+				const details = await stat(file);
+				if (!details.isFile()) throw new Error('Upload path must be a file');
+				return {
+					path: file,
+					displayName: Option.getOrElse(suppliedName, () => basename(file)),
+					temporaryDirectory: null
+				};
+			}
+			const displayName = Option.getOrUndefined(suppliedName)?.trim();
+			if (!displayName) {
+				throw new Error('`adrive put -` requires --name');
+			}
+			const temporaryDirectory = await mkdtemp(join(tmpdir(), 'adrive-stdin-'));
+			const path = join(temporaryDirectory, 'payload');
+			await pipeline(process.stdin, createWriteStream(path, { mode: 0o600 }));
+			return { path, displayName, temporaryDirectory };
+		},
+		catch: (cause) =>
+			new CliFailure({ message: 'Could not prepare the upload', cause })
+	});
 
 const put = Command.make(
 	'put',
 	{
-		file: Argument.file('file', { mustExist: true }),
+		file: Argument.string('file'),
 		private: Flag.boolean('private').pipe(
 			Flag.withDescription('Upload privately (HTML is always public)')
+		),
+		name: Flag.string('name').pipe(
+			Flag.optional,
+			Flag.withDescription('Display name (required when reading stdin as `-`)')
+		),
+		expires: Flag.string('expires').pipe(
+			Flag.optional,
+			Flag.withDescription('Future ISO-8601 expiration timestamp')
 		)
 	},
-	({ file, private: isPrivate }) =>
+	({ file, private: isPrivate, name, expires }) =>
 		Effect.gen(function* () {
 			const config = yield* loadConfig;
 			const client = yield* HttpClient.HttpClient;
-			const contentType = mime.getType(file) ?? 'application/octet-stream';
-			const body = yield* HttpBody.file(file, { contentType });
-			const response = yield* client
-				.execute(
-					apiRequest('PUT', `${config.endpoint}/api/files`, config.apiKey, {
-						body,
-						headers: {
-							'content-type': contentType,
-							'x-adrive-file-name': encodeURIComponent(basename(file)),
-							'x-adrive-public': String(!isPrivate)
-						}
-					})
+			const prepared = yield* prepareUpload(file, name);
+			const upload = Effect.gen(function* () {
+				const contentType =
+					mime.getType(prepared.displayName) ?? 'application/octet-stream';
+				const body = yield* HttpBody.file(prepared.path, { contentType });
+				const response = yield* client
+					.execute(
+						apiRequest('PUT', `${config.endpoint}/api/files`, config.apiKey, {
+							body,
+							headers: {
+								'content-type': contentType,
+								'x-adrive-file-name': encodeURIComponent(prepared.displayName),
+								'x-adrive-public': String(!isPrivate),
+								...(Option.isSome(expires)
+									? { 'x-adrive-expires-at': expires.value }
+									: {})
+							}
+						})
+					)
+					.pipe(Effect.flatMap(ensureOk));
+				const result =
+					yield* HttpClientResponse.schemaBodyJson(UploadResponseSchema)(
+						response
+					);
+				if (wantsJson()) {
+					yield* emit(result);
+				} else {
+					yield* Console.log(`Uploaded ${result.file.displayName}`);
+					yield* Console.log(result.url);
+					yield* Console.log(
+						`${result.file.id} · ${result.file.sizeBytes} bytes · ${result.file.public ? 'public' : 'private'}${result.forcedPublic ? ' (HTML forced public)' : ''}${result.file.expiresAt ? ` · expires ${result.file.expiresAt}` : ''}`
+					);
+				}
+			});
+			yield* upload.pipe(
+				Effect.ensuring(
+					prepared.temporaryDirectory
+						? Effect.tryPromise({
+								try: () =>
+									rm(prepared.temporaryDirectory!, {
+										recursive: true,
+										force: true
+									}),
+								catch: () => undefined
+							}).pipe(Effect.ignore)
+						: Effect.void
 				)
-				.pipe(Effect.flatMap(ensureOk));
-			const result =
-				yield* HttpClientResponse.schemaBodyJson(UploadResponseSchema)(
-					response
-				);
-
-			yield* Console.log(`Uploaded ${result.file.displayName}`);
-			yield* Console.log(result.url);
-			yield* Console.log(
-				`${result.file.id} · ${result.file.sizeBytes} bytes · ${result.file.public ? 'public' : 'private'}${result.forcedPublic ? ' (HTML forced public)' : ''}`
 			);
 		})
 ).pipe(Command.withDescription('Stream a file to adrive'));
@@ -220,6 +453,24 @@ const filenameFromDisposition = (value: string | undefined) => {
 	}
 	return /filename="([^"]+)"/i.exec(value)?.[1];
 };
+
+const writeStdout = (chunk: Uint8Array) =>
+	Effect.callback<void, CliFailure>((resume) => {
+		process.stdout.write(chunk, (cause) => {
+			if (cause) {
+				resume(
+					Effect.fail(
+						new CliFailure({
+							message: 'Could not write downloaded bytes to stdout',
+							cause
+						})
+					)
+				);
+			} else {
+				resume(Effect.void);
+			}
+		});
+	});
 
 const get = Command.make(
 	'get',
@@ -238,6 +489,11 @@ const get = Command.make(
 			const config = yield* loadConfig;
 			const client = yield* HttpClient.HttpClient;
 			const fs = yield* FileSystem.FileSystem;
+			if (Option.getOrUndefined(output) === '-' && wantsJson()) {
+				return yield* new CliFailure({
+					message: '`--json` cannot be combined with `--output -`'
+				});
+			}
 			const response = yield* client
 				.execute(
 					apiRequest(
@@ -252,8 +508,16 @@ const get = Command.make(
 				() =>
 					filenameFromDisposition(response.headers['content-disposition']) ?? id
 			);
-			yield* Stream.run(response.stream, fs.sink(destination));
-			yield* Console.log(`Downloaded ${id} to ${destination}`);
+			if (destination === '-') {
+				yield* Stream.runForEach(response.stream, writeStdout);
+			} else {
+				yield* Stream.run(response.stream, fs.sink(destination));
+				yield* emit(
+					wantsJson()
+						? { id, output: destination, status: 'downloaded' }
+						: `Downloaded ${id} to ${destination}`
+				);
+			}
 		})
 ).pipe(Command.withDescription('Stream a file from adrive'));
 
@@ -421,11 +685,15 @@ const sitePut = Command.make(
 			const result = yield* HttpClientResponse.schemaBodyJson(
 				SiteCommitResponseSchema
 			)(commitResponse);
-			yield* Console.log(`Published ${result.file.displayName}`);
-			yield* Console.log(result.url);
-			yield* Console.log(
-				`${result.file.id} · ${result.assetCount} assets · v${result.file.version} · public${result.cleanupPending ? ' · prior asset cleanup pending' : ''}`
-			);
+			if (wantsJson()) {
+				yield* emit(result);
+			} else {
+				yield* Console.log(`Published ${result.file.displayName}`);
+				yield* Console.log(result.url);
+				yield* Console.log(
+					`${result.file.id} · ${result.assetCount} assets · v${result.file.version} · public${result.cleanupPending ? ' · prior asset cleanup pending' : ''}`
+				);
+			}
 		})
 ).pipe(
 	Command.withDescription(
@@ -438,9 +706,154 @@ const site = Command.make('site').pipe(
 	Command.withSubcommands([sitePut])
 );
 
-const root = Command.make('adrive').pipe(
+const tagList = Command.make('list', {}, () =>
+	Effect.gen(function* () {
+		const config = yield* loadConfig;
+		const client = yield* HttpClient.HttpClient;
+		const response = yield* client
+			.execute(apiRequest('GET', `${config.endpoint}/api/tags`, config.apiKey))
+			.pipe(Effect.flatMap(ensureOk));
+		const result = yield* HttpClientResponse.schemaBodyJson(
+			TagListResponseSchema
+		)(response);
+		if (wantsJson()) {
+			yield* emit(result);
+		} else {
+			for (const tag of result.tags) {
+				yield* Console.log(`${tag.id}\t${tag.name}\t${tag.fileCount}`);
+			}
+		}
+	})
+).pipe(Command.withDescription('List tags'));
+
+const tagCreate = Command.make(
+	'create',
+	{
+		name: Argument.string('name'),
+		color: Flag.string('color').pipe(Flag.optional)
+	},
+	({ name, color }) =>
+		Effect.gen(function* () {
+			const config = yield* loadConfig;
+			const client = yield* HttpClient.HttpClient;
+			const response = yield* client
+				.execute(
+					apiRequest('POST', `${config.endpoint}/api/tags`, config.apiKey, {
+						body: HttpBody.jsonUnsafe({
+							name,
+							...(Option.isSome(color) ? { color: color.value } : {})
+						})
+					})
+				)
+				.pipe(Effect.flatMap(ensureOk));
+			const result =
+				yield* HttpClientResponse.schemaBodyJson(TagResponseSchema)(response);
+			yield* emit(wantsJson() ? result : result.tag.name);
+		})
+).pipe(Command.withDescription('Create a tag'));
+
+const tagUpdate = Command.make(
+	'update',
+	{
+		id: Argument.string('id'),
+		name: Flag.string('name').pipe(Flag.optional),
+		color: Flag.string('color').pipe(Flag.optional)
+	},
+	({ id, name, color }) =>
+		Effect.gen(function* () {
+			if (Option.isNone(name) && Option.isNone(color)) {
+				return yield* new CliFailure({
+					message: 'Provide --name or --color'
+				});
+			}
+			const config = yield* loadConfig;
+			const client = yield* HttpClient.HttpClient;
+			const response = yield* client
+				.execute(
+					apiRequest(
+						'PATCH',
+						`${config.endpoint}/api/tags/${encodeURIComponent(id)}`,
+						config.apiKey,
+						{
+							body: HttpBody.jsonUnsafe({
+								...(Option.isSome(name) ? { name: name.value } : {}),
+								...(Option.isSome(color) ? { color: color.value } : {})
+							})
+						}
+					)
+				)
+				.pipe(Effect.flatMap(ensureOk));
+			const result =
+				yield* HttpClientResponse.schemaBodyJson(TagResponseSchema)(response);
+			yield* emit(wantsJson() ? result : result.tag.name);
+		})
+).pipe(Command.withDescription('Update a tag'));
+
+const tagDelete = Command.make(
+	'delete',
+	{ id: Argument.string('id') },
+	({ id }) =>
+		Effect.gen(function* () {
+			const config = yield* loadConfig;
+			const client = yield* HttpClient.HttpClient;
+			yield* client
+				.execute(
+					apiRequest(
+						'DELETE',
+						`${config.endpoint}/api/tags/${encodeURIComponent(id)}`,
+						config.apiKey
+					)
+				)
+				.pipe(Effect.flatMap(ensureOk));
+			yield* emit(
+				wantsJson() ? { id, status: 'deleted' } : `Deleted tag ${id}`
+			);
+		})
+).pipe(Command.withDescription('Delete a tag'));
+
+const tagSet = Command.make(
+	'set',
+	{
+		fileId: Argument.string('file-id'),
+		names: Argument.string('names').pipe(Argument.variadic)
+	},
+	({ fileId, names }) =>
+		Effect.gen(function* () {
+			const config = yield* loadConfig;
+			const client = yield* HttpClient.HttpClient;
+			const response = yield* client
+				.execute(
+					apiRequest(
+						'PUT',
+						`${config.endpoint}/api/files/${encodeURIComponent(fileId)}/tags`,
+						config.apiKey,
+						{ body: HttpBody.jsonUnsafe({ names }) }
+					)
+				)
+				.pipe(Effect.flatMap(ensureOk));
+			const result = yield* HttpClientResponse.schemaBodyJson(
+				FileTagsResponseSchema
+			)(response);
+			yield* emit(
+				wantsJson()
+					? result
+					: `${result.file.displayName}: ${result.file.tags.map((tag) => tag.name).join(', ')}`
+			);
+		})
+).pipe(Command.withDescription('Replace all tags assigned to a file'));
+
+const tag = Command.make('tag').pipe(
+	Command.withDescription('Manage tags'),
+	Command.withSubcommands([tagList, tagCreate, tagUpdate, tagDelete, tagSet])
+);
+
+const root = Command.make('adrive', {
+	json: Flag.boolean('json').pipe(
+		Flag.withDescription('Emit JSON lines on stdout (accepted anywhere)')
+	)
+}).pipe(
 	Command.withDescription('A small CLI for an adrive deployment'),
-	Command.withSubcommands([login, put, get, site])
+	Command.withSubcommands([login, put, get, site, tag])
 );
 
 Command.run(root, { version: '0.1.0' }).pipe(

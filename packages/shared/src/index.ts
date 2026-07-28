@@ -59,7 +59,10 @@ export const FileSummarySchema = Schema.Struct({
 	version: Schema.Int,
 	sizeBytes: Schema.Int,
 	public: Schema.Boolean,
-	createdAt: Schema.String
+	createdAt: Schema.String,
+	expiresAt: Schema.NullOr(Schema.String),
+	downloadCount: Schema.Int,
+	lastDownloadAt: Schema.NullOr(Schema.String)
 });
 
 export type FileSummary = typeof FileSummarySchema.Type;
@@ -87,6 +90,9 @@ export const DashboardFileSchema = Schema.Struct({
 	createdAt: Schema.String,
 	updatedAt: Schema.String,
 	deletedAt: Schema.NullOr(Schema.String),
+	expiresAt: Schema.NullOr(Schema.String),
+	downloadCount: Schema.Int,
+	lastDownloadAt: Schema.NullOr(Schema.String),
 	tags: Schema.Array(TagSchema)
 });
 
@@ -137,6 +143,10 @@ export const FileMutationSchema = Schema.Union([
 	}),
 	Schema.Struct({
 		action: Schema.Literal('restore')
+	}),
+	Schema.Struct({
+		action: Schema.Literal('expiration'),
+		expiresAt: Schema.NullOr(Schema.String)
 	})
 ]);
 
@@ -239,6 +249,63 @@ export type SiteCommitResponse = typeof SiteCommitResponseSchema.Type;
 
 export const AuthCheckResponseSchema = Schema.Struct({
 	ok: Schema.Literal(true)
+});
+
+export const PasscodeLoginSchema = Schema.Struct({
+	passcode: Schema.String
+});
+
+export const ApiKeyCreateSchema = Schema.Struct({
+	name: Schema.String
+});
+
+export const ApiKeySchema = Schema.Struct({
+	id: Schema.String,
+	name: Schema.String,
+	prefix: Schema.String,
+	createdAt: Schema.String,
+	lastUsedAt: Schema.NullOr(Schema.String),
+	revokedAt: Schema.NullOr(Schema.String)
+});
+
+export type ApiKey = typeof ApiKeySchema.Type;
+
+export const ApiKeyListResponseSchema = Schema.Struct({
+	keys: Schema.Array(ApiKeySchema)
+});
+
+export const ApiKeyCreateResponseSchema = Schema.Struct({
+	key: ApiKeySchema,
+	token: Schema.String
+});
+
+export const DeviceAuthorizationCreateSchema = Schema.Struct({
+	name: Schema.String
+});
+
+export const DeviceAuthorizationResponseSchema = Schema.Struct({
+	deviceCode: Schema.String,
+	userCode: Schema.String,
+	verificationUri: Schema.String,
+	verificationUriComplete: Schema.String,
+	expiresIn: Schema.Int,
+	interval: Schema.Int
+});
+
+export const DeviceApprovalSchema = Schema.Struct({
+	userCode: Schema.String
+});
+
+export const DeviceTokenRequestSchema = Schema.Struct({
+	deviceCode: Schema.String
+});
+
+export const DeviceTokenResponseSchema = Schema.Struct({
+	apiKey: Schema.String
+});
+
+export const DevicePendingResponseSchema = Schema.Struct({
+	status: Schema.Literals(['authorization_pending', 'slow_down'])
 });
 
 export const ErrorResponseSchema = Schema.Struct({

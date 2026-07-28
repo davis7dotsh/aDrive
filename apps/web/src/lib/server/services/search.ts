@@ -71,9 +71,10 @@ const makeSearch = Effect.gen(function* () {
 						FROM files f
 						WHERE f.id IN (${idPlaceholders})
 							AND f.deleted_at IS NULL
+							AND (f.expires_at IS NULL OR f.expires_at > ?)
 							${tagFilter}`
 					)
-					.bind(...fileIds, ...tagIds)
+					.bind(...fileIds, new Date().toISOString(), ...tagIds)
 					.all();
 				if (!response.success)
 					throw new Error(response.error ?? 'Hydration failed');
@@ -111,11 +112,12 @@ const makeSearch = Effect.gen(function* () {
 						`SELECT ${dashboardFileColumns}
 						FROM files f
 						WHERE f.deleted_at IS NULL
+							AND (f.expires_at IS NULL OR f.expires_at > ?)
 							${tagFilter}
 						ORDER BY f.updated_at DESC, f.id
 						LIMIT 200`
 					)
-					.bind(...tagIds)
+					.bind(new Date().toISOString(), ...tagIds)
 					.all();
 				if (!response.success)
 					throw new Error(response.error ?? 'File listing failed');

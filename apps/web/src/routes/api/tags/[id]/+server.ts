@@ -3,7 +3,7 @@ import type { RequestHandler } from './$types';
 import { Effect, Schema } from 'effect';
 import { runEdge } from '$lib/server/edge';
 import { InvalidRequest } from '$lib/server/errors';
-import { Auth } from '$lib/server/services/auth';
+import { Auth, authorizeRequest } from '$lib/server/services/auth';
 import { Tags } from '$lib/server/services/tags';
 
 const readUpdate = (request: Request) =>
@@ -31,10 +31,7 @@ export const PATCH: RequestHandler = ({ params, request, url }) =>
 		Effect.gen(function* () {
 			const auth = yield* Auth;
 			const tags = yield* Tags;
-			yield* auth.authorize({
-				authorization: request.headers.get('authorization'),
-				requestOrigin: url.origin
-			});
+			yield* authorizeRequest(auth, request, url);
 			const tag = yield* readUpdate(request).pipe(
 				Effect.flatMap((input) => tags.update(params.id, input))
 			);
@@ -47,10 +44,7 @@ export const DELETE: RequestHandler = ({ params, request, url }) =>
 		Effect.gen(function* () {
 			const auth = yield* Auth;
 			const tags = yield* Tags;
-			yield* auth.authorize({
-				authorization: request.headers.get('authorization'),
-				requestOrigin: url.origin
-			});
+			yield* authorizeRequest(auth, request, url);
 			yield* tags.remove(params.id);
 			return new Response(null, { status: 204 });
 		})

@@ -1,7 +1,7 @@
 import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
 import { runEdge } from '$lib/server/edge';
-import { Auth } from '$lib/server/services/auth';
+import { Auth, authorizeRequest } from '$lib/server/services/auth';
 import { Files } from '$lib/server/services/files';
 
 export const PUT: RequestHandler = ({ params, request, url }) =>
@@ -9,10 +9,7 @@ export const PUT: RequestHandler = ({ params, request, url }) =>
 		Effect.gen(function* () {
 			const auth = yield* Auth;
 			const files = yield* Files;
-			yield* auth.authorize({
-				authorization: request.headers.get('authorization'),
-				requestOrigin: url.origin
-			});
+			yield* authorizeRequest(auth, request, url);
 			const result = yield* files.uploadVersion({
 				id: params.id,
 				contentType:

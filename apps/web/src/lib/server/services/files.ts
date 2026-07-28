@@ -46,6 +46,7 @@ interface UploadInput {
 	readonly contentLength: string | null;
 	readonly body: ReadableStream<Uint8Array> | null;
 	readonly tags: ReadonlyArray<string>;
+	readonly expiresAt: string | null;
 }
 
 interface VersionUploadInput {
@@ -93,6 +94,11 @@ export interface FilesShape {
 	readonly restore: (
 		id: string
 	) => Effect.Effect<MutationResult, NotFound | StorageError>;
+	readonly setExpiration: (
+		id: string,
+		expiresAt: string | null
+	) => Effect.Effect<MutationResult, InvalidRequest | NotFound | StorageError>;
+	readonly recordDownload: (id: string) => Effect.Effect<void, StorageError>;
 	readonly findContent: (
 		id: string,
 		version?: number
@@ -301,8 +307,8 @@ const makeFiles = Effect.gen(function* () {
 					.prepare(
 						`INSERT INTO files (
 							id, display_name, content_type, kind, current_version, size_bytes,
-							public, is_site, created_at, updated_at, index_state
-						) VALUES (?, ?, ?, 'file', 1, ?, ?, 0, ?, ?, 'disabled')`
+							public, is_site, created_at, updated_at, expires_at, index_state
+						) VALUES (?, ?, ?, 'file', 1, ?, ?, 0, ?, ?, ?, 'disabled')`
 					)
 					.bind(
 						id,
@@ -311,7 +317,8 @@ const makeFiles = Effect.gen(function* () {
 						stored.size,
 						visibility.public ? 1 : 0,
 						createdAt,
-						createdAt
+						createdAt,
+						input.expiresAt
 					),
 				db
 					.prepare(
@@ -362,7 +369,10 @@ const makeFiles = Effect.gen(function* () {
 					version: 1,
 					sizeBytes: stored.size,
 					public: visibility.public,
-					createdAt
+					createdAt,
+					expiresAt: input.expiresAt,
+					downloadCount: 0,
+					lastDownloadAt: null
 				},
 				forcedPublic: visibility.forcedPublic
 			};
@@ -426,13 +436,16 @@ const makeFiles = Effect.gen(function* () {
 			);
 		}),
 		list: Effect.fn('Files.list')(function* (trashed) {
+			const now = new Date().toISOString();
 			const rows = yield* sql
 				.unsafe(
 					`SELECT ${dashboardFileColumns}
 					FROM files f
 					WHERE f.deleted_at IS ${trashed ? 'NOT NULL' : 'NULL'}
+						${trashed ? '' : 'AND (f.expires_at IS NULL OR f.expires_at > ?)'}
 					ORDER BY ${trashed ? 'f.deleted_at' : 'f.updated_at'} DESC, f.id
-					LIMIT 200`
+					LIMIT 200`,
+					trashed ? [] : [now]
 				)
 				.pipe(
 					Effect.mapError(
@@ -532,6 +545,37 @@ const makeFiles = Effect.gen(function* () {
 				forcedPublic: false
 			};
 		}),
+		setExpiration: Effect.fn('Files.setExpiration')(function* (id, expiresAt) {
+			const current = yield* findDashboardFile(id);
+			const updatedAt = new Date().toISOString();
+			yield* sql`
+				UPDATE files
+				SET expires_at = ${expiresAt}, updated_at = ${updatedAt}
+				WHERE id = ${id}
+			`.pipe(
+				Effect.mapError(
+					(cause) =>
+						new StorageError({ operation: 'update file expiration', cause })
+				)
+			);
+			return {
+				file: { ...current, expiresAt, updatedAt },
+				forcedPublic: false
+			};
+		}),
+		recordDownload: Effect.fn('Files.recordDownload')(function* (id) {
+			const now = new Date().toISOString();
+			yield* sql`
+				UPDATE files
+				SET download_count = download_count + 1, last_download_at = ${now}
+				WHERE id = ${id}
+			`.pipe(
+				Effect.mapError(
+					(cause) =>
+						new StorageError({ operation: 'record file download', cause })
+				)
+			);
+		}),
 		findContent: Effect.fn('Files.findContent')(function* (id, version) {
 			if (
 				version !== undefined &&
@@ -552,6 +596,7 @@ const makeFiles = Effect.gen(function* () {
 							JOIN file_versions v
 								ON v.file_id = f.id AND v.version = f.current_version
 							WHERE f.id = ${id} AND f.deleted_at IS NULL
+								AND (f.expires_at IS NULL OR f.expires_at > ${new Date().toISOString()})
 								AND f.is_site = 0
 							LIMIT 1
 						`.pipe(
@@ -566,6 +611,7 @@ const makeFiles = Effect.gen(function* () {
 							FROM files f
 							JOIN file_versions v ON v.file_id = f.id
 							WHERE f.id = ${id} AND v.version = ${version} AND f.deleted_at IS NULL
+								AND (f.expires_at IS NULL OR f.expires_at > ${new Date().toISOString()})
 								AND f.is_site = 0
 							LIMIT 1
 						`.pipe(
@@ -585,7 +631,10 @@ const makeFiles = Effect.gen(function* () {
 					version: row.version,
 					sizeBytes: row.size_bytes,
 					public: row.is_public === 1,
-					createdAt: row.created_at
+					createdAt: row.created_at,
+					expiresAt: null,
+					downloadCount: 0,
+					lastDownloadAt: null
 				},
 				r2Key: row.r2_key
 			};

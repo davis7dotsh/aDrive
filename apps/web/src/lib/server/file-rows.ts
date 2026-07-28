@@ -13,6 +13,9 @@ export const DashboardFileRow = Schema.Struct({
 	created_at: Schema.String,
 	updated_at: Schema.String,
 	deleted_at: Schema.NullOr(Schema.String),
+	expires_at: Schema.NullOr(Schema.String),
+	download_count: Schema.Int,
+	last_download_at: Schema.NullOr(Schema.String),
 	tags_json: Schema.String
 });
 
@@ -32,6 +35,9 @@ export const dashboardFileColumns = `
 	f.created_at,
 	f.updated_at,
 	f.deleted_at,
+	f.expires_at,
+	f.download_count,
+	f.last_download_at,
 	COALESCE((
 		SELECT json_group_array(json_object(
 			'id', t.id,
@@ -80,5 +86,8 @@ export const toDashboardFile = (
 	createdAt: row.created_at,
 	updatedAt: row.updated_at,
 	deletedAt: row.deleted_at,
+	expiresAt: row.expires_at,
+	downloadCount: row.download_count,
+	lastDownloadAt: row.last_download_at,
 	tags: decodeTags(row.tags_json)
 });

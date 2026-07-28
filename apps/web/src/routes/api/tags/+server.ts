@@ -3,7 +3,7 @@ import type { RequestHandler } from './$types';
 import { Effect, Schema } from 'effect';
 import { runEdge } from '$lib/server/edge';
 import { InvalidRequest } from '$lib/server/errors';
-import { Auth } from '$lib/server/services/auth';
+import { Auth, authorizeRequest } from '$lib/server/services/auth';
 import { Tags } from '$lib/server/services/tags';
 
 const readCreate = (request: Request) =>
@@ -31,10 +31,7 @@ export const GET: RequestHandler = ({ request, url }) =>
 		Effect.gen(function* () {
 			const auth = yield* Auth;
 			const tags = yield* Tags;
-			yield* auth.authorize({
-				authorization: request.headers.get('authorization'),
-				requestOrigin: url.origin
-			});
+			yield* authorizeRequest(auth, request, url);
 			return Response.json({ tags: yield* tags.list });
 		})
 	);
@@ -44,10 +41,7 @@ export const POST: RequestHandler = ({ request, url }) =>
 		Effect.gen(function* () {
 			const auth = yield* Auth;
 			const tags = yield* Tags;
-			yield* auth.authorize({
-				authorization: request.headers.get('authorization'),
-				requestOrigin: url.origin
-			});
+			yield* authorizeRequest(auth, request, url);
 			const tag = yield* readCreate(request).pipe(
 				Effect.flatMap((input) => tags.create(input))
 			);

@@ -2,8 +2,9 @@ import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
 import { runEdge } from '$lib/server/edge';
 import { AppConfig } from '$lib/server/config';
+import { validateExpiration } from '$lib/server/auth-policy';
 import { InvalidRequest } from '$lib/server/errors';
-import { Auth } from '$lib/server/services/auth';
+import { Auth, authorizeRequest } from '$lib/server/services/auth';
 import { Files } from '$lib/server/services/files';
 import { Tags } from '$lib/server/services/tags';
 
@@ -65,10 +66,7 @@ export const GET: RequestHandler = ({ request, url }) =>
 			const files = yield* Files;
 			const tags = yield* Tags;
 			const config = yield* AppConfig;
-			yield* auth.authorize({
-				authorization: request.headers.get('authorization'),
-				requestOrigin: url.origin
-			});
+			yield* authorizeRequest(auth, request, url);
 			const trashed = url.searchParams.get('trashed') === 'true';
 			return Response.json({
 				files: yield* files.list(trashed),
@@ -85,10 +83,7 @@ export const PUT: RequestHandler = ({ request, url }) =>
 			const auth = yield* Auth;
 			const files = yield* Files;
 			const config = yield* AppConfig;
-			yield* auth.authorize({
-				authorization: request.headers.get('authorization'),
-				requestOrigin: url.origin
-			});
+			yield* authorizeRequest(auth, request, url);
 			const displayName = yield* Effect.try({
 				try: () => decodeName(request.headers.get('x-adrive-file-name')),
 				catch: (cause) =>
@@ -124,6 +119,17 @@ export const PUT: RequestHandler = ({ request, url }) =>
 							: new InvalidRequest({
 									status: 400,
 									message: 'Tags are invalid'
+								})
+				}),
+				expiresAt: yield* Effect.try({
+					try: () =>
+						validateExpiration(request.headers.get('x-adrive-expires-at')),
+					catch: (cause) =>
+						cause instanceof InvalidRequest
+							? cause
+							: new InvalidRequest({
+									status: 400,
+									message: 'Expiration is invalid'
 								})
 				})
 			});

@@ -16,7 +16,8 @@ export interface BlobsShape {
 		contentType: string
 	) => Effect.Effect<StoredBlob, StorageError>;
 	readonly get: (
-		key: string
+		key: string,
+		range?: string | null
 	) => Effect.Effect<R2ObjectBody, NotFound | StorageError>;
 	readonly readTextPrefix: (
 		key: string,
@@ -43,9 +44,12 @@ const makeBlobs = Effect.gen(function* () {
 						: new StorageError({ operation: 'put blob', cause })
 			});
 		}),
-		get: Effect.fn('Blobs.get')(function* (key) {
+		get: Effect.fn('Blobs.get')(function* (key, range) {
 			const object = yield* Effect.tryPromise({
-				try: () => bucket.get(key),
+				try: () =>
+					range
+						? bucket.get(key, { range: new Headers({ Range: range }) })
+						: bucket.get(key),
 				catch: (cause) => new StorageError({ operation: 'get blob', cause })
 			});
 			if (object === null) return yield* new NotFound({ id: key });

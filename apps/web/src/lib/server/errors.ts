@@ -1,7 +1,7 @@
 import { Data } from 'effect';
 
 export class InvalidRequest extends Data.TaggedError('InvalidRequest')<{
-	readonly status: 400 | 409 | 411 | 413;
+	readonly status: 400 | 403 | 404 | 409 | 411 | 413 | 416;
 	readonly message: string;
 }> {}
 

@@ -1,11 +1,16 @@
 <script lang="ts">
-	import type { DashboardFile, Tag } from '@adrive/shared';
+	import type { ApiKey, DashboardFile, Tag } from '@adrive/shared';
+	import { page } from '$app/state';
 	import { createSearchParamsSchema, useSearchParams } from 'runed/kit';
 	import {
 		createTag,
+		createApiKey,
 		deleteTag,
+		approveDevice,
 		listFiles,
+		listApiKeys,
 		mutateFile,
+		revokeApiKey,
 		searchFiles,
 		updateTag,
 		uploadFile,
@@ -41,6 +46,13 @@
 	let dragging = $state(false);
 	let copiedId = $state('');
 	let keyInput = $state('');
+	let localKeyInput = $state('');
+	let expiresAtInput = $state('');
+	let apiKeys = $state<ReadonlyArray<ApiKey>>([]);
+	let apiKeyName = $state('');
+	let createdApiKey = $state('');
+	let authMessage = $state('');
+	let managingAuth = $state(false);
 	let newTagName = $state('');
 	let newTagColor = $state('#2563eb');
 	let tagMessage = $state('');
@@ -49,9 +61,25 @@
 	let manageColor = $state('#2563eb');
 	let managing = $state(false);
 	let run = 0;
+	const deviceCode = $derived(page.url.searchParams.get('device') ?? '');
 
 	$effect(() => {
 		return () => params.cleanup();
+	});
+
+	$effect(() => {
+		const token = session.token;
+		if (!token) {
+			apiKeys = [];
+			return;
+		}
+		void listApiKeys(token)
+			.then((keys) => {
+				apiKeys = keys;
+			})
+			.catch(() => {
+				apiKeys = [];
+			});
 	});
 
 	$effect(() => {
@@ -127,7 +155,8 @@
 					session.token,
 					file,
 					isPublic,
-					selectedNames
+					selectedNames,
+					expiresAtInput ? new Date(expiresAtInput).toISOString() : null
 				);
 				uploadMessage = result.forcedPublic
 					? `${file.name} uploaded and made public because HTML is always public.`
@@ -141,6 +170,58 @@
 					: 'Upload could not be completed';
 		} finally {
 			uploading = false;
+		}
+	};
+
+	const mintApiKey = async () => {
+		if (!apiKeyName.trim() || managingAuth) return;
+		managingAuth = true;
+		authMessage = '';
+		createdApiKey = '';
+		try {
+			const result = await createApiKey(session.token, apiKeyName);
+			apiKeys = [result.key, ...apiKeys];
+			createdApiKey = result.token;
+			apiKeyName = '';
+			authMessage = 'API key created. Copy it now; it will not be shown again.';
+		} catch (cause) {
+			authMessage =
+				cause instanceof Error ? cause.message : 'Could not create the API key';
+		} finally {
+			managingAuth = false;
+		}
+	};
+
+	const removeApiKey = async (id: string) => {
+		if (managingAuth) return;
+		managingAuth = true;
+		authMessage = '';
+		try {
+			await revokeApiKey(session.token, id);
+			apiKeys = apiKeys.map((key) =>
+				key.id === id ? { ...key, revokedAt: new Date().toISOString() } : key
+			);
+			authMessage = 'API key revoked.';
+		} catch (cause) {
+			authMessage =
+				cause instanceof Error ? cause.message : 'Could not revoke the API key';
+		} finally {
+			managingAuth = false;
+		}
+	};
+
+	const authorizeDevice = async () => {
+		if (!deviceCode || managingAuth) return;
+		managingAuth = true;
+		authMessage = '';
+		try {
+			await approveDevice(session.token, deviceCode);
+			authMessage = `Device ${deviceCode} approved. You can return to the CLI.`;
+		} catch (cause) {
+			authMessage =
+				cause instanceof Error ? cause.message : 'Could not approve the device';
+		} finally {
+			managingAuth = false;
 		}
 	};
 
@@ -278,11 +359,11 @@
 				Private dashboard
 			</p>
 			<h1 class="mt-3 text-2xl font-semibold tracking-tight text-zinc-950">
-				Connect to your drive
+				Sign in to your drive
 			</h1>
 			<p class="mt-2 text-sm leading-6 text-zinc-500">
-				Use an existing adrive API key. It stays in this browser tab and is sent
-				only to the dashboard origin.
+				Use the deployment passcode. A secure, host-only browser session is
+				created without storing the passcode.
 			</p>
 			<form
 				class="mt-6"
@@ -291,15 +372,14 @@
 					void session.connect(keyInput);
 				}}
 			>
-				<label for="api-key" class="text-sm font-medium text-zinc-700">
-					API key
+				<label for="passcode" class="text-sm font-medium text-zinc-700">
+					Passcode
 				</label>
 				<input
-					id="api-key"
+					id="passcode"
 					type="password"
-					autocomplete="off"
+					autocomplete="current-password"
 					bind:value={keyInput}
-					placeholder="adr_…"
 					class="mt-2 w-full rounded-md border border-zinc-300 bg-white px-3 py-2.5 text-sm shadow-sm placeholder:text-zinc-400"
 				/>
 				{#if session.error}
@@ -310,11 +390,59 @@
 					disabled={session.connecting || !keyInput.trim()}
 					class="mt-4 w-full rounded-md bg-zinc-950 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-50"
 				>
-					{session.connecting ? 'Checking…' : 'Connect'}
+					{session.connecting ? 'Signing in…' : 'Sign in'}
 				</button>
 			</form>
+			<details class="mt-5 border-t border-zinc-100 pt-4">
+				<summary class="text-xs font-medium text-zinc-500"
+					>Local HTTP fallback</summary
+				>
+				<p class="mt-2 text-xs leading-5 text-zinc-500">
+					Secure <code>__Host-</code> cookies require HTTPS. For local HTTP development,
+					connect an existing API key in this browser tab.
+				</p>
+				<form
+					class="mt-3 flex gap-2"
+					onsubmit={(event) => {
+						event.preventDefault();
+						void session.connectApiKey(localKeyInput);
+					}}
+				>
+					<input
+						type="password"
+						aria-label="Local API key"
+						autocomplete="off"
+						bind:value={localKeyInput}
+						placeholder="adr_…"
+						class="min-w-0 flex-1 rounded-md border border-zinc-300 px-3 py-2 text-sm"
+					/>
+					<button
+						type="submit"
+						disabled={session.connecting || !localKeyInput.trim()}
+						class="rounded-md border border-zinc-200 px-3 py-2 text-sm font-medium disabled:opacity-50"
+						>Connect</button
+					>
+				</form>
+			</details>
 		</section>
 	{:else}
+		{#if deviceCode}
+			<section
+				class="mb-6 rounded-lg border border-accent-100 bg-accent-50 p-5"
+			>
+				<p class="text-sm font-semibold text-accent-700">Approve CLI device</p>
+				<p class="mt-1 text-sm text-zinc-600">
+					Confirm code <strong class="font-mono">{deviceCode}</strong> only if it
+					matches the CLI you started.
+				</p>
+				<button
+					type="button"
+					disabled={managingAuth}
+					class="mt-3 rounded-md bg-zinc-950 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+					onclick={() => void authorizeDevice()}>Approve device</button
+				>
+			</section>
+		{/if}
 		<div
 			class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"
 		>
@@ -474,6 +602,18 @@
 							</div>
 						</fieldset>
 					{/if}
+					<label class="text-sm text-zinc-600 sm:col-span-2">
+						Expiration (optional)
+						<input
+							type="datetime-local"
+							bind:value={expiresAtInput}
+							class="mt-2 block rounded-md border border-zinc-300 px-3 py-2 text-sm"
+						/>
+						<span class="mt-1 block text-xs text-zinc-400"
+							>Expired links stop serving immediately; cleanup runs in the
+							background.</span
+						>
+					</label>
 				</div>
 				{#if uploadMessage}
 					<p class="mt-4 text-sm text-zinc-600" aria-live="polite">
@@ -551,6 +691,73 @@
 				{#if tagMessage}
 					<p class="mt-3 text-sm text-zinc-600" aria-live="polite">
 						{tagMessage}
+					</p>
+				{/if}
+			</section>
+
+			<section
+				class="mt-6 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm sm:p-6"
+			>
+				<h2 class="text-sm font-semibold text-zinc-900">API keys</h2>
+				<p class="mt-1 text-xs leading-5 text-zinc-500">
+					Keys have full access. New secrets are shown once and stored only as
+					hashes.
+				</p>
+				<form
+					class="mt-3 flex max-w-xl gap-2"
+					onsubmit={(event) => {
+						event.preventDefault();
+						void mintApiKey();
+					}}
+				>
+					<input
+						bind:value={apiKeyName}
+						placeholder="Key name, e.g. backup agent"
+						class="min-w-0 flex-1 rounded-md border border-zinc-300 px-3 py-2 text-sm"
+					/>
+					<button
+						type="submit"
+						disabled={!apiKeyName.trim() || managingAuth}
+						class="rounded-md bg-zinc-950 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+						>Create key</button
+					>
+				</form>
+				{#if createdApiKey}
+					<div class="mt-3 rounded-md bg-amber-50 p-3">
+						<p class="text-xs font-medium text-amber-900">Copy this key now</p>
+						<code class="mt-1 block break-all text-xs text-amber-900"
+							>{createdApiKey}</code
+						>
+					</div>
+				{/if}
+				{#if apiKeys.length > 0}
+					<ul class="mt-4 divide-y divide-zinc-100 border-t border-zinc-100">
+						{#each apiKeys as key (key.id)}
+							<li class="flex items-center justify-between gap-3 py-3">
+								<div class="min-w-0">
+									<p class="truncate text-sm font-medium text-zinc-800">
+										{key.name}
+									</p>
+									<p class="mt-0.5 text-xs text-zinc-400">
+										adr_{key.prefix}_… · created {formatDate(key.createdAt)}
+										{key.revokedAt ? ' · revoked' : ''}
+									</p>
+								</div>
+								{#if !key.revokedAt}
+									<button
+										type="button"
+										disabled={managingAuth}
+										class="text-xs font-medium text-red-600 disabled:opacity-50"
+										onclick={() => void removeApiKey(key.id)}>Revoke</button
+									>
+								{/if}
+							</li>
+						{/each}
+					</ul>
+				{/if}
+				{#if authMessage}
+					<p class="mt-3 text-sm text-zinc-600" aria-live="polite">
+						{authMessage}
 					</p>
 				{/if}
 			</section>

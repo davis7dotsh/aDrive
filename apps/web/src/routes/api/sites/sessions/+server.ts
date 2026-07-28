@@ -6,7 +6,7 @@ import type { RequestHandler } from './$types';
 import { Effect, Schema } from 'effect';
 import { runEdge } from '$lib/server/edge';
 import { InvalidRequest } from '$lib/server/errors';
-import { Auth } from '$lib/server/services/auth';
+import { Auth, authorizeRequest } from '$lib/server/services/auth';
 import { Sites } from '$lib/server/services/sites';
 
 const MAX_MANIFEST_BYTES = 1024 * 1024;
@@ -57,10 +57,7 @@ export const POST: RequestHandler = ({ request, url }) =>
 		Effect.gen(function* () {
 			const auth = yield* Auth;
 			const sites = yield* Sites;
-			yield* auth.authorize({
-				authorization: request.headers.get('authorization'),
-				requestOrigin: url.origin
-			});
+			yield* authorizeRequest(auth, request, url);
 			const input: SiteSessionCreate = yield* readManifest(request);
 			return Response.json(yield* sites.createSession(input), { status: 201 });
 		})

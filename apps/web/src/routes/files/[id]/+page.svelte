@@ -23,6 +23,7 @@
 	let copied = $state('');
 	let tagName = $state('');
 	let savingTags = $state(false);
+	let expirationInput = $state('');
 	let run = 0;
 
 	$effect(() => {
@@ -40,7 +41,12 @@
 		error = '';
 		void getFile(token, fileId, controller.signal)
 			.then((result) => {
-				if (mine === run) detail = result;
+				if (mine === run) {
+					detail = result;
+					expirationInput = result.file.expiresAt
+						? result.file.expiresAt.slice(0, 16)
+						: '';
+				}
 			})
 			.catch((cause: unknown) => {
 				if (mine !== run || controller.signal.aborted) return;
@@ -73,6 +79,31 @@
 		} catch (cause) {
 			error =
 				cause instanceof Error ? cause.message : 'Could not change visibility';
+		} finally {
+			mutating = false;
+		}
+	};
+
+	const saveExpiration = async () => {
+		if (!detail || mutating) return;
+		mutating = true;
+		error = '';
+		message = '';
+		try {
+			const expiresAt = expirationInput
+				? new Date(expirationInput).toISOString()
+				: null;
+			const result = await mutateFile(session.token, detail.file.id, {
+				action: 'expiration',
+				expiresAt
+			});
+			detail = { ...detail, file: result.file };
+			message = expiresAt
+				? `File expires ${formatDate(expiresAt)}.`
+				: 'File expiration removed.';
+		} catch (cause) {
+			error =
+				cause instanceof Error ? cause.message : 'Could not update expiration';
 		} finally {
 			mutating = false;
 		}
@@ -293,6 +324,16 @@
 						{formatBytes(detail.file.sizeBytes)} · Version {detail.file.version}
 						· Updated {formatDate(detail.file.updatedAt)}
 					</p>
+					<p class="mt-1 text-xs text-zinc-400">
+						{detail.file.downloadCount}
+						{detail.file.downloadCount === 1 ? 'download' : 'downloads'}
+						{detail.file.lastDownloadAt
+							? ` · last ${formatDate(detail.file.lastDownloadAt)}`
+							: ''}
+						{detail.file.expiresAt
+							? ` · expires ${formatDate(detail.file.expiresAt)}`
+							: ''}
+					</p>
 					<p class="mt-1 font-mono text-xs break-all text-zinc-400">
 						{detail.file.id}
 					</p>
@@ -414,6 +455,26 @@
 								/>
 							</label>
 						{/if}
+					</div>
+					<div class="sm:col-span-2">
+						<p class="text-sm font-medium text-zinc-900">Expiration</p>
+						<p class="mt-1 text-xs leading-5 text-zinc-500">
+							Expired content becomes unavailable immediately. The background
+							sweeper later removes stored bytes.
+						</p>
+						<div class="mt-3 flex flex-wrap gap-2">
+							<input
+								type="datetime-local"
+								bind:value={expirationInput}
+								class="rounded-md border border-zinc-300 px-3 py-2 text-sm"
+							/>
+							<button
+								type="button"
+								disabled={mutating}
+								class="rounded-md border border-zinc-200 px-3 py-2 text-sm font-medium disabled:opacity-50"
+								onclick={() => void saveExpiration()}>Save expiration</button
+							>
+						</div>
 					</div>
 				</div>
 				<div class="mt-6 border-t border-zinc-100 pt-5">

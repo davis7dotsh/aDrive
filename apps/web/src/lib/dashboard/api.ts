@@ -1,4 +1,5 @@
 import type {
+	ApiKey,
 	FileDetailResponse,
 	FileListResponse,
 	FileMutation,
@@ -10,6 +11,8 @@ import type {
 	TagUpdate,
 	UploadResponse
 } from '@adrive/shared';
+
+export const BROWSER_SESSION = '__browser_session__';
 
 export type FileListPayload = FileListResponse;
 export type FileDetailPayload = FileDetailResponse;
@@ -34,14 +37,65 @@ const errorMessage = async (response: Response) => {
 
 const request = async (path: string, token: string, init?: RequestInit) => {
 	const headers = new Headers(init?.headers);
-	headers.set('Authorization', `Bearer ${token}`);
-	const response = await fetch(path, { ...init, headers });
+	if (token !== BROWSER_SESSION) {
+		headers.set('Authorization', `Bearer ${token}`);
+	}
+	const response = await fetch(path, {
+		...init,
+		headers,
+		credentials: 'same-origin'
+	});
 	if (!response.ok) throw new Error(await errorMessage(response));
 	return response;
 };
 
 export const checkKey = async (token: string) => {
 	await request('/api/auth/check', token);
+};
+
+export const loginWithPasscode = async (passcode: string) => {
+	const response = await fetch('/api/auth/session', {
+		method: 'POST',
+		credentials: 'same-origin',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ passcode })
+	});
+	if (!response.ok) throw new Error(await errorMessage(response));
+};
+
+export const logoutSession = async () => {
+	await fetch('/api/auth/session', {
+		method: 'DELETE',
+		credentials: 'same-origin'
+	});
+};
+
+export const listApiKeys = async (token: string) => {
+	const response = await request('/api/auth/keys', token);
+	return ((await response.json()) as { keys: ReadonlyArray<ApiKey> }).keys;
+};
+
+export const createApiKey = async (token: string, name: string) => {
+	const response = await request('/api/auth/keys', token, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ name })
+	});
+	return (await response.json()) as { key: ApiKey; token: string };
+};
+
+export const revokeApiKey = async (token: string, id: string) => {
+	await request(`/api/auth/keys/${encodeURIComponent(id)}`, token, {
+		method: 'DELETE'
+	});
+};
+
+export const approveDevice = async (token: string, userCode: string) => {
+	await request('/api/auth/device/approve', token, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ userCode })
+	});
 };
 
 export const listFiles = async (
@@ -91,7 +145,8 @@ export const uploadFile = async (
 	token: string,
 	file: File,
 	isPublic: boolean,
-	tagNames: ReadonlyArray<string> = []
+	tagNames: ReadonlyArray<string> = [],
+	expiresAt: string | null = null
 ) => {
 	const response = await request('/api/files', token, {
 		method: 'PUT',
@@ -99,7 +154,8 @@ export const uploadFile = async (
 			'Content-Type': file.type || 'application/octet-stream',
 			'X-Adrive-File-Name': encodeURIComponent(file.name),
 			'X-Adrive-Public': String(isPublic),
-			'X-Adrive-Tags': encodeURIComponent(JSON.stringify(tagNames))
+			'X-Adrive-Tags': encodeURIComponent(JSON.stringify(tagNames)),
+			...(expiresAt ? { 'X-Adrive-Expires-At': expiresAt } : {})
 		},
 		body: file
 	});

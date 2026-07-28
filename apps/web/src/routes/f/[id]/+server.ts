@@ -4,6 +4,8 @@ import {
 	contentDisposition,
 	contentSecurityPolicy
 } from '$lib/server/content-headers';
+import { shouldCountDownload } from '$lib/server/auth-policy';
+import { decodeRangeHeader, rangeHeaders } from '$lib/server/download-response';
 import { runEdge } from '$lib/server/edge';
 import { NotFound } from '$lib/server/errors';
 import { Blobs } from '$lib/server/services/blobs';
@@ -14,7 +16,7 @@ const requestedVersion = (url: URL) => {
 	return value === null ? undefined : Number(value);
 };
 
-export const GET: RequestHandler = ({ params, url }) =>
+export const GET: RequestHandler = ({ params, request, url }) =>
 	runEdge(
 		Effect.gen(function* () {
 			const files = yield* Files;
@@ -24,20 +26,30 @@ export const GET: RequestHandler = ({ params, url }) =>
 				requestedVersion(url)
 			);
 			if (!content.file.public) return yield* new NotFound({ id: params.id });
-			const object = yield* blobs.get(content.r2Key);
+			const range = yield* decodeRangeHeader(request.headers.get('range'));
+			const object = yield* blobs.get(content.r2Key, range);
+			const responseRange = rangeHeaders(object, content.file.sizeBytes);
+			if (shouldCountDownload(range)) {
+				yield* files.recordDownload(content.file.id);
+			}
 
 			return new Response(object.body, {
+				status: responseRange.status,
 				headers: {
+					'Accept-Ranges': 'bytes',
 					'Content-Disposition': contentDisposition(
 						content.file.displayName,
 						content.file.contentType
 					),
-					'Content-Length': String(object.size),
+					'Content-Length': String(responseRange.contentLength),
 					'Content-Security-Policy': contentSecurityPolicy(
 						content.file.contentType
 					),
 					'Content-Type': content.file.contentType,
 					ETag: object.httpEtag,
+					...(responseRange.contentRange
+						? { 'Content-Range': responseRange.contentRange }
+						: {}),
 					'Referrer-Policy': 'no-referrer',
 					'X-Content-Type-Options': 'nosniff'
 				}

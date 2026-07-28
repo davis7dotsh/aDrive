@@ -2,7 +2,7 @@ import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
 import { AppConfig } from '$lib/server/config';
 import { runEdge } from '$lib/server/edge';
-import { Auth } from '$lib/server/services/auth';
+import { Auth, authorizeRequest } from '$lib/server/services/auth';
 import { Search } from '$lib/server/services/search';
 import { Tags } from '$lib/server/services/tags';
 
@@ -13,10 +13,7 @@ export const GET: RequestHandler = ({ request, url }) =>
 			const search = yield* Search;
 			const tags = yield* Tags;
 			const config = yield* AppConfig;
-			yield* auth.authorize({
-				authorization: request.headers.get('authorization'),
-				requestOrigin: url.origin
-			});
+			yield* authorizeRequest(auth, request, url);
 			return Response.json({
 				files: yield* search.files({
 					query: url.searchParams.get('q') ?? '',

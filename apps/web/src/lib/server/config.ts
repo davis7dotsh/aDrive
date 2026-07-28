@@ -5,6 +5,7 @@ export interface AppConfigShape {
 	readonly dashboardOrigin: string;
 	readonly contentOrigin: string;
 	readonly maxUploadBytes: number;
+	readonly passcode: string;
 }
 
 export class AppConfig extends Context.Service<AppConfig, AppConfigShape>()(
@@ -20,7 +21,10 @@ export const configFromEnv = (env: Env) => {
 	if (!Number.isSafeInteger(maxUploadBytes) || maxUploadBytes <= 0) {
 		throw new Error('MAX_UPLOAD_BYTES must be a positive safe integer');
 	}
-	return { ...origins, maxUploadBytes };
+	if (typeof env.PASSCODE !== 'string' || env.PASSCODE.length < 12) {
+		throw new Error('PASSCODE must contain at least 12 characters');
+	}
+	return { ...origins, maxUploadBytes, passcode: env.PASSCODE };
 };
 
 export const ConfigLive = (env: Env) =>

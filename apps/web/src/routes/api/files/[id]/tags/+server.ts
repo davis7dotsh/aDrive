@@ -3,7 +3,7 @@ import type { RequestHandler } from './$types';
 import { Effect, Schema } from 'effect';
 import { runEdge } from '$lib/server/edge';
 import { InvalidRequest } from '$lib/server/errors';
-import { Auth } from '$lib/server/services/auth';
+import { Auth, authorizeRequest } from '$lib/server/services/auth';
 import { Files } from '$lib/server/services/files';
 import { Tags } from '$lib/server/services/tags';
 
@@ -33,10 +33,7 @@ export const PUT: RequestHandler = ({ params, request, url }) =>
 			const auth = yield* Auth;
 			const tags = yield* Tags;
 			const files = yield* Files;
-			yield* auth.authorize({
-				authorization: request.headers.get('authorization'),
-				requestOrigin: url.origin
-			});
+			yield* authorizeRequest(auth, request, url);
 			const input = yield* readNames(request);
 			yield* tags.setFileTags(params.id, input.names);
 			return Response.json({ file: (yield* files.detail(params.id)).file });

@@ -1,0 +1,2 @@
+# Copy to apps/web/.dev.vars and replace this with a long local-only passcode.
+PASSCODE="replace-with-at-least-12-characters"

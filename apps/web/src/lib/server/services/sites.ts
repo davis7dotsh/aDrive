@@ -49,7 +49,10 @@ const SiteFileRow = Schema.Struct({
 	display_name: Schema.String,
 	current_version: Schema.Int,
 	size_bytes: Schema.Int,
-	created_at: Schema.String
+	created_at: Schema.String,
+	expires_at: Schema.NullOr(Schema.String),
+	download_count: Schema.Int,
+	last_download_at: Schema.NullOr(Schema.String)
 });
 
 const SiteAssetRow = Schema.Struct({
@@ -796,7 +799,8 @@ const makeSites = Effect.gen(function* () {
 			const rows = yield* all(
 				db
 					.prepare(
-						`SELECT id, display_name, current_version, size_bytes, created_at
+						`SELECT id, display_name, current_version, size_bytes, created_at,
+							expires_at, download_count, last_download_at
 						FROM files
 						WHERE id = ? AND is_site = 1 AND current_version = ?
 						LIMIT 1`
@@ -821,7 +825,10 @@ const makeSites = Effect.gen(function* () {
 					version: file.current_version,
 					sizeBytes: file.size_bytes,
 					public: true,
-					createdAt: file.created_at
+					createdAt: file.created_at,
+					expiresAt: file.expires_at,
+					downloadCount: file.download_count,
+					lastDownloadAt: file.last_download_at
 				},
 				assetCount: assets.length,
 				cleanupPending
@@ -852,9 +859,10 @@ const makeSites = Effect.gen(function* () {
 							ON a.file_id = f.id AND a.version = f.current_version
 						WHERE f.id = ? AND f.is_site = 1 AND f.public = 1
 							AND f.deleted_at IS NULL
+							AND (f.expires_at IS NULL OR f.expires_at > ?)
 							AND a.path IN (${candidates.map(() => '?').join(', ')})`
 					)
-					.bind(fileId, ...candidates),
+					.bind(fileId, new Date().toISOString(), ...candidates),
 				SiteAssetRow,
 				'find site asset'
 			);
