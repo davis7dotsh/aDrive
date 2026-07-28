@@ -1,8 +1,11 @@
 # adrive
 
-Phase 1 is a working Cloudflare-backed file spine: authenticated streaming uploads,
-D1 metadata, R2 bytes, a cookie-less public content origin, version-aware file URLs,
-and a minimal `login` / `put` / `get` CLI.
+The first two phases are working: a Cloudflare-backed file spine plus a responsive
+dashboard. Uploads stream directly to R2, metadata and append-only version history
+live in D1, and file bytes are served from a separate cookie-less content origin.
+The dashboard lists active and trashed files, uploads by picker or drag-and-drop,
+copies share links, changes visibility, restores files, and uploads new versions.
+A minimal `login` / `put` / `get` CLI uses the same API.
 
 ## Local setup
 
@@ -25,6 +28,10 @@ The dashboard/API is at
 `http://siva.otter-hawksbill.ts.net:5174/`. The second port is a small streaming
 proxy into the same SvelteKit process so both origins share one local D1/R2 state
 while the Worker still sees and enforces the content host.
+
+Paste the generated API key into the dashboard connection screen. The key stays
+in the current browser tab's session storage. Passcode login and browser-side key
+minting arrive in Phase 5; the dashboard currently connects with an existing key.
 
 In another shell, configure and exercise the CLI:
 

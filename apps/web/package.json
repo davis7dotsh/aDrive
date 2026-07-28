@@ -24,11 +24,13 @@
 		"@sveltejs/adapter-cloudflare": "7.2.9",
 		"@sveltejs/kit": "2.70.1",
 		"@sveltejs/vite-plugin-svelte": "^7.2.0",
+		"@tailwindcss/vite": "^4.3.3",
 		"@types/node": "^26.1.1",
 		"@typescript/native": "npm:typescript@^7.0.2",
 		"concurrently": "^10.0.4",
 		"svelte": "5.56.8",
 		"svelte-check": "4.7.4",
+		"tailwindcss": "^4.3.3",
 		"typescript": "~6.0.3",
 		"vite": "^8.1.5",
 		"wrangler": "4.114.0"

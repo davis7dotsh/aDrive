@@ -1,0 +1,70 @@
+import { FileMutationSchema } from '@adrive/shared';
+import type { RequestHandler } from './$types';
+import { Effect, Schema } from 'effect';
+import { runEdge } from '$lib/server/edge';
+import { AppConfig } from '$lib/server/config';
+import { InvalidRequest } from '$lib/server/errors';
+import { Auth } from '$lib/server/services/auth';
+import { Files } from '$lib/server/services/files';
+
+const decodeMutation = (value: unknown) =>
+	Schema.decodeUnknownEffect(FileMutationSchema)(value).pipe(
+		Effect.mapError(
+			() =>
+				new InvalidRequest({
+					status: 400,
+					message: 'File mutation is invalid'
+				})
+		)
+	);
+
+const readJson = (request: Request) =>
+	Effect.tryPromise({
+		try: () => request.json(),
+		catch: () =>
+			new InvalidRequest({
+				status: 400,
+				message: 'A JSON request body is required'
+			})
+	});
+
+export const GET: RequestHandler = ({ params, request, url }) =>
+	runEdge(
+		Effect.gen(function* () {
+			const auth = yield* Auth;
+			const files = yield* Files;
+			const config = yield* AppConfig;
+			yield* auth.authorize({
+				authorization: request.headers.get('authorization'),
+				requestOrigin: url.origin
+			});
+			const detail = yield* files.detail(params.id);
+			return Response.json({
+				...detail,
+				contentOrigin: config.contentOrigin,
+				maxUploadBytes: config.maxUploadBytes
+			});
+		})
+	);
+
+export const PATCH: RequestHandler = ({ params, request, url }) =>
+	runEdge(
+		Effect.gen(function* () {
+			const auth = yield* Auth;
+			const files = yield* Files;
+			yield* auth.authorize({
+				authorization: request.headers.get('authorization'),
+				requestOrigin: url.origin
+			});
+			const mutation = yield* readJson(request).pipe(
+				Effect.flatMap(decodeMutation)
+			);
+			const result =
+				mutation.action === 'visibility'
+					? yield* files.setVisibility(params.id, mutation.public)
+					: mutation.action === 'trash'
+						? yield* files.trash(params.id)
+						: yield* files.restore(params.id);
+			return Response.json(result);
+		})
+	);
