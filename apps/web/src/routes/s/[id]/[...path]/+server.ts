@@ -9,6 +9,8 @@ import { Blobs } from '$lib/server/services/blobs';
 import { Files } from '$lib/server/services/files';
 import { Sites } from '$lib/server/services/sites';
 
+export const trailingSlash = 'ignore';
+
 export const GET: RequestHandler = ({ params, request, url }) =>
 	runEdge(
 		Effect.gen(function* () {
