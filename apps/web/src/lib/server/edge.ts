@@ -14,8 +14,11 @@ import type { AppConfig } from './config';
 import type { Auth } from './services/auth';
 import type { Blobs } from './services/blobs';
 import type { Files } from './services/files';
+import type { Search } from './services/search';
+import type { Tags } from './services/tags';
 
-type AppServices = SqlClient.SqlClient | AppConfig | Auth | Blobs | Files;
+type AppServices =
+	SqlClient.SqlClient | AppConfig | Auth | Blobs | Files | Search | Tags;
 
 const throwCauseAsHttp = (cause: Cause.Cause<unknown>): never => {
 	for (const reason of cause.reasons) {

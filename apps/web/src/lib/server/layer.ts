@@ -5,6 +5,8 @@ import { AuthLive } from './services/auth';
 import { Db, Bucket } from './services/bindings';
 import { BlobsLive } from './services/blobs';
 import { FilesLive } from './services/files';
+import { SearchLive } from './services/search';
+import { TagsLive } from './services/tags';
 
 const SqlLive = Layer.unwrap(Effect.map(Db, (db) => D1.layer({ db })));
 
@@ -18,7 +20,11 @@ export const requestLayer = (env: Env) => {
 	const blobs = BlobsLive.pipe(Layer.provide(bindings));
 	const infrastructure = Layer.mergeAll(bindings, sql, blobs);
 	const auth = AuthLive.pipe(Layer.provide(infrastructure));
-	const files = FilesLive.pipe(Layer.provide(infrastructure));
+	const tags = TagsLive.pipe(Layer.provide(infrastructure));
+	const search = SearchLive.pipe(Layer.provide(infrastructure));
+	const files = FilesLive.pipe(
+		Layer.provide(Layer.mergeAll(infrastructure, tags))
+	);
 
-	return Layer.mergeAll(infrastructure, auth, files);
+	return Layer.mergeAll(infrastructure, auth, tags, search, files);
 };

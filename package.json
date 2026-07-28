@@ -12,6 +12,7 @@
 		"format": "prettier --write .",
 		"format:check": "prettier --check .",
 		"key:create:local": "node scripts/create-local-key.mjs",
+		"search:rebuild:local": "pnpm --filter @adrive/web search:rebuild:local",
 		"test": "vitest run"
 	},
 	"devDependencies": {

@@ -1,8 +1,10 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import {
+		createTag,
 		getFile,
 		mutateFile,
+		setFileTags,
 		uploadVersion,
 		type FileDetailPayload
 	} from '$lib/dashboard/api';
@@ -19,6 +21,8 @@
 	let mutating = $state(false);
 	let uploading = $state(false);
 	let copied = $state('');
+	let tagName = $state('');
+	let savingTags = $state(false);
 	let run = 0;
 
 	$effect(() => {
@@ -127,6 +131,56 @@
 			}, 1500);
 		} catch {
 			error = 'Could not copy the link.';
+		}
+	};
+
+	const toggleTag = async (tagId: string) => {
+		if (!detail || savingTags) return;
+		savingTags = true;
+		error = '';
+		message = '';
+		try {
+			const current = detail.availableTags.find((tag) => tag.id === tagId);
+			if (!current) return;
+			const selected = detail.file.tags.some((tag) => tag.id === tagId)
+				? detail.file.tags.filter((tag) => tag.id !== tagId)
+				: [...detail.file.tags, current];
+			const file = await setFileTags(session.token, detail.file.id, selected);
+			detail = { ...detail, file };
+			message = 'Tags updated.';
+		} catch (cause) {
+			error = cause instanceof Error ? cause.message : 'Could not update tags';
+		} finally {
+			savingTags = false;
+		}
+	};
+
+	const addTag = async () => {
+		if (!detail || !tagName.trim() || savingTags) return;
+		savingTags = true;
+		error = '';
+		message = '';
+		try {
+			const tag = await createTag(session.token, { name: tagName });
+			const selected = detail.file.tags.some((current) => current.id === tag.id)
+				? detail.file.tags
+				: [...detail.file.tags, tag];
+			const file = await setFileTags(session.token, detail.file.id, selected);
+			detail = {
+				...detail,
+				file,
+				availableTags: detail.availableTags.some(
+					(current) => current.id === tag.id
+				)
+					? detail.availableTags
+					: [...detail.availableTags, tag]
+			};
+			tagName = '';
+			message = `${tag.name} added.`;
+		} catch (cause) {
+			error = cause instanceof Error ? cause.message : 'Could not add the tag';
+		} finally {
+			savingTags = false;
 		}
 	};
 </script>
@@ -319,6 +373,57 @@
 					</div>
 				</div>
 				<div class="mt-6 border-t border-zinc-100 pt-5">
+					<div class="mb-6">
+						<p class="text-sm font-medium text-zinc-900">Tags</p>
+						<p class="mt-1 text-xs leading-5 text-zinc-500">
+							Select any existing tag, or type a new one to create it on use.
+						</p>
+						{#if detail.availableTags.length > 0}
+							<div class="mt-3 flex flex-wrap gap-2">
+								{#each detail.availableTags as tag (tag.id)}
+									<button
+										type="button"
+										disabled={savingTags}
+										aria-pressed={detail.file.tags.some(
+											(current) => current.id === tag.id
+										)}
+										class="rounded-full border px-2.5 py-1 text-xs font-medium disabled:opacity-50 {detail.file.tags.some(
+											(current) => current.id === tag.id
+										)
+											? 'border-accent-500 bg-accent-50 text-accent-700'
+											: 'border-zinc-200 text-zinc-600'}"
+										onclick={() => void toggleTag(tag.id)}
+									>
+										<span
+											class="mr-1 inline-block size-2 rounded-full"
+											style={`background:${tag.color ?? '#a1a1aa'}`}
+										></span>
+										{tag.name}
+									</button>
+								{/each}
+							</div>
+						{/if}
+						<form
+							class="mt-3 flex max-w-md gap-2"
+							onsubmit={(event) => {
+								event.preventDefault();
+								void addTag();
+							}}
+						>
+							<input
+								aria-label="New tag name"
+								bind:value={tagName}
+								placeholder="Create and assign a tag"
+								class="min-w-0 flex-1 rounded-md border border-zinc-300 px-3 py-2 text-sm"
+							/>
+							<button
+								type="submit"
+								disabled={!tagName.trim() || savingTags}
+								class="rounded-md border border-zinc-200 px-3 py-2 text-sm font-medium disabled:opacity-50"
+								>Add</button
+							>
+						</form>
+					</div>
 					<button
 						type="button"
 						disabled={mutating}

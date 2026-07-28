@@ -6,6 +6,7 @@ import { AppConfig } from '$lib/server/config';
 import { InvalidRequest } from '$lib/server/errors';
 import { Auth } from '$lib/server/services/auth';
 import { Files } from '$lib/server/services/files';
+import { Tags } from '$lib/server/services/tags';
 
 const decodeMutation = (value: unknown) =>
 	Schema.decodeUnknownEffect(FileMutationSchema)(value).pipe(
@@ -33,6 +34,7 @@ export const GET: RequestHandler = ({ params, request, url }) =>
 		Effect.gen(function* () {
 			const auth = yield* Auth;
 			const files = yield* Files;
+			const tags = yield* Tags;
 			const config = yield* AppConfig;
 			yield* auth.authorize({
 				authorization: request.headers.get('authorization'),
@@ -41,6 +43,7 @@ export const GET: RequestHandler = ({ params, request, url }) =>
 			const detail = yield* files.detail(params.id);
 			return Response.json({
 				...detail,
+				availableTags: yield* tags.list,
 				contentOrigin: config.contentOrigin,
 				maxUploadBytes: config.maxUploadBytes
 			});

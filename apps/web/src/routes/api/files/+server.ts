@@ -5,6 +5,7 @@ import { AppConfig } from '$lib/server/config';
 import { InvalidRequest } from '$lib/server/errors';
 import { Auth } from '$lib/server/services/auth';
 import { Files } from '$lib/server/services/files';
+import { Tags } from '$lib/server/services/tags';
 
 const decodeName = (value: string | null) => {
 	if (value === null) {
@@ -32,11 +33,37 @@ const parsePublic = (value: string | null) => {
 	});
 };
 
+const parseTags = (value: string | null) => {
+	if (value === null || value === '') return [];
+	if (value.length > 32768) {
+		throw new InvalidRequest({
+			status: 400,
+			message: 'X-Adrive-Tags is too large'
+		});
+	}
+	try {
+		const parsed: unknown = JSON.parse(decodeURIComponent(value));
+		if (
+			!Array.isArray(parsed) ||
+			!parsed.every((tag): tag is string => typeof tag === 'string')
+		) {
+			throw new Error('Tags must be strings');
+		}
+		return parsed;
+	} catch {
+		throw new InvalidRequest({
+			status: 400,
+			message: 'X-Adrive-Tags must be a JSON array of names'
+		});
+	}
+};
+
 export const GET: RequestHandler = ({ request, url }) =>
 	runEdge(
 		Effect.gen(function* () {
 			const auth = yield* Auth;
 			const files = yield* Files;
+			const tags = yield* Tags;
 			const config = yield* AppConfig;
 			yield* auth.authorize({
 				authorization: request.headers.get('authorization'),
@@ -45,6 +72,7 @@ export const GET: RequestHandler = ({ request, url }) =>
 			const trashed = url.searchParams.get('trashed') === 'true';
 			return Response.json({
 				files: yield* files.list(trashed),
+				tags: yield* tags.list,
 				contentOrigin: config.contentOrigin,
 				maxUploadBytes: config.maxUploadBytes
 			});
@@ -87,7 +115,17 @@ export const PUT: RequestHandler = ({ request, url }) =>
 					request.headers.get('content-type') ?? 'application/octet-stream',
 				public: isPublic,
 				contentLength: request.headers.get('content-length'),
-				body: request.body
+				body: request.body,
+				tags: yield* Effect.try({
+					try: () => parseTags(request.headers.get('x-adrive-tags')),
+					catch: (cause) =>
+						cause instanceof InvalidRequest
+							? cause
+							: new InvalidRequest({
+									status: 400,
+									message: 'Tags are invalid'
+								})
+				})
 			});
 			return Response.json(
 				{

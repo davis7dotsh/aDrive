@@ -4,7 +4,8 @@ import { extname, join } from 'node:path';
 const roots = ['apps', 'packages'];
 const forbidden = [
 	{ label: 'D1 transactions', pattern: '.withTransaction(' },
-	{ label: 'D1 query streams', pattern: '.stream(' }
+	{ label: 'D1 query streams', pattern: '.stream(' },
+	{ label: 'unsafe FTS maintenance', pattern: "'integrity-check'" }
 ];
 const violations = [];
 
@@ -13,7 +14,9 @@ const visit = async (directory) => {
 		const path = join(directory, entry.name);
 		if (entry.isDirectory()) {
 			await visit(path);
-		} else if (['.ts', '.svelte'].includes(extname(entry.name))) {
+		} else if (
+			['.mjs', '.sql', '.svelte', '.ts'].includes(extname(entry.name))
+		) {
 			const source = await readFile(path, 'utf8');
 			for (const rule of forbidden) {
 				if (source.includes(rule.pattern)) {

@@ -18,6 +18,10 @@ export interface BlobsShape {
 	readonly get: (
 		key: string
 	) => Effect.Effect<R2ObjectBody, NotFound | StorageError>;
+	readonly readTextPrefix: (
+		key: string,
+		maxBytes: number
+	) => Effect.Effect<string, StorageError>;
 	readonly delete: (key: string) => Effect.Effect<void, StorageError>;
 }
 
@@ -44,6 +48,27 @@ const makeBlobs = Effect.gen(function* () {
 			if (object === null) return yield* new NotFound({ id: key });
 			return object;
 		}),
+		readTextPrefix: Effect.fn('Blobs.readTextPrefix')(
+			function* (key, maxBytes) {
+				const object = yield* Effect.tryPromise({
+					try: () =>
+						bucket.get(key, { range: { offset: 0, length: maxBytes } }),
+					catch: (cause) =>
+						new StorageError({ operation: 'read text prefix', cause })
+				});
+				if (object === null) {
+					return yield* new StorageError({
+						operation: 'read text prefix',
+						cause: 'Stored object is missing'
+					});
+				}
+				return yield* Effect.tryPromise({
+					try: () => object.text(),
+					catch: (cause) =>
+						new StorageError({ operation: 'decode text prefix', cause })
+				});
+			}
+		),
 		delete: Effect.fn('Blobs.delete')(function* (key) {
 			yield* Effect.tryPromise({
 				try: () => bucket.delete(key),

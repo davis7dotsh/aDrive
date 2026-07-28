@@ -11,12 +11,14 @@
 		"dev": "concurrently --kill-others --names dashboard,content \"pnpm dev:dashboard\" \"pnpm dev:content\"",
 		"dev:content": "node scripts/content-proxy.mjs",
 		"dev:dashboard": "vite dev --host 0.0.0.0 --port 5173",
+		"search:rebuild:local": "wrangler d1 execute DB --local --file scripts/rebuild-search-index.sql",
 		"types:worker": "wrangler types"
 	},
 	"dependencies": {
 		"@adrive/shared": "workspace:^",
 		"@effect/sql-d1": "4.0.0-beta.102",
-		"effect": "4.0.0-beta.102"
+		"effect": "4.0.0-beta.102",
+		"runed": "^0.37.1"
 	},
 	"devDependencies": {
 		"@effect/language-service": "0.87.1",

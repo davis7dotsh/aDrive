@@ -12,6 +12,17 @@ export const FileSummarySchema = Schema.Struct({
 
 export type FileSummary = typeof FileSummarySchema.Type;
 
+export const TagSchema = Schema.Struct({
+	id: Schema.String,
+	name: Schema.String,
+	normalizedName: Schema.String,
+	color: Schema.NullOr(Schema.String),
+	fileCount: Schema.Int,
+	createdAt: Schema.String
+});
+
+export type Tag = typeof TagSchema.Type;
+
 export const DashboardFileSchema = Schema.Struct({
 	id: Schema.String,
 	displayName: Schema.String,
@@ -22,7 +33,8 @@ export const DashboardFileSchema = Schema.Struct({
 	htmlForcedPublic: Schema.Boolean,
 	createdAt: Schema.String,
 	updatedAt: Schema.String,
-	deletedAt: Schema.NullOr(Schema.String)
+	deletedAt: Schema.NullOr(Schema.String),
+	tags: Schema.Array(TagSchema)
 });
 
 export type DashboardFile = typeof DashboardFileSchema.Type;
@@ -45,6 +57,7 @@ export type FileDetail = typeof FileDetailSchema.Type;
 
 export const FileListResponseSchema = Schema.Struct({
 	files: Schema.Array(DashboardFileSchema),
+	tags: Schema.Array(TagSchema),
 	contentOrigin: Schema.String,
 	maxUploadBytes: Schema.Int
 });
@@ -54,6 +67,7 @@ export type FileListResponse = typeof FileListResponseSchema.Type;
 export const FileDetailResponseSchema = Schema.Struct({
 	file: DashboardFileSchema,
 	versions: Schema.Array(FileVersionSchema),
+	availableTags: Schema.Array(TagSchema),
 	contentOrigin: Schema.String,
 	maxUploadBytes: Schema.Int
 });
@@ -81,6 +95,44 @@ export const FileMutationResponseSchema = Schema.Struct({
 });
 
 export type FileMutationResponse = typeof FileMutationResponseSchema.Type;
+
+export const TagCreateSchema = Schema.Struct({
+	name: Schema.String,
+	color: Schema.optionalKey(Schema.NullOr(Schema.String))
+});
+
+export type TagCreate = typeof TagCreateSchema.Type;
+
+export const TagUpdateSchema = Schema.Struct({
+	name: Schema.optionalKey(Schema.String),
+	color: Schema.optionalKey(Schema.NullOr(Schema.String))
+});
+
+export type TagUpdate = typeof TagUpdateSchema.Type;
+
+export const TagListResponseSchema = Schema.Struct({
+	tags: Schema.Array(TagSchema)
+});
+
+export type TagListResponse = typeof TagListResponseSchema.Type;
+
+export const TagResponseSchema = Schema.Struct({
+	tag: TagSchema
+});
+
+export type TagResponse = typeof TagResponseSchema.Type;
+
+export const FileTagsUpdateSchema = Schema.Struct({
+	names: Schema.Array(Schema.String)
+});
+
+export type FileTagsUpdate = typeof FileTagsUpdateSchema.Type;
+
+export const FileTagsResponseSchema = Schema.Struct({
+	file: DashboardFileSchema
+});
+
+export type FileTagsResponse = typeof FileTagsResponseSchema.Type;
 
 export const UploadResponseSchema = Schema.Struct({
 	file: FileSummarySchema,
