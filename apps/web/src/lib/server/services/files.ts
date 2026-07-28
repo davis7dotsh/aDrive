@@ -14,6 +14,7 @@ import {
 	trashWindow,
 	visibilityForFile
 } from '../file-policy';
+import { purgeCompletionCommands, type PurgeSqlCommand } from '../purge-sql';
 import { fileIndexStatements } from '../search-index';
 import { retryAt, safeIndexError } from '../semantic-policy';
 import { validateUploadLength } from '../upload-stream';
@@ -135,6 +136,8 @@ const makeFiles = Effect.gen(function* () {
 	const sql = (yield* SqlClient.SqlClient).withoutTransforms();
 	const config = yield* AppConfig;
 	const tags = yield* Tags;
+	const preparePurgeCommand = (command: PurgeSqlCommand) =>
+		db.prepare(command.sql).bind(...command.bindings);
 
 	const findDashboardFile = Effect.fn('Files.findDashboardFile')(function* (
 		id: string
@@ -704,32 +707,12 @@ const makeFiles = Effect.gen(function* () {
 
 				yield* Effect.tryPromise({
 					try: async () => {
-						const results = await db.batch([
-							db
-								.prepare(
-									`INSERT INTO pending_vector_deletes (vector_id, queued_at)
-									SELECT vector_id, ? FROM file_chunks WHERE file_id = ?
-									ON CONFLICT(vector_id) DO NOTHING`
-								)
-								.bind(now, row.id),
-							db
-								.prepare(
-									`UPDATE files
-									SET purge_state = 'done', purge_error = NULL,
-										purge_next_run_at = NULL
-									WHERE id = ? AND purge_state = 'pending'`
-								)
-								.bind(row.id),
-							db
-								.prepare(
-									`DELETE FROM files
-									WHERE id = ? AND purge_state = 'done'`
-								)
-								.bind(row.id)
-						]);
+						const results = await db.batch(
+							purgeCompletionCommands(row.id, now).map(preparePurgeCommand)
+						);
 						if (
-							results[1]?.meta.changes !== 1 ||
-							results[2]?.meta.changes !== 1
+							results[3]?.meta.changes !== 1 ||
+							results[4]?.meta.changes !== 1
 						) {
 							throw new Error('File purge state changed before completion');
 						}
