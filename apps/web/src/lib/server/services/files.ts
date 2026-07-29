@@ -99,6 +99,13 @@ export interface FilesShape {
 		id: string,
 		expiresAt: string | null
 	) => Effect.Effect<MutationResult, InvalidRequest | NotFound | StorageError>;
+	readonly rename: (
+		id: string,
+		displayName: string
+	) => Effect.Effect<MutationResult, InvalidRequest | NotFound | StorageError>;
+	readonly schedulePurgeNow: (
+		id: string
+	) => Effect.Effect<MutationResult, InvalidRequest | NotFound | StorageError>;
 	readonly recordDownload: (id: string) => Effect.Effect<void, StorageError>;
 	readonly sweepPurges: (limit: number) => Effect.Effect<number, StorageError>;
 	readonly findContent: (
@@ -554,6 +561,87 @@ const makeFiles = Effect.gen(function* () {
 				file: { ...current, expiresAt, updatedAt },
 				forcedPublic: false
 			};
+		}),
+		rename: Effect.fn('Files.rename')(function* (id, value) {
+			const current = yield* findDashboardFile(id);
+			const displayName = yield* Effect.try({
+				try: () => cleanFileName(value),
+				catch: (cause) =>
+					cause instanceof InvalidRequest
+						? cause
+						: new InvalidRequest({
+								status: 400,
+								message: 'File name is invalid'
+							})
+			});
+			const visibility = visibilityForFile(
+				displayName,
+				current.contentType,
+				current.public
+			);
+			const updatedAt = new Date().toISOString();
+			yield* Effect.tryPromise({
+				try: () =>
+					db.batch([
+						db
+							.prepare(
+								`UPDATE files
+								SET display_name = ?, public = ?, updated_at = ?,
+									index_state = 'pending', index_cursor = 0,
+									index_attempts = 0, index_error = NULL,
+									index_next_run_at = NULL, index_lease_token = NULL
+								WHERE id = ?`
+							)
+							.bind(displayName, visibility.public ? 1 : 0, updatedAt, id),
+						...fileIndexStatements(db, id)
+					]),
+				catch: (cause) => new StorageError({ operation: 'rename file', cause })
+			});
+			return {
+				file: {
+					...current,
+					displayName,
+					public: visibility.public,
+					htmlForcedPublic:
+						current.htmlForcedPublic || /\.html?$/i.test(displayName),
+					updatedAt,
+					indexState: 'pending',
+					indexAttempts: 0,
+					indexError: null
+				},
+				forcedPublic: visibility.forcedPublic
+			};
+		}),
+		schedulePurgeNow: Effect.fn('Files.schedulePurgeNow')(function* (id) {
+			const current = yield* findDashboardFile(id);
+			if (!current.deletedAt) {
+				return yield* new InvalidRequest({
+					status: 409,
+					message: 'Move the file to trash before deleting it permanently'
+				});
+			}
+			const result = yield* Effect.tryPromise({
+				try: () =>
+					db
+						.prepare(
+							`UPDATE files
+							SET purge_at = ?, purge_state = 'none', purge_error = NULL,
+								purge_next_run_at = NULL
+							WHERE id = ? AND deleted_at IS NOT NULL
+								AND purge_state <> 'pending'`
+						)
+						.bind('1970-01-01T00:00:00.000Z', id)
+						.run(),
+				catch: (cause) =>
+					new StorageError({ operation: 'schedule immediate purge', cause })
+			});
+			if (result.meta.changes !== 1) {
+				return yield* new InvalidRequest({
+					status: 409,
+					message: 'This file is already being purged'
+				});
+			}
+			return { file: current, forcedPublic: false };
 		}),
 		recordDownload: Effect.fn('Files.recordDownload')(function* (id) {
 			const now = new Date().toISOString();

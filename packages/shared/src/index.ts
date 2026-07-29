@@ -187,6 +187,13 @@ export const FileMutationSchema = Schema.Union([
 	}),
 	Schema.Struct({
 		action: Schema.Literal('reindex')
+	}),
+	Schema.Struct({
+		action: Schema.Literal('rename'),
+		displayName: Schema.String
+	}),
+	Schema.Struct({
+		action: Schema.Literal('purge')
 	})
 ]);
 

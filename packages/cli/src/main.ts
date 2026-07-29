@@ -5,6 +5,7 @@ import {
 	DevicePendingResponseSchema,
 	DeviceTokenResponseSchema,
 	FileContentLinkResponseSchema,
+	FileMutationResponseSchema,
 	FileTagsResponseSchema,
 	normalizeSitePath,
 	SiteAssetResponseSchema,
@@ -528,6 +529,42 @@ const get = Command.make(
 		})
 ).pipe(Command.withDescription('Stream a file from adrive'));
 
+const rename = Command.make(
+	'rename',
+	{
+		id: Argument.string('id'),
+		name: Argument.string('name')
+	},
+	({ id, name }) =>
+		Effect.gen(function* () {
+			const config = yield* loadConfig;
+			const client = yield* HttpClient.HttpClient;
+			const response = yield* client
+				.execute(
+					apiRequest(
+						'PATCH',
+						`${config.endpoint}/api/files/${encodeURIComponent(id)}`,
+						config.apiKey,
+						{
+							body: HttpBody.jsonUnsafe({
+								action: 'rename',
+								displayName: name
+							})
+						}
+					)
+				)
+				.pipe(Effect.flatMap(ensureOk));
+			const result = yield* HttpClientResponse.schemaBodyJson(
+				FileMutationResponseSchema
+			)(response);
+			yield* emit(
+				wantsJson()
+					? result
+					: `Renamed ${result.file.id} to ${result.file.displayName}`
+			);
+		})
+).pipe(Command.withDescription('Rename a file'));
+
 interface LocalSiteAsset extends SiteManifestAsset {
 	readonly file: string;
 }
@@ -860,7 +897,7 @@ const root = Command.make('adrive', {
 	)
 }).pipe(
 	Command.withDescription('A small CLI for an adrive deployment'),
-	Command.withSubcommands([login, put, get, site, tag])
+	Command.withSubcommands([login, put, get, rename, site, tag])
 );
 
 Command.run(root, { version: '0.1.0' }).pipe(

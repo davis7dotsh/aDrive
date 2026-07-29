@@ -1,17 +1,20 @@
 import {
+	ApiKeyCreateResponseSchema,
+	ApiKeyListResponseSchema,
 	FileContentLinkResponseSchema,
-	type ApiKey,
+	FileDetailResponseSchema,
+	FileListResponseSchema,
+	FileMutationResponseSchema,
+	FileTagsResponseSchema,
+	TagResponseSchema,
+	UploadResponseSchema,
 	type FileContentLinkResponse,
 	type FileDetailResponse,
 	type FileListResponse,
 	type FileMutation,
-	type FileMutationResponse,
-	type FileTagsResponse,
 	type Tag,
 	type TagCreate,
-	type TagResponse,
-	type TagUpdate,
-	type UploadResponse
+	type TagUpdate
 } from '@adrive/shared';
 import { Schema } from 'effect';
 
@@ -52,6 +55,11 @@ const request = async (path: string, token: string, init?: RequestInit) => {
 	return response;
 };
 
+const json = async <A, I>(
+	schema: Schema.Codec<A, I, never>,
+	response: Response
+) => Schema.decodeUnknownPromise(schema)(await response.json());
+
 export const checkKey = async (token: string) => {
 	await request('/api/auth/check', token);
 };
@@ -75,7 +83,7 @@ export const logoutSession = async () => {
 
 export const listApiKeys = async (token: string) => {
 	const response = await request('/api/auth/keys', token);
-	return ((await response.json()) as { keys: ReadonlyArray<ApiKey> }).keys;
+	return (await json(ApiKeyListResponseSchema, response)).keys;
 };
 
 export const createApiKey = async (token: string, name: string) => {
@@ -84,7 +92,7 @@ export const createApiKey = async (token: string, name: string) => {
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name })
 	});
-	return (await response.json()) as { key: ApiKey; token: string };
+	return json(ApiKeyCreateResponseSchema, response);
 };
 
 export const revokeApiKey = async (token: string, id: string) => {
@@ -111,7 +119,7 @@ export const listFiles = async (
 		token,
 		{ signal }
 	);
-	return (await response.json()) as FileListResponse;
+	return json(FileListResponseSchema, response);
 };
 
 export const searchFiles = async (
@@ -126,7 +134,7 @@ export const searchFiles = async (
 	const response = await request(`/api/search?${params.toString()}`, token, {
 		signal
 	});
-	return (await response.json()) as FileListResponse;
+	return json(FileListResponseSchema, response);
 };
 
 export const getFile = async (
@@ -141,7 +149,7 @@ export const getFile = async (
 			signal
 		}
 	);
-	return (await response.json()) as FileDetailResponse;
+	return json(FileDetailResponseSchema, response);
 };
 
 export const getFilePreview = async (
@@ -171,9 +179,15 @@ export const getContentLink = async (
 		`/api/files/${encodeURIComponent(id)}/link${params.size > 0 ? `?${params}` : ''}`,
 		token
 	);
-	return Schema.decodeUnknownPromise(FileContentLinkResponseSchema)(
-		await response.json()
+	return json(
+		FileContentLinkResponseSchema,
+		response
 	) satisfies Promise<FileContentLinkResponse>;
+};
+
+type UploadOptions = {
+	readonly onProgress?: (uploaded: number, total: number) => void;
+	readonly signal?: AbortSignal;
 };
 
 export const uploadFile = async (
@@ -181,20 +195,73 @@ export const uploadFile = async (
 	file: File,
 	isPublic: boolean,
 	tagNames: ReadonlyArray<string> = [],
-	expiresAt: string | null = null
+	expiresAt: string | null = null,
+	options: UploadOptions = {}
 ) => {
-	const response = await request('/api/files', token, {
-		method: 'PUT',
-		headers: {
-			'Content-Type': file.type || 'application/octet-stream',
-			'X-Adrive-File-Name': encodeURIComponent(file.name),
-			'X-Adrive-Public': String(isPublic),
-			'X-Adrive-Tags': encodeURIComponent(JSON.stringify(tagNames)),
-			...(expiresAt ? { 'X-Adrive-Expires-At': expiresAt } : {})
-		},
-		body: file
+	const body = await new Promise<unknown>((resolve, reject) => {
+		const xhr = new XMLHttpRequest();
+		const abort = () => xhr.abort();
+		const finish = () => options.signal?.removeEventListener('abort', abort);
+		xhr.open('PUT', '/api/files');
+		xhr.withCredentials = true;
+		xhr.setRequestHeader(
+			'Content-Type',
+			file.type || 'application/octet-stream'
+		);
+		xhr.setRequestHeader('X-Adrive-File-Name', encodeURIComponent(file.name));
+		xhr.setRequestHeader('X-Adrive-Public', String(isPublic));
+		xhr.setRequestHeader(
+			'X-Adrive-Tags',
+			encodeURIComponent(JSON.stringify(tagNames))
+		);
+		if (expiresAt) xhr.setRequestHeader('X-Adrive-Expires-At', expiresAt);
+		if (token !== BROWSER_SESSION) {
+			xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+		}
+		xhr.upload.onprogress = (event) => {
+			options.onProgress?.(
+				event.loaded,
+				event.lengthComputable ? event.total : file.size
+			);
+		};
+		xhr.onload = () => {
+			finish();
+			let parsed: unknown;
+			try {
+				parsed = JSON.parse(xhr.responseText);
+			} catch {
+				reject(new Error(`Request failed (${xhr.status})`));
+				return;
+			}
+			if (xhr.status >= 200 && xhr.status < 300) {
+				resolve(parsed);
+				return;
+			}
+			const message =
+				typeof parsed === 'object' &&
+				parsed !== null &&
+				'message' in parsed &&
+				typeof parsed.message === 'string'
+					? parsed.message
+					: `Request failed (${xhr.status})`;
+			reject(new Error(message));
+		};
+		xhr.onerror = () => {
+			finish();
+			reject(new Error('Upload failed because the network connection ended'));
+		};
+		xhr.onabort = () => {
+			finish();
+			reject(new DOMException('Upload cancelled', 'AbortError'));
+		};
+		options.signal?.addEventListener('abort', abort, { once: true });
+		if (options.signal?.aborted) {
+			abort();
+			return;
+		}
+		xhr.send(file);
 	});
-	return (await response.json()) as UploadResponse;
+	return Schema.decodeUnknownPromise(UploadResponseSchema)(body);
 };
 
 export const uploadVersion = async (token: string, id: string, file: File) => {
@@ -209,7 +276,7 @@ export const uploadVersion = async (token: string, id: string, file: File) => {
 			body: file
 		}
 	);
-	return (await response.json()) as FileMutationResponse;
+	return json(FileMutationResponseSchema, response);
 };
 
 export const mutateFile = async (
@@ -226,7 +293,7 @@ export const mutateFile = async (
 			body: JSON.stringify(mutation)
 		}
 	);
-	return (await response.json()) as FileMutationResponse;
+	return json(FileMutationResponseSchema, response);
 };
 
 export const createTag = async (token: string, input: TagCreate) => {
@@ -235,7 +302,7 @@ export const createTag = async (token: string, input: TagCreate) => {
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(input)
 	});
-	return ((await response.json()) as TagResponse).tag;
+	return (await json(TagResponseSchema, response)).tag;
 };
 
 export const updateTag = async (
@@ -248,7 +315,7 @@ export const updateTag = async (
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(input)
 	});
-	return ((await response.json()) as TagResponse).tag;
+	return (await json(TagResponseSchema, response)).tag;
 };
 
 export const deleteTag = async (token: string, id: string) => {
@@ -271,5 +338,5 @@ export const setFileTags = async (
 			body: JSON.stringify({ names: tags.map((tag) => tag.name) })
 		}
 	);
-	return ((await response.json()) as FileTagsResponse).file;
+	return (await json(FileTagsResponseSchema, response)).file;
 };

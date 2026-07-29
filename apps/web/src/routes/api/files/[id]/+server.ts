@@ -84,15 +84,20 @@ export const PATCH: RequestHandler = async (event) => {
 														})
 										})
 									)
-								: yield* indexing.enqueue(params.id).pipe(
-										Effect.andThen(files.detail(params.id)),
-										Effect.map((detail) => ({
-											file: detail.file,
-											forcedPublic: false
-										}))
-									);
+								: mutation.action === 'rename'
+									? yield* files.rename(params.id, mutation.displayName)
+									: mutation.action === 'purge'
+										? yield* files.schedulePurgeNow(params.id)
+										: yield* indexing.enqueue(params.id).pipe(
+												Effect.andThen(files.detail(params.id)),
+												Effect.map((detail) => ({
+													file: detail.file,
+													forcedPublic: false
+												}))
+											);
 			return {
-				reindex: mutation.action === 'reindex',
+				reindex: mutation.action === 'reindex' || mutation.action === 'rename',
+				purge: mutation.action === 'purge',
 				response: Response.json(result)
 			};
 		})
@@ -104,6 +109,17 @@ export const PATCH: RequestHandler = async (event) => {
 				Effect.gen(function* () {
 					const indexing = yield* Indexing;
 					yield* indexing.process(params.id);
+				})
+			)
+		);
+	}
+	if (output.purge && event.platform) {
+		event.platform.ctx.waitUntil(
+			runWorkerProgram(
+				event.platform.env,
+				Effect.gen(function* () {
+					const files = yield* Files;
+					yield* files.sweepPurges(1);
 				})
 			)
 		);
