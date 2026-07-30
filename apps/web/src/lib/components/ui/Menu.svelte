@@ -36,7 +36,7 @@
 	const items = () =>
 		Array.from(
 			panel?.querySelectorAll<HTMLElement>(
-				'[role="menuitem"]:not([disabled]), a[href]:not([aria-disabled="true"])'
+				'[role="menuitem"]:not([disabled]), [role="menuitemradio"]:not([disabled]), [role="menuitemcheckbox"]:not([disabled]), a[href]:not([aria-disabled="true"])'
 			) ?? []
 		);
 
@@ -47,6 +47,12 @@
 	};
 
 	const onKeydown = (event: KeyboardEvent) => {
+		const target = event.target;
+		const editing =
+			target instanceof Element &&
+			target.matches('input, textarea, select, [contenteditable="true"]');
+		if (editing && event.key !== 'Escape' && event.key !== 'Tab') return;
+
 		const options = items();
 		const current = options.findIndex(
 			(item) => item === document.activeElement
@@ -56,7 +62,7 @@
 			focusAt(current + 1);
 		} else if (event.key === 'ArrowUp') {
 			event.preventDefault();
-			focusAt(current - 1);
+			focusAt(current < 0 ? options.length - 1 : current - 1);
 		} else if (event.key === 'Home') {
 			event.preventDefault();
 			focusAt(0);
@@ -64,7 +70,11 @@
 			event.preventDefault();
 			focusAt(options.length - 1);
 		} else if (event.key === 'Escape') {
+			event.preventDefault();
+			panel?.hidePopover();
 			triggerButton?.focus();
+		} else if (event.key === 'Tab') {
+			panel?.hidePopover();
 		}
 	};
 </script>
@@ -101,7 +111,9 @@
 	onkeydown={onKeydown}
 	onclick={(event) => {
 		if (!(event.target instanceof Element)) return;
-		const item = event.target.closest('[role="menuitem"],a[href]');
+		const item = event.target.closest(
+			'[role="menuitem"],[role="menuitemradio"],[role="menuitemcheckbox"],a[href]'
+		);
 		if (item && !item.hasAttribute('data-keep-open')) {
 			panel?.hidePopover();
 		}

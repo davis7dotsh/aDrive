@@ -7,7 +7,9 @@
 		files,
 		trashed,
 		returnQuery,
-		actions
+		actions,
+		selectedIds = [],
+		onselect
 	}: {
 		files: ReadonlyArray<DashboardFile>;
 		trashed: boolean;
@@ -19,6 +21,8 @@
 			restore: (file: DashboardFile) => void;
 			purge: (file: DashboardFile) => void;
 		};
+		selectedIds?: ReadonlyArray<string>;
+		onselect?: (file: DashboardFile, selected: boolean, shift: boolean) => void;
 	} = $props();
 </script>
 
@@ -26,6 +30,11 @@
 	<table class="w-full min-w-[42rem] text-left text-sm">
 		<thead class="text-xs font-medium text-zinc-400">
 			<tr>
+				{#if onselect}
+					<th class="w-10 pb-2 font-medium">
+						<span class="sr-only">Select</span>
+					</th>
+				{/if}
 				<th class="pb-2 font-medium">Name</th>
 				<th class="pb-2 font-medium">Tags</th>
 				<th class="pb-2 font-medium">Size</th>
@@ -37,6 +46,18 @@
 		<tbody class="divide-y divide-zinc-100">
 			{#each files as file (file.id)}
 				<tr>
+					{#if onselect}
+						<td class="py-3 pr-3">
+							<input
+								type="checkbox"
+								checked={selectedIds.includes(file.id)}
+								aria-label={`Select ${file.displayName}`}
+								class="size-4 rounded border-zinc-300 accent-zinc-950"
+								onclick={(event) =>
+									onselect(file, event.currentTarget.checked, event.shiftKey)}
+							/>
+						</td>
+					{/if}
 					<td class="py-3 pr-4">
 						<a
 							href={`/files/${file.id}${returnQuery ? `?from=${encodeURIComponent(returnQuery)}` : ''}`}

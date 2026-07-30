@@ -54,6 +54,7 @@ In another shell, configure and exercise the CLI:
 
 ```bash
 pnpm adrive login http://siva.otter-hawksbill.ts.net:5173 --headless
+pnpm adrive list
 pnpm adrive put ./path/to/file.pdf
 pnpm adrive put ./path/to/private.bin --private
 printf 'from stdin' | pnpm adrive put - --name note.txt

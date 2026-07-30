@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { DashboardSession } from '$lib/dashboard/session.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
+	import Field from '$lib/components/ui/Field.svelte';
 
 	let { session }: { session: DashboardSession } = $props();
 	let passcode = $state('');
@@ -18,19 +19,14 @@
 			void session.connect(passcode);
 		}}
 	>
-		<label for="passcode" class="text-sm font-medium text-zinc-700">
-			Passcode
-		</label>
-		<input
+		<Field
 			id="passcode"
+			label="Passcode"
 			type="password"
 			autocomplete="current-password"
 			bind:value={passcode}
-			class="mt-2 w-full rounded-md border border-zinc-300 bg-white px-3 py-2.5 text-sm shadow-sm"
+			error={session.error}
 		/>
-		{#if session.error}
-			<p class="mt-2 text-sm text-red-600" role="alert">{session.error}</p>
-		{/if}
 		<Button
 			type="submit"
 			class="mt-4 w-full"

@@ -17,7 +17,10 @@
 		view,
 		actions,
 		onupload,
-		onclear
+		onclear,
+		selectedIds = [],
+		onselect,
+		onselectall
 	}: {
 		files: ReadonlyArray<DashboardFile>;
 		token: string;
@@ -36,6 +39,9 @@
 		};
 		onupload: () => void;
 		onclear: () => void;
+		selectedIds?: ReadonlyArray<string>;
+		onselect?: (file: DashboardFile, selected: boolean, shift: boolean) => void;
+		onselectall?: (selected: boolean) => void;
 	} = $props();
 
 	const totalSize = $derived(
@@ -52,15 +58,26 @@
 	{#if initialLoading}
 		<p class="text-sm font-medium text-zinc-500">Loading files…</p>
 	{:else}
-		<p class="text-sm font-medium text-zinc-700">
-			{files.length}
-			{files.length === 1 ? 'file' : 'files'}
-			{#if files.length > 0}
-				<span class="font-normal text-zinc-400">
-					· {formatBytes(totalSize)}
-				</span>
+		<div class="flex items-center gap-2">
+			{#if onselectall && files.length > 0}
+				<input
+					type="checkbox"
+					checked={files.every((file) => selectedIds.includes(file.id))}
+					aria-label="Select all visible files"
+					class="size-4 rounded border-zinc-300 accent-zinc-950"
+					onchange={(event) => onselectall(event.currentTarget.checked)}
+				/>
 			{/if}
-		</p>
+			<p class="text-sm font-medium text-zinc-700">
+				{files.length}
+				{files.length === 1 ? 'file' : 'files'}
+				{#if files.length > 0}
+					<span class="font-normal text-zinc-400">
+						· {formatBytes(totalSize)}
+					</span>
+				{/if}
+			</p>
+		</div>
 	{/if}
 	{#if loading && !initialLoading}
 		<span class="inline-flex items-center gap-1.5 text-xs text-zinc-400">
@@ -95,7 +112,14 @@
 		{/if}
 	</div>
 {:else if view === 'list'}
-	<FileList {files} {trashed} {returnQuery} {actions} />
+	<FileList
+		{files}
+		{trashed}
+		{returnQuery}
+		{actions}
+		{selectedIds}
+		{onselect}
+	/>
 {:else}
 	<ul
 		class="grid grid-cols-2 gap-x-4 gap-y-8 py-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6"
@@ -112,6 +136,10 @@
 				ontrash={() => actions.trash(file)}
 				onrestore={() => actions.restore(file)}
 				onpurge={() => actions.purge(file)}
+				selected={selectedIds.includes(file.id)}
+				onselect={onselect
+					? (selected, shift) => onselect(file, selected, shift)
+					: undefined}
 			/>
 		{/each}
 	</ul>

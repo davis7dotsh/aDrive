@@ -69,6 +69,29 @@ describe('file content links', () => {
 		expect(link.public).toBe(false);
 	});
 
+	it('requires a signed grant when an authenticated user previews unavailable public bytes', async () => {
+		const grant = await mintPrivateGrant({
+			signingKey: 'kS0x8xqQZ2mcYYhBBLVBn1dnlTjluNkETdn3_1v4Gxw',
+			contentOrigin: config.contentOrigin,
+			fileId: file(true).id,
+			version: 3,
+			now: new Date('2026-07-27T12:00:00.000Z')
+		});
+		const link = await buildFileContentLink(
+			config,
+			{ file: file(true) },
+			undefined,
+			grant,
+			true
+		);
+		const url = new URL(link.url);
+
+		expect(url.searchParams.get('v')).toBe('3');
+		expect(url.searchParams.get('e')).toBe('1785154500');
+		expect(url.searchParams.get('g')).toBe(grant.signature);
+		expect(link.public).toBe(false);
+	});
+
 	it('keeps dashboard responses metadata-only or bodyless', async () => {
 		const link = await buildFileContentLink(config, { file: file(true) });
 		const json = contentLinkJsonResponse(link);

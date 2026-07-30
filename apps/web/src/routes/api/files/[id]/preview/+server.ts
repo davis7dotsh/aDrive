@@ -15,7 +15,7 @@ export const GET: RequestHandler = ({ cookies, params, request, url }) =>
 			const files = yield* Files;
 			yield* authorizeRequest(auth, request, url, cookies);
 
-			const content = yield* files.findContent(params.id);
+			const content = yield* files.findContent(params.id, undefined, true);
 			const kind = previewKind(
 				content.file.displayName,
 				content.file.contentType

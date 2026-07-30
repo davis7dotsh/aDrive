@@ -23,6 +23,16 @@ export const BROWSER_SESSION = '__browser_session__';
 export type FileListPayload = FileListResponse;
 export type FileDetailPayload = FileDetailResponse;
 
+export class ApiError extends Error {
+	constructor(
+		message: string,
+		readonly status: number
+	) {
+		super(message);
+		this.name = 'ApiError';
+	}
+}
+
 const errorMessage = async (response: Response) => {
 	const fallback = `Request failed (${response.status})`;
 	try {
@@ -51,7 +61,9 @@ const request = async (path: string, token: string, init?: RequestInit) => {
 		headers,
 		credentials: 'same-origin'
 	});
-	if (!response.ok) throw new Error(await errorMessage(response));
+	if (!response.ok) {
+		throw new ApiError(await errorMessage(response), response.status);
+	}
 	return response;
 };
 
@@ -60,29 +72,24 @@ const json = async <A, I>(
 	response: Response
 ) => Schema.decodeUnknownPromise(schema)(await response.json());
 
-export const checkKey = async (token: string) => {
-	await request('/api/auth/check', token);
+export const checkKey = async (token: string, signal?: AbortSignal) => {
+	await request('/api/auth/check', token, { signal });
 };
 
 export const loginWithPasscode = async (passcode: string) => {
-	const response = await fetch('/api/auth/session', {
+	await request('/api/auth/session', BROWSER_SESSION, {
 		method: 'POST',
-		credentials: 'same-origin',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ passcode })
 	});
-	if (!response.ok) throw new Error(await errorMessage(response));
 };
 
 export const logoutSession = async () => {
-	await fetch('/api/auth/session', {
-		method: 'DELETE',
-		credentials: 'same-origin'
-	});
+	await request('/api/auth/session', BROWSER_SESSION, { method: 'DELETE' });
 };
 
-export const listApiKeys = async (token: string) => {
-	const response = await request('/api/auth/keys', token);
+export const listApiKeys = async (token: string, signal?: AbortSignal) => {
+	const response = await request('/api/auth/keys', token, { signal });
 	return (await json(ApiKeyListResponseSchema, response)).keys;
 };
 
@@ -109,6 +116,14 @@ export const approveDevice = async (token: string, userCode: string) => {
 	});
 };
 
+export const denyDevice = async (token: string, userCode: string) => {
+	await request('/api/auth/device/approve', token, {
+		method: 'DELETE',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ userCode })
+	});
+};
+
 export const listFiles = async (
 	token: string,
 	trashed: boolean,
@@ -120,6 +135,10 @@ export const listFiles = async (
 		{ signal }
 	);
 	return json(FileListResponseSchema, response);
+};
+
+export const emptyTrash = async (token: string) => {
+	await request('/api/files?trashed=true', token, { method: 'DELETE' });
 };
 
 export const searchFiles = async (
@@ -171,13 +190,17 @@ export const getFilePreview = async (
 export const getContentLink = async (
 	token: string,
 	id: string,
-	version?: number
+	version?: number,
+	signal?: AbortSignal,
+	includeUnavailable = false
 ) => {
 	const params = new URLSearchParams();
 	if (version !== undefined) params.set('v', String(version));
+	if (includeUnavailable) params.set('unavailable', 'true');
 	const response = await request(
 		`/api/files/${encodeURIComponent(id)}/link${params.size > 0 ? `?${params}` : ''}`,
-		token
+		token,
+		{ signal }
 	);
 	return json(
 		FileContentLinkResponseSchema,

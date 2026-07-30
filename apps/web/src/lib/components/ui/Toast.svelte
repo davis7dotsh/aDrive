@@ -2,11 +2,32 @@
 	import { onDestroy } from 'svelte';
 	import { flip } from 'svelte/animate';
 	import { fly } from 'svelte/transition';
-	import { getToasts } from '$lib/dashboard/toast.svelte';
+	import { getToasts, type ToastItem } from '$lib/dashboard/toast.svelte';
 	import Icon from './Icon.svelte';
 
 	const toasts = getToasts();
-	onDestroy(() => toasts.clear());
+	let running = $state<ReadonlyArray<string>>([]);
+	let destroyed = false;
+
+	onDestroy(() => {
+		destroyed = true;
+		toasts.clear();
+	});
+
+	const runAction = async (item: ToastItem) => {
+		if (!item.action || running.includes(item.id)) return;
+		running = [...running, item.id];
+		try {
+			await item.action.run();
+			if (!destroyed) toasts.remove(item.id);
+		} catch (cause) {
+			if (!destroyed) toasts.error(cause, `${item.action.label} failed`);
+		} finally {
+			if (!destroyed) {
+				running = running.filter((id) => id !== item.id);
+			}
+		}
+	};
 </script>
 
 <div
@@ -31,10 +52,9 @@
 				<button
 					type="button"
 					class="text-sm font-semibold text-accent-700"
-					onclick={() => {
-						void item.action?.run();
-						toasts.remove(item.id);
-					}}>{item.action.label}</button
+					disabled={running.includes(item.id)}
+					aria-busy={running.includes(item.id)}
+					onclick={() => void runAction(item)}>{item.action.label}</button
 				>
 			{/if}
 			<button

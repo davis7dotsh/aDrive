@@ -193,6 +193,10 @@ export const FileMutationSchema = Schema.Union([
 		displayName: Schema.String
 	}),
 	Schema.Struct({
+		action: Schema.Literal('restore-version'),
+		version: Schema.Int
+	}),
+	Schema.Struct({
 		action: Schema.Literal('purge')
 	})
 ]);

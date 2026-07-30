@@ -121,7 +121,11 @@ export interface SitesShape {
 	) => Effect.Effect<void, NotFound | StorageError>;
 	readonly findAsset: (
 		fileId: string,
-		requestPath: string
+		requestPath: string,
+		options?: {
+			readonly includeUnavailable?: boolean;
+			readonly version?: number;
+		}
 	) => Effect.Effect<SiteContent, InvalidRequest | NotFound | StorageError>;
 	readonly sweepLifecycle: (
 		limit: number
@@ -879,7 +883,11 @@ const makeSites = Effect.gen(function* () {
 			}
 			yield* cleanupStaged(session, 'aborted');
 		}),
-		findAsset: Effect.fn('Sites.findAsset')(function* (fileId, requestPath) {
+		findAsset: Effect.fn('Sites.findAsset')(function* (
+			fileId,
+			requestPath,
+			options = {}
+		) {
 			const candidates = yield* Effect.try({
 				try: () => sitePathCandidates(requestPath),
 				catch: () =>
@@ -896,11 +904,25 @@ const makeSites = Effect.gen(function* () {
 						JOIN site_assets a
 							ON a.file_id = f.id AND a.version = f.current_version
 						WHERE f.id = ? AND f.is_site = 1 AND f.public = 1
-							AND f.deleted_at IS NULL
-							AND (f.expires_at IS NULL OR f.expires_at > ?)
+							AND a.version = f.current_version
+							AND (
+								? = 1
+								OR (
+									f.deleted_at IS NULL
+									AND (f.expires_at IS NULL OR f.expires_at > ?)
+								)
+							)
+							AND (? = 0 OR a.version = ?)
 							AND a.path IN (${candidates.map(() => '?').join(', ')})`
 					)
-					.bind(fileId, new Date().toISOString(), ...candidates),
+					.bind(
+						fileId,
+						options.includeUnavailable ? 1 : 0,
+						new Date().toISOString(),
+						options.version === undefined ? 0 : 1,
+						options.version ?? 0,
+						...candidates
+					),
 				SiteAssetRow,
 				'find site asset'
 			);

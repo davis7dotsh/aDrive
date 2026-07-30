@@ -34,7 +34,10 @@ export const contentDisposition = (
 	return `${disposition}; filename="${asciiFilename(name)}"; filename*=UTF-8''${encodedFilename(name)}`;
 };
 
-export const contentSecurityPolicy = (contentType: string) =>
+export const contentSecurityPolicy = (
+	contentType: string,
+	frameAncestor = "'none'"
+) =>
 	contentType === 'text/html'
-		? "default-src 'self' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
-		: "default-src 'none'; frame-ancestors 'none'; sandbox";
+		? `default-src 'self' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors ${frameAncestor}`
+		: `default-src 'none'; frame-ancestors ${frameAncestor}; sandbox`;

@@ -38,7 +38,8 @@ export const GET: RequestHandler = ({ cookies, params, request, url }) =>
 										status: 400,
 										message: 'Version is invalid'
 									})
-					})
+					}),
+					url.searchParams.get('unavailable') === 'true'
 				)
 			);
 		})

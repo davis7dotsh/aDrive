@@ -93,6 +93,9 @@ export interface AuthShape {
 	readonly approveDevice: (
 		userCode: string
 	) => Effect.Effect<void, InvalidRequest | StorageError>;
+	readonly denyDevice: (
+		userCode: string
+	) => Effect.Effect<void, InvalidRequest | StorageError>;
 	readonly pollDevice: (
 		deviceCode: string
 	) => Effect.Effect<
@@ -103,6 +106,18 @@ export interface AuthShape {
 }
 
 export class Auth extends Context.Service<Auth, AuthShape>()('app/Auth') {}
+
+const parseUserCode = (value: string) =>
+	Effect.try({
+		try: () => normalizeUserCode(value),
+		catch: (cause) =>
+			cause instanceof InvalidRequest
+				? cause
+				: new InvalidRequest({
+						status: 400,
+						message: 'Device approval code is invalid'
+					})
+	});
 
 export const authorizeRequest = (
 	auth: AuthShape,
@@ -453,7 +468,7 @@ const makeAuth = Effect.gen(function* () {
 			}
 		),
 		approveDevice: Effect.fn('Auth.approveDevice')(function* (userCode) {
-			const code = normalizeUserCode(userCode);
+			const code = yield* parseUserCode(userCode);
 			const now = new Date().toISOString();
 			const result = yield* Effect.tryPromise({
 				try: () =>
@@ -467,6 +482,28 @@ const makeAuth = Effect.gen(function* () {
 						.run(),
 				catch: (cause) =>
 					new StorageError({ operation: 'approve device', cause })
+			});
+			if (result.meta.changes !== 1) {
+				return yield* new InvalidRequest({
+					status: 400,
+					message: 'Device approval code is invalid or expired'
+				});
+			}
+		}),
+		denyDevice: Effect.fn('Auth.denyDevice')(function* (userCode) {
+			const code = yield* parseUserCode(userCode);
+			const now = new Date().toISOString();
+			const result = yield* Effect.tryPromise({
+				try: () =>
+					db
+						.prepare(
+							`UPDATE device_codes
+							SET status = 'denied'
+							WHERE user_code = ? AND status = 'pending' AND expires_at > ?`
+						)
+						.bind(code, now)
+						.run(),
+				catch: (cause) => new StorageError({ operation: 'deny device', cause })
 			});
 			if (result.meta.changes !== 1) {
 				return yield* new InvalidRequest({

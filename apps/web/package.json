@@ -12,6 +12,7 @@
 		"dev:content": "node scripts/content-proxy.mjs",
 		"dev:dashboard": "vite dev --host 0.0.0.0 --port 5173",
 		"search:rebuild:local": "wrangler d1 execute DB --local --file scripts/rebuild-search-index.sql",
+		"test": "vitest run --config vite.config.ts",
 		"types:worker": "wrangler types"
 	},
 	"dependencies": {

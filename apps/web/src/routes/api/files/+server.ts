@@ -164,3 +164,37 @@ export const PUT: RequestHandler = async (event) => {
 	}
 	return output.response;
 };
+
+export const DELETE: RequestHandler = async (event) => {
+	const { cookies, request, url } = event;
+	const output = await runEdgeWithEvent(
+		event,
+		Effect.gen(function* () {
+			const auth = yield* Auth;
+			const files = yield* Files;
+			yield* authorizeRequest(auth, request, url, cookies);
+			if (url.searchParams.get('trashed') !== 'true') {
+				return yield* new InvalidRequest({
+					status: 400,
+					message: 'Only trash can be emptied'
+				});
+			}
+			return {
+				count: yield* files.scheduleAllPurgesNow,
+				response: Response.json({ ok: true as const })
+			};
+		})
+	);
+	if (output.count > 0 && event.platform) {
+		event.platform.ctx.waitUntil(
+			runWorkerProgram(
+				event.platform.env,
+				Effect.gen(function* () {
+					const files = yield* Files;
+					yield* files.sweepPurges(10);
+				})
+			)
+		);
+	}
+	return output.response;
+};

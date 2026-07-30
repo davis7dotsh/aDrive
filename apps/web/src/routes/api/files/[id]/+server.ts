@@ -86,17 +86,22 @@ export const PATCH: RequestHandler = async (event) => {
 									)
 								: mutation.action === 'rename'
 									? yield* files.rename(params.id, mutation.displayName)
-									: mutation.action === 'purge'
-										? yield* files.schedulePurgeNow(params.id)
-										: yield* indexing.enqueue(params.id).pipe(
-												Effect.andThen(files.detail(params.id)),
-												Effect.map((detail) => ({
-													file: detail.file,
-													forcedPublic: false
-												}))
-											);
+									: mutation.action === 'restore-version'
+										? yield* files.restoreVersion(params.id, mutation.version)
+										: mutation.action === 'purge'
+											? yield* files.schedulePurgeNow(params.id)
+											: yield* indexing.enqueue(params.id).pipe(
+													Effect.andThen(files.detail(params.id)),
+													Effect.map((detail) => ({
+														file: detail.file,
+														forcedPublic: false
+													}))
+												);
 			return {
-				reindex: mutation.action === 'reindex' || mutation.action === 'rename',
+				reindex:
+					mutation.action === 'reindex' ||
+					mutation.action === 'rename' ||
+					mutation.action === 'restore-version',
 				purge: mutation.action === 'purge',
 				response: Response.json(result)
 			};

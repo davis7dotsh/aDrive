@@ -19,3 +19,18 @@ export const POST: RequestHandler = ({ cookies, request, url }) =>
 			return Response.json({ ok: true as const });
 		})
 	);
+
+export const DELETE: RequestHandler = ({ cookies, request, url }) =>
+	runEdge(
+		Effect.gen(function* () {
+			const auth = yield* Auth;
+			yield* authorizeRequest(auth, request, url, cookies);
+			const input = yield* decodeJson(
+				request,
+				DeviceApprovalSchema,
+				'A device approval code is required'
+			);
+			yield* auth.denyDevice(input.userCode);
+			return Response.json({ ok: true as const });
+		})
+	);

@@ -2,6 +2,10 @@ import type { DashboardFile, FileDetail, FileSummary } from '@adrive/shared';
 import { Context, Effect, Layer, Schema } from 'effect';
 import { SqlClient } from 'effect/unstable/sql';
 import { AppConfig } from '../config';
+import {
+	compensateBlobFailure,
+	deferredBlobDeleteCommand
+} from '../blob-compensation';
 import { InvalidRequest, NotFound, StorageError } from '../errors';
 import {
 	dashboardFileColumns,
@@ -79,6 +83,10 @@ export interface FilesShape {
 	readonly uploadVersion: (
 		input: VersionUploadInput
 	) => Effect.Effect<MutationResult, InvalidRequest | NotFound | StorageError>;
+	readonly restoreVersion: (
+		id: string,
+		version: number
+	) => Effect.Effect<MutationResult, InvalidRequest | NotFound | StorageError>;
 	readonly list: (
 		trashed: boolean
 	) => Effect.Effect<ReadonlyArray<DashboardFile>, StorageError>;
@@ -106,11 +114,13 @@ export interface FilesShape {
 	readonly schedulePurgeNow: (
 		id: string
 	) => Effect.Effect<MutationResult, InvalidRequest | NotFound | StorageError>;
+	readonly scheduleAllPurgesNow: Effect.Effect<number, StorageError>;
 	readonly recordDownload: (id: string) => Effect.Effect<void, StorageError>;
 	readonly sweepPurges: (limit: number) => Effect.Effect<number, StorageError>;
 	readonly findContent: (
 		id: string,
-		version?: number
+		version?: number,
+		includeUnavailable?: boolean
 	) => Effect.Effect<FileContent, InvalidRequest | NotFound | StorageError>;
 }
 
@@ -145,6 +155,48 @@ const makeFiles = Effect.gen(function* () {
 	const tags = yield* Tags;
 	const preparePurgeCommand = (command: PurgeSqlCommand) =>
 		db.prepare(command.sql).bind(...command.bindings);
+	const compensateStoredBlob = (
+		failure: StorageError,
+		fileId: string,
+		version: number,
+		r2Key: string,
+		operation: string
+	) =>
+		compensateBlobFailure(
+			failure,
+			blobs.delete(r2Key),
+			(deleteCause) => {
+				const command = deferredBlobDeleteCommand(
+					r2Key,
+					fileId,
+					version,
+					new Date().toISOString(),
+					String(deleteCause)
+				);
+				return Effect.tryPromise({
+					try: () =>
+						db
+							.prepare(command.sql)
+							.bind(...command.bindings)
+							.run(),
+					catch: (cause) =>
+						new StorageError({
+							operation: 'queue orphaned file blob',
+							cause
+						})
+				});
+			},
+			(deleteCause, queueCause) => {
+				console.error(
+					JSON.stringify({
+						message: `${operation} compensation could not be recorded`,
+						r2Key,
+						deleteCause: String(deleteCause),
+						queueCause: String(queueCause)
+					})
+				);
+			}
+		);
 
 	const findDashboardFile = Effect.fn('Files.findDashboardFile')(function* (
 		id: string
@@ -328,20 +380,7 @@ const makeFiles = Effect.gen(function* () {
 			});
 			yield* commit.pipe(
 				Effect.catch((failure) =>
-					blobs.delete(r2Key).pipe(
-						Effect.catchCause((cleanupCause) =>
-							Effect.sync(() => {
-								console.error(
-									JSON.stringify({
-										message: 'upload compensation failed',
-										r2Key,
-										cause: String(cleanupCause)
-									})
-								);
-							})
-						),
-						Effect.andThen(Effect.fail(failure))
-					)
+					compensateStoredBlob(failure, id, 1, r2Key, 'upload')
 				)
 			);
 
@@ -401,19 +440,75 @@ const makeFiles = Effect.gen(function* () {
 			);
 			return yield* commit.pipe(
 				Effect.catch((failure) =>
-					blobs.delete(r2Key).pipe(
-						Effect.catchCause((cleanupCause) =>
-							Effect.sync(() => {
-								console.error(
-									JSON.stringify({
-										message: 'version upload compensation failed',
-										r2Key,
-										cause: String(cleanupCause)
-									})
-								);
-							})
-						),
-						Effect.andThen(Effect.fail(failure))
+					compensateStoredBlob(
+						failure,
+						current.id,
+						current.version + 1,
+						r2Key,
+						'version upload'
+					)
+				)
+			);
+		}),
+		restoreVersion: Effect.fn('Files.restoreVersion')(function* (id, version) {
+			if (!Number.isSafeInteger(version) || version < 1) {
+				return yield* new InvalidRequest({
+					status: 400,
+					message: 'Version is invalid'
+				});
+			}
+			const current = yield* findDashboardFile(id);
+			if (current.deletedAt !== null) return yield* new NotFound({ id });
+			if (current.kind === 'site') {
+				return yield* new InvalidRequest({
+					status: 400,
+					message: 'Republish sites with `adrive site put`'
+				});
+			}
+			if (current.version === version) {
+				return yield* new InvalidRequest({
+					status: 409,
+					message: 'That version is already current'
+				});
+			}
+			const rows = yield* sql`
+				SELECT
+					f.id, f.display_name, v.content_type, v.version, v.size_bytes,
+					f.public AS is_public, v.r2_key, v.created_at
+				FROM files f
+				JOIN file_versions v ON v.file_id = f.id
+				WHERE f.id = ${id} AND v.version = ${version}
+					AND f.deleted_at IS NULL AND f.is_site = 0
+				LIMIT 1
+			`.pipe(
+				Effect.mapError(
+					(cause) =>
+						new StorageError({ operation: 'find version to restore', cause })
+				)
+			);
+			const source = decodeContentRows(rows)[0];
+			if (!source) return yield* new NotFound({ id });
+			const sourceObject = yield* blobs.get(source.r2_key);
+			const r2Key = `v/${current.id}/${crypto.randomUUID()}`;
+			const stored = yield* blobs.put(
+				r2Key,
+				sourceObject.body,
+				source.size_bytes,
+				source.content_type
+			);
+			return yield* commitStoredVersion(
+				current,
+				r2Key,
+				stored.size,
+				source.content_type
+			).pipe(
+				Effect.catch((failure) =>
+					compensateStoredBlob(
+						failure,
+						current.id,
+						current.version + 1,
+						r2Key,
+						'version restore'
 					)
 				)
 			);
@@ -425,10 +520,10 @@ const makeFiles = Effect.gen(function* () {
 					`SELECT ${dashboardFileColumns}
 					FROM files f
 					WHERE f.deleted_at IS ${trashed ? 'NOT NULL' : 'NULL'}
-						${trashed ? '' : 'AND (f.expires_at IS NULL OR f.expires_at > ?)'}
+						${trashed ? 'AND (f.purge_at IS NULL OR f.purge_at > ?)' : 'AND (f.expires_at IS NULL OR f.expires_at > ?)'}
 					ORDER BY ${trashed ? 'f.deleted_at' : 'f.updated_at'} DESC, f.id
 					LIMIT 200`,
-					trashed ? [] : [now]
+					[now]
 				)
 				.pipe(
 					Effect.mapError(
@@ -643,6 +738,22 @@ const makeFiles = Effect.gen(function* () {
 			}
 			return { file: current, forcedPublic: false };
 		}),
+		scheduleAllPurgesNow: Effect.tryPromise({
+			try: async () => {
+				const result = await db
+					.prepare(
+						`UPDATE files
+						SET purge_at = ?, purge_state = 'none', purge_error = NULL,
+							purge_next_run_at = NULL
+						WHERE deleted_at IS NOT NULL AND purge_state <> 'pending'`
+					)
+					.bind('1970-01-01T00:00:00.000Z')
+					.run();
+				return result.meta.changes;
+			},
+			catch: (cause) =>
+				new StorageError({ operation: 'schedule empty trash', cause })
+		}).pipe(Effect.withSpan('Files.scheduleAllPurgesNow')),
 		recordDownload: Effect.fn('Files.recordDownload')(function* (id) {
 			const now = new Date().toISOString();
 			yield* sql`
@@ -811,7 +922,11 @@ const makeFiles = Effect.gen(function* () {
 			}
 			return due.length;
 		}),
-		findContent: Effect.fn('Files.findContent')(function* (id, version) {
+		findContent: Effect.fn('Files.findContent')(function* (
+			id,
+			version,
+			includeUnavailable = false
+		) {
 			if (
 				version !== undefined &&
 				(!Number.isSafeInteger(version) || version < 1)
@@ -830,8 +945,17 @@ const makeFiles = Effect.gen(function* () {
 							FROM files f
 							JOIN file_versions v
 								ON v.file_id = f.id AND v.version = f.current_version
-							WHERE f.id = ${id} AND f.deleted_at IS NULL
-								AND (f.expires_at IS NULL OR f.expires_at > ${new Date().toISOString()})
+							WHERE f.id = ${id}
+								AND (
+									${includeUnavailable ? 1 : 0} = 1
+									OR (
+										f.deleted_at IS NULL
+										AND (
+											f.expires_at IS NULL
+											OR f.expires_at > ${new Date().toISOString()}
+										)
+									)
+								)
 								AND f.is_site = 0
 							LIMIT 1
 						`.pipe(
@@ -845,8 +969,17 @@ const makeFiles = Effect.gen(function* () {
 								f.public AS is_public, v.r2_key, v.created_at
 							FROM files f
 							JOIN file_versions v ON v.file_id = f.id
-							WHERE f.id = ${id} AND v.version = ${version} AND f.deleted_at IS NULL
-								AND (f.expires_at IS NULL OR f.expires_at > ${new Date().toISOString()})
+							WHERE f.id = ${id} AND v.version = ${version}
+								AND (
+									${includeUnavailable ? 1 : 0} = 1
+									OR (
+										f.deleted_at IS NULL
+										AND (
+											f.expires_at IS NULL
+											OR f.expires_at > ${new Date().toISOString()}
+										)
+									)
+								)
 								AND f.is_site = 0
 							LIMIT 1
 						`.pipe(

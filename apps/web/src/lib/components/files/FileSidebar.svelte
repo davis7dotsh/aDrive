@@ -21,6 +21,7 @@
 		onversion,
 		oncopyversion,
 		onopenversion,
+		onrestoreversion,
 		onreindex,
 		ontrash,
 		onrestore
@@ -32,12 +33,15 @@
 		oncopy: () => string | Promise<string>;
 		ondownload: () => void;
 		onvisibility: (value: boolean) => void;
-		onexpiration: (value: string | null) => void;
+		onexpiration: (
+			value: string | null
+		) => void | boolean | Promise<void | boolean>;
 		ontag: (tag: Tag) => void;
-		oncreatetag: (name: string) => void;
+		oncreatetag: (name: string) => void | Promise<void>;
 		onversion: (file: File) => void;
 		oncopyversion: (version: number) => string | Promise<string>;
 		onopenversion: (version: number) => void;
+		onrestoreversion: (version: number) => void;
 		onreindex: () => void;
 		ontrash: () => void;
 		onrestore: () => void;
@@ -109,6 +113,7 @@
 
 	<section class="rounded-xl border border-zinc-200 p-4">
 		<ExpirySelect
+			identity={file.id}
 			value={file.expiresAt ?? ''}
 			disabled={busy}
 			onchange={(next) => onexpiration(next || null)}
@@ -142,6 +147,7 @@
 				{versions}
 				oncopy={oncopyversion}
 				onopen={onopenversion}
+				onrestore={onrestoreversion}
 			/>
 		</div>
 	</section>

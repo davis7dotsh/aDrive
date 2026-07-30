@@ -26,12 +26,16 @@ export const POST: RequestHandler = ({ request, getClientAddress }) =>
 			);
 			const result = yield* auth.createDeviceAuthorization(input.name);
 			const verificationUri = `${config.dashboardOrigin}/`;
+			const expiresAt = Math.floor(Date.now() / 1_000) + result.expiresIn;
+			const verificationUriComplete = new URL(verificationUri);
+			verificationUriComplete.searchParams.set('device', result.userCode);
+			verificationUriComplete.searchParams.set('expires', String(expiresAt));
 			return Response.json(
 				{
 					deviceCode: result.deviceCode,
 					userCode: result.userCode,
 					verificationUri,
-					verificationUriComplete: `${verificationUri}?device=${encodeURIComponent(result.userCode)}`,
+					verificationUriComplete: verificationUriComplete.href,
 					expiresIn: result.expiresIn,
 					interval: result.interval
 				},

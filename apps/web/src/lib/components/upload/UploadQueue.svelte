@@ -6,6 +6,11 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 
 	let { uploads }: { uploads: UploadManager } = $props();
+	const hasDismissable = $derived(
+		uploads.items.some(
+			(item) => item.status === 'done' || item.status === 'cancelled'
+		)
+	);
 </script>
 
 {#if uploads.items.length > 0}
@@ -18,7 +23,7 @@
 			<p class="text-sm font-semibold text-zinc-900">
 				Uploads{uploads.pending ? ` · ${uploads.pending} remaining` : ''}
 			</p>
-			{#if uploads.pending === 0}
+			{#if hasDismissable}
 				<button
 					type="button"
 					class="rounded p-1 text-zinc-400 hover:bg-zinc-100"
@@ -38,7 +43,7 @@
 					<div class="flex items-start gap-2">
 						<div class="min-w-0 flex-1">
 							<p class="truncate text-xs font-medium text-zinc-800">
-								{item.file.name}
+								{item.name}
 							</p>
 							<p class="mt-0.5 text-[11px] text-zinc-400">
 								{item.status === 'done'
@@ -59,11 +64,18 @@
 								onclick={() => uploads.cancel(item.id)}>Cancel</button
 							>
 						{:else if item.status === 'error'}
-							<Button
-								variant="ghost"
-								class="!px-2 !py-1 text-xs"
-								onclick={() => uploads.retry(item.id)}>Retry</Button
-							>
+							<div class="flex items-center gap-1">
+								<Button
+									variant="ghost"
+									class="!px-2 !py-1 text-xs"
+									onclick={() => uploads.remove(item.id)}>Dismiss</Button
+								>
+								<Button
+									variant="ghost"
+									class="!px-2 !py-1 text-xs"
+									onclick={() => uploads.retry(item.id)}>Retry</Button
+								>
+							</div>
 						{/if}
 					</div>
 					{#if item.status === 'uploading' || item.status === 'queued'}

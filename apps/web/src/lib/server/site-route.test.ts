@@ -55,6 +55,17 @@ describe('static site route canonicalization', () => {
 		).toBe('/s/assets/app.js');
 	});
 
+	it('keeps relative assets inside a signed unavailable-site preview path', () => {
+		const root = new URL(
+			'/s/site-id/@grant/3/1785154500/abcdefghijklmnopqrstuvwxyzABCDEFGH123456789/',
+			'https://content.example.com'
+		);
+
+		expect(new URL('assets/app.js', root).pathname).toBe(
+			'/s/site-id/@grant/3/1785154500/abcdefghijklmnopqrstuvwxyzABCDEFGH123456789/assets/app.js'
+		);
+	});
+
 	it('preserves exact assets and directory index resolution', () => {
 		expect(sitePathCandidates('app.js')).toEqual([
 			'app.js',

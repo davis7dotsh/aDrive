@@ -30,7 +30,7 @@
 		Settings
 	</h1>
 
-	{#if !session.ready || settings.loading}
+	{#if !session.ready || (settings.loading && !settings.current)}
 		<div class="mt-8 animate-pulse space-y-3">
 			<div class="h-5 w-1/3 rounded bg-zinc-100"></div>
 			<div class="h-24 rounded bg-zinc-100"></div>
@@ -39,7 +39,29 @@
 		<p class="mt-8 text-sm text-zinc-500">
 			<a href="/" class="font-medium text-zinc-900">Sign in</a> to manage settings.
 		</p>
+	{:else if settings.error && !settings.current}
+		<div class="mt-8 text-sm" role="alert">
+			<p class="text-red-700">{settings.error.message}</p>
+			<button
+				type="button"
+				class="mt-3 font-medium text-zinc-900"
+				onclick={() => void settings.refetch()}>Try again</button
+			>
+		</div>
 	{:else}
+		{#if settings.error}
+			<div
+				class="mt-8 flex items-center justify-between gap-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3"
+				role="alert"
+			>
+				<p class="text-sm text-red-800">{settings.error.message}</p>
+				<button
+					type="button"
+					class="text-sm font-medium text-zinc-900"
+					onclick={() => void settings.refetch()}>Try again</button
+				>
+			</div>
+		{/if}
 		<section class="mt-8 rounded-xl border border-zinc-200 p-5">
 			<h2 class="text-lg font-semibold text-zinc-950">Drive</h2>
 			<dl class="mt-4 space-y-3 text-sm">

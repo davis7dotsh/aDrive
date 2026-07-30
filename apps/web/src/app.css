@@ -10,6 +10,22 @@
 }
 
 @layer base {
+	:root {
+		color-scheme: light dark;
+		--markdown-body: #27272a;
+		--markdown-heading-1: #09090b;
+		--markdown-heading-2: #18181b;
+		--markdown-heading-3: #27272a;
+		--markdown-link: #1d4ed8;
+		--markdown-link-underline: #bfdbfe;
+		--markdown-muted: #71717a;
+		--markdown-border: #d4d4d8;
+		--markdown-code-bg: #f4f4f5;
+		--markdown-pre-bg: #18181b;
+		--markdown-pre-text: #f4f4f5;
+		--markdown-rule: #e4e4e7;
+	}
+
 	html {
 		background: #ffffff;
 		color: #18181b;
@@ -67,7 +83,7 @@
 
 @layer components {
 	.markdown-preview {
-		color: #27272a;
+		color: var(--markdown-body);
 		font-size: 1rem;
 		line-height: 1.75;
 	}
@@ -82,7 +98,7 @@
 
 	.markdown-preview h1 {
 		margin: 0 0 1.5rem;
-		color: #09090b;
+		color: var(--markdown-heading-1);
 		font-size: 2.25rem;
 		font-weight: 650;
 		letter-spacing: -0.035em;
@@ -91,7 +107,7 @@
 
 	.markdown-preview h2 {
 		margin: 2.5rem 0 0.9rem;
-		color: #18181b;
+		color: var(--markdown-heading-2);
 		font-size: 1.45rem;
 		font-weight: 650;
 		letter-spacing: -0.02em;
@@ -100,7 +116,7 @@
 
 	.markdown-preview h3 {
 		margin: 2rem 0 0.75rem;
-		color: #27272a;
+		color: var(--markdown-heading-3);
 		font-size: 1.1rem;
 		font-weight: 650;
 		line-height: 1.4;
@@ -146,26 +162,26 @@
 	}
 
 	.markdown-preview a {
-		color: #1d4ed8;
+		color: var(--markdown-link);
 		text-decoration: underline;
-		text-decoration-color: #bfdbfe;
+		text-decoration-color: var(--markdown-link-underline);
 		text-underline-offset: 0.2em;
 	}
 
 	.markdown-preview strong {
-		color: #18181b;
+		color: var(--markdown-heading-2);
 		font-weight: 650;
 	}
 
 	.markdown-preview blockquote {
-		border-left: 2px solid #d4d4d8;
+		border-left: 2px solid var(--markdown-border);
 		padding-left: 1rem;
-		color: #71717a;
+		color: var(--markdown-muted);
 	}
 
 	.markdown-preview code {
 		border-radius: 0.25rem;
-		background: #f4f4f5;
+		background: var(--markdown-code-bg);
 		padding: 0.1rem 0.3rem;
 		font-size: 0.875em;
 	}
@@ -173,9 +189,9 @@
 	.markdown-preview pre {
 		overflow-x: auto;
 		border-radius: 0.5rem;
-		background: #18181b;
+		background: var(--markdown-pre-bg);
 		padding: 1rem;
-		color: #f4f4f5;
+		color: var(--markdown-pre-text);
 		font-size: 0.875rem;
 		line-height: 1.6;
 	}
@@ -189,7 +205,7 @@
 	.markdown-preview hr {
 		margin: 2.5rem 0;
 		border: 0;
-		border-top: 1px solid #e4e4e7;
+		border-top: 1px solid var(--markdown-rule);
 	}
 
 	.markdown-preview table {
@@ -200,7 +216,7 @@
 
 	.markdown-preview th,
 	.markdown-preview td {
-		border-bottom: 1px solid #e4e4e7;
+		border-bottom: 1px solid var(--markdown-rule);
 		padding: 0.6rem 0.75rem;
 		text-align: left;
 		vertical-align: top;
@@ -209,5 +225,55 @@
 	.markdown-preview img {
 		max-width: 100%;
 		height: auto;
+	}
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		--color-white: #18181b;
+		--color-zinc-50: #18181b;
+		--color-zinc-100: #27272a;
+		--color-zinc-200: #3f3f46;
+		--color-zinc-300: #52525b;
+		--color-zinc-400: #a1a1aa;
+		--color-zinc-500: #d4d4d8;
+		--color-zinc-600: #e4e4e7;
+		--color-zinc-700: #f4f4f5;
+		--color-zinc-800: #fafafa;
+		--color-zinc-900: #fafafa;
+		--color-zinc-950: #ffffff;
+		--color-accent-50: #172554;
+		--color-accent-100: #1e3a8a;
+		--color-accent-500: #60a5fa;
+		--color-accent-600: #93c5fd;
+		--color-accent-700: #bfdbfe;
+		--color-red-50: #450a0a;
+		--color-red-100: #7f1d1d;
+		--color-red-200: #991b1b;
+		--color-red-600: #fca5a5;
+		--color-red-700: #fecaca;
+		--color-red-800: #fee2e2;
+		--color-amber-50: #451a03;
+		--color-amber-200: #92400e;
+		--color-amber-700: #fde68a;
+		--color-amber-800: #fef3c7;
+		--color-emerald-500: #34d399;
+		--markdown-body: #d4d4d8;
+		--markdown-heading-1: #fafafa;
+		--markdown-heading-2: #f4f4f5;
+		--markdown-heading-3: #e4e4e7;
+		--markdown-link: #93c5fd;
+		--markdown-link-underline: #1e40af;
+		--markdown-muted: #a1a1aa;
+		--markdown-border: #52525b;
+		--markdown-code-bg: #27272a;
+		--markdown-pre-bg: #09090b;
+		--markdown-pre-text: #f4f4f5;
+		--markdown-rule: #3f3f46;
+	}
+
+	html {
+		background: #09090b;
+		color: #f4f4f5;
 	}
 }

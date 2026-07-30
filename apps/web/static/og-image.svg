@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#09090b"/>
+  <rect x="96" y="171" width="288" height="288" rx="64" fill="#fafafa"/>
+  <path d="M151 386 224 214h46l73 172h-53l-15-40h-65l-15 40h-44Zm76-79h41l-20-59-21 59Z" fill="#18181b"/>
+  <text x="450" y="320" fill="#fafafa" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="112" font-weight="650" letter-spacing="-5">adrive</text>
+  <text x="456" y="382" fill="#a1a1aa" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="30">A small, self-hosted file drive</text>
+</svg>

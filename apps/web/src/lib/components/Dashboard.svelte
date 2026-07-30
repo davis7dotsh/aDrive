@@ -1,15 +1,20 @@
 <script lang="ts">
-	import type { DashboardFile } from '@adrive/shared';
+	import type { DashboardFile, FileMutation, Tag } from '@adrive/shared';
 	import { page } from '$app/state';
 	import {
+		emptyTrash,
 		getContentLink,
 		listFiles,
 		mutateFile,
-		searchFiles
+		searchFiles,
+		setFileTags
 	} from '$lib/dashboard/api';
 	import { getDashboardSession } from '$lib/dashboard/session.svelte';
 	import { getToasts } from '$lib/dashboard/toast.svelte';
-	import { UploadManager } from '$lib/dashboard/uploads.svelte';
+	import {
+		partitionUploadFiles,
+		UploadManager
+	} from '$lib/dashboard/uploads.svelte';
 	import DeviceApproval from './auth/DeviceApproval.svelte';
 	import SignIn from './auth/SignIn.svelte';
 	import DashboardSkeleton from './DashboardSkeleton.svelte';
@@ -25,6 +30,16 @@
 	import { PressedKeys, resource } from 'runed';
 	import { createSearchParamsSchema, useSearchParams } from 'runed/kit';
 	import type { Attachment } from 'svelte/attachments';
+	import type { FileListPayload } from '$lib/dashboard/api';
+	import { untrack } from 'svelte';
+
+	let {
+		initialList = null,
+		initialError = ''
+	}: {
+		initialList?: FileListPayload | null;
+		initialError?: string;
+	} = $props();
 
 	const emptyList = {
 		files: [],
@@ -59,6 +74,12 @@
 		page.url.searchParams.get('layout') === 'list' ? 'list' : 'grid'
 	);
 	const deviceCode = $derived(page.url.searchParams.get('device') ?? '');
+	const deviceExpiresAt = $derived.by(() => {
+		const seconds = Number(page.url.searchParams.get('expires'));
+		return Number.isSafeInteger(seconds) && seconds > 0
+			? seconds * 1_000
+			: undefined;
+	});
 	const list = resource(
 		() =>
 			[
@@ -78,9 +99,16 @@
 				? listFiles(token, true, signal)
 				: searchFiles(token, query, selectedTags, signal);
 		},
-		{ debounce: 200, initialValue: emptyList }
+		{
+			debounce: 200,
+			initialValue: untrack(() => initialList) ?? emptyList
+		}
 	);
-	const initialListLoading = $derived(!list.current.contentOrigin);
+	let serverLoadError = $state(untrack(() => initialError));
+	const listError = $derived(list.error?.message ?? serverLoadError);
+	const initialListLoading = $derived(
+		!list.current.contentOrigin && !listError
+	);
 	const uploads = new UploadManager(() => {
 		void list.refetch();
 	});
@@ -89,8 +117,17 @@
 	let purgeTarget = $state<DashboardFile>();
 	let purgeOpen = $state(false);
 	let emptyTrashOpen = $state(false);
+	let bulkPurgeOpen = $state(false);
+	let purging = $state(false);
+	let batchBusy = $state(false);
+	let selectedIds = $state<ReadonlyArray<string>>([]);
+	let bulkTagId = $state('');
+	let lastSelectionIndex = -1;
+	let selectionView = false;
 	let dragging = $state(false);
+	let draggingFolder = $state(false);
 	let dragDepth = 0;
+	let uploadIdentity = '';
 	let searchInput = $state<HTMLInputElement>();
 	const attachSearch: Attachment<HTMLInputElement> = (node) => {
 		searchInput = node;
@@ -99,17 +136,22 @@
 		};
 	};
 
-	const filteredFiles = $derived.by(() => {
+	const visibleFiles = $derived.by(() => {
 		const query = params.q.trim().toLowerCase();
 		const selectedTags = [...params.tags];
-		const filtered = list.current.files.filter(
-			(file) =>
-				(!query ||
-					file.displayName.toLowerCase().includes(query) ||
-					file.tags.some((tag) => tag.name.toLowerCase().includes(query))) &&
-				(selectedTags.length === 0 ||
-					file.tags.some((tag) => selectedTags.includes(tag.id)))
-		);
+		if (!showTrash && query) return list.current.files;
+		const filtered = showTrash
+			? list.current.files.filter(
+					(file) =>
+						(!query ||
+							file.displayName.toLowerCase().includes(query) ||
+							file.tags.some((tag) =>
+								tag.name.toLowerCase().includes(query)
+							)) &&
+						(selectedTags.length === 0 ||
+							file.tags.some((tag) => selectedTags.includes(tag.id)))
+				)
+			: list.current.files;
 		return [...filtered].sort((left, right) => {
 			if (params.sort === 'name')
 				return left.displayName.localeCompare(right.displayName);
@@ -117,8 +159,46 @@
 			return right.updatedAt.localeCompare(left.updatedAt);
 		});
 	});
+	const uploadsAvailable = $derived(
+		Boolean(session.token) &&
+			!session.connecting &&
+			!showTrash &&
+			list.current.maxUploadBytes > 0
+	);
 
-	$effect(() => () => params.cleanup());
+	$effect(() => {
+		if (list.current.contentOrigin) serverLoadError = '';
+	});
+
+	$effect(() => {
+		const nextView = showTrash;
+		if (selectionView !== nextView) {
+			selectionView = nextView;
+			selectedIds = [];
+			lastSelectionIndex = -1;
+		}
+	});
+
+	$effect(() => {
+		const available = new Set(list.current.files.map((file) => file.id));
+		const next = selectedIds.filter((id) => available.has(id));
+		if (next.length !== selectedIds.length) selectedIds = next;
+	});
+
+	$effect(() => {
+		const token = session.token;
+		const nextIdentity = session.connecting ? '' : token;
+		if (uploadIdentity && uploadIdentity !== nextIdentity) {
+			uploads.cancelAll();
+			uploadOpen = false;
+		}
+		uploadIdentity = nextIdentity;
+	});
+
+	$effect(() => () => {
+		params.cleanup();
+		uploads.dispose();
+	});
 
 	const pressed = new PressedKeys();
 	pressed.onKeys('/', () => searchInput?.focus());
@@ -130,7 +210,7 @@
 			document.activeElement instanceof HTMLSelectElement
 		)
 			return;
-		if (session.token && !showTrash) uploadOpen = true;
+		if (uploadsAvailable) uploadOpen = true;
 	});
 
 	const clearFilters = () => {
@@ -143,6 +223,93 @@
 			: [...params.tags, id];
 	};
 
+	const selectedFiles = $derived(
+		list.current.files.filter((file) => selectedIds.includes(file.id))
+	);
+
+	const selectFile = (
+		file: DashboardFile,
+		selected: boolean,
+		shift: boolean
+	) => {
+		const index = visibleFiles.findIndex(
+			(candidate) => candidate.id === file.id
+		);
+		if (index < 0) return;
+		const ids =
+			shift && lastSelectionIndex >= 0
+				? visibleFiles
+						.slice(
+							Math.min(lastSelectionIndex, index),
+							Math.max(lastSelectionIndex, index) + 1
+						)
+						.map((candidate) => candidate.id)
+				: [file.id];
+		const next = new Set(selectedIds);
+		for (const id of ids) {
+			if (selected) next.add(id);
+			else next.delete(id);
+		}
+		selectedIds = [...next];
+		lastSelectionIndex = index;
+	};
+
+	const selectAllVisible = (selected: boolean) => {
+		const visibleIds = new Set(visibleFiles.map((file) => file.id));
+		selectedIds = selected
+			? [...new Set([...selectedIds, ...visibleIds])]
+			: selectedIds.filter((id) => !visibleIds.has(id));
+		lastSelectionIndex = -1;
+	};
+
+	const runBatch = async (
+		label: string,
+		operation: (file: DashboardFile) => Promise<unknown>
+	) => {
+		const targets = selectedFiles;
+		if (batchBusy || targets.length === 0) return;
+		const token = session.token;
+		batchBusy = true;
+		try {
+			const outcomes = await Promise.allSettled(targets.map(operation));
+			await list.refetch();
+			if (session.token !== token) return;
+			const failedIds = targets
+				.filter((_, index) => outcomes[index]?.status === 'rejected')
+				.map((file) => file.id);
+			selectedIds = failedIds;
+			if (failedIds.length > 0) {
+				toasts.error(
+					new Error(
+						`${label} failed for ${failedIds.length} ${failedIds.length === 1 ? 'file' : 'files'}`
+					)
+				);
+			} else {
+				toasts.success(
+					`${label} ${targets.length} ${targets.length === 1 ? 'file' : 'files'}`
+				);
+			}
+		} finally {
+			batchBusy = false;
+		}
+	};
+
+	const mutateSelected = (label: string, mutation: FileMutation) =>
+		runBatch(label, (file) => mutateFile(session.token, file.id, mutation));
+
+	const addSelectedTag = async (tag: Tag) => {
+		await runBatch('Tagged', (file) =>
+			setFileTags(
+				session.token,
+				file.id,
+				file.tags.some((current) => current.id === tag.id)
+					? file.tags
+					: [...file.tags, tag]
+			)
+		);
+		bulkTagId = '';
+	};
+
 	const download = (url: string, name: string) => {
 		const anchor = document.createElement('a');
 		anchor.href = url;
@@ -153,48 +320,67 @@
 		anchor.remove();
 	};
 
+	const isUnavailable = (file: DashboardFile) => {
+		const expirationTime = file.expiresAt
+			? new Date(file.expiresAt).getTime()
+			: Number.NaN;
+		return (
+			file.deletedAt !== null ||
+			(Number.isFinite(expirationTime) && expirationTime <= Date.now())
+		);
+	};
+
+	const resolveFileLink = async (file: DashboardFile) => {
+		const unavailable = isUnavailable(file);
+		if (file.public && !unavailable) {
+			const path = file.kind === 'site' ? `s/${file.id}/` : `f/${file.id}`;
+			return `${list.current.contentOrigin}/${path}`;
+		}
+		return (
+			await getContentLink(
+				session.token,
+				file.id,
+				undefined,
+				undefined,
+				unavailable
+			)
+		).url;
+	};
+
 	const openFile = async (file: DashboardFile) => {
 		try {
+			const url = await resolveFileLink(file);
 			if (file.public) {
-				const path = file.kind === 'site' ? `s/${file.id}/` : `f/${file.id}`;
-				window.open(
-					`${list.current.contentOrigin}/${path}`,
-					'_blank',
-					'noopener'
-				);
+				window.open(url, '_blank', 'noopener');
 			} else {
-				const link = await getContentLink(session.token, file.id);
-				download(link.url, file.displayName);
+				download(url, file.displayName);
 			}
 		} catch (cause) {
 			toasts.error(cause, 'Could not open the file');
 		}
 	};
 
-	const linkFor = async (file: DashboardFile) => {
-		const path = file.kind === 'site' ? `s/${file.id}/` : `f/${file.id}`;
-		const link = file.public
-			? { url: `${list.current.contentOrigin}/${path}` }
-			: await getContentLink(session.token, file.id);
-		return link.url;
-	};
+	const linkFor = (file: DashboardFile) => resolveFileLink(file);
 
 	const changeState = async (
 		file: DashboardFile,
 		action: 'trash' | 'restore'
 	) => {
-		const previous = list.current;
-		list.mutate({
-			...previous,
-			files: previous.files.filter((candidate) => candidate.id !== file.id)
-		});
+		const token = session.token;
 		try {
-			await mutateFile(session.token, file.id, { action });
+			await mutateFile(token, file.id, { action });
+			if (session.token !== token) return;
+			list.mutate({
+				...list.current,
+				files: list.current.files.filter(
+					(candidate) => candidate.id !== file.id
+				)
+			});
 			if (action === 'trash') {
 				toasts.success('Moved to trash', {
 					label: 'Undo',
 					run: async () => {
-						await mutateFile(session.token, file.id, { action: 'restore' });
+						await mutateFile(token, file.id, { action: 'restore' });
 						await list.refetch();
 					}
 				});
@@ -202,49 +388,98 @@
 				toasts.success('File restored');
 			}
 		} catch (cause) {
-			list.mutate(previous);
-			toasts.error(cause, 'Could not update the file');
+			if (session.token === token) {
+				toasts.error(cause, 'Could not update the file');
+			}
 		}
 	};
 
 	const purgeFiles = async (targets: ReadonlyArray<DashboardFile>) => {
-		const previous = list.current;
-		list.mutate({
-			...previous,
-			files: previous.files.filter(
-				(candidate) => !targets.some((target) => target.id === candidate.id)
-			)
-		});
+		if (purging || targets.length === 0) return;
+		const token = session.token;
+		purging = true;
 		try {
-			await Promise.all(
-				targets.map((file) =>
-					mutateFile(session.token, file.id, { action: 'purge' })
-				)
+			const outcomes = await Promise.allSettled(
+				targets.map((file) => mutateFile(token, file.id, { action: 'purge' }))
 			);
-			toasts.success(
-				targets.length === 1
-					? 'Permanent deletion started'
-					: 'Empty trash started'
-			);
-			purgeTarget = undefined;
-			purgeOpen = false;
+			await list.refetch();
+			if (session.token !== token) return;
+			const failed = outcomes.filter(
+				(outcome) => outcome.status === 'rejected'
+			).length;
+			if (failed > 0) {
+				toasts.error(
+					new Error(
+						`${failed} ${failed === 1 ? 'file was' : 'files were'} not deleted`
+					)
+				);
+			} else {
+				toasts.success(
+					targets.length === 1
+						? 'Permanent deletion started'
+						: 'Empty trash started'
+				);
+				purgeTarget = undefined;
+				purgeOpen = false;
+				emptyTrashOpen = false;
+				bulkPurgeOpen = false;
+			}
+		} finally {
+			purging = false;
+		}
+	};
+
+	const purgeAllTrash = async () => {
+		if (purging) return;
+		const token = session.token;
+		purging = true;
+		try {
+			await emptyTrash(token);
+			await list.refetch();
+			if (session.token !== token) return;
+			selectedIds = [];
 			emptyTrashOpen = false;
+			toasts.success('Empty trash started');
 		} catch (cause) {
-			list.mutate(previous);
-			toasts.error(cause, 'Could not permanently delete the file');
+			if (session.token === token) {
+				toasts.error(cause, 'Could not empty trash');
+			}
+		} finally {
+			purging = false;
 		}
 	};
 
 	const containsFiles = (event: DragEvent) =>
 		event.dataTransfer?.types.includes('Files') ?? false;
+	const containsFolder = (event: DragEvent) =>
+		Array.from(event.dataTransfer?.items ?? []).some(
+			(item) => item.kind === 'file' && item.webkitGetAsEntry()?.isDirectory
+		);
 	const resetDrag = () => {
 		dragDepth = 0;
 		dragging = false;
+		draggingFolder = false;
 	};
 	const queueFiles = (files: FileList) => {
 		const selected = Array.from(files);
-		if (selected.length === 0 || showTrash) return;
-		uploads.enqueue(selected, {
+		if (selected.length === 0 || !uploadsAvailable || uploadOpen) return;
+		if (list.current.maxUploadBytes <= 0) {
+			toasts.error(new Error('The upload limit is not available yet'));
+			return;
+		}
+		const { accepted, rejected } = partitionUploadFiles(
+			selected,
+			list.current.maxUploadBytes
+		);
+		if (rejected.length > 0) {
+			toasts.error(
+				new Error(
+					`${rejected.length} ${rejected.length === 1 ? 'file exceeds' : 'files exceed'} the upload limit`
+				)
+			);
+		}
+		if (accepted.length === 0) return;
+		uploads.enqueue(accepted, {
 			token: session.token,
 			public: true,
 			tags: [],
@@ -252,10 +487,11 @@
 		});
 	};
 	const onDragEnter = (event: DragEvent) => {
-		if (!session.token || !containsFiles(event)) return;
+		if (!uploadsAvailable || uploadOpen || !containsFiles(event)) return;
 		event.preventDefault();
 		dragDepth += 1;
 		dragging = true;
+		draggingFolder = containsFolder(event);
 	};
 	const onDragLeave = (event: DragEvent) => {
 		if (!containsFiles(event)) return;
@@ -267,7 +503,12 @@
 <svelte:window
 	ondragenter={onDragEnter}
 	ondragover={(event) => {
-		if (containsFiles(event)) event.preventDefault();
+		if (containsFiles(event)) {
+			event.preventDefault();
+			if (uploadsAvailable && !uploadOpen) {
+				draggingFolder = containsFolder(event);
+			}
+		}
 	}}
 	ondragleave={onDragLeave}
 	ondragend={resetDrag}
@@ -276,9 +517,20 @@
 		if (!containsFiles(event)) return;
 		event.preventDefault();
 		resetDrag();
+		if (uploadOpen || !uploadsAvailable) return;
+		const folder = containsFolder(event);
+		if (folder) {
+			toasts.error(
+				new Error(
+					'Folders are not uploaded as files. Use `adrive site put` for a site directory.'
+				)
+			);
+			return;
+		}
 		if (event.dataTransfer?.files) queueFiles(event.dataTransfer.files);
 	}}
 	onpaste={(event) => {
+		if (uploadOpen || !uploadsAvailable) return;
 		const files = event.clipboardData?.files;
 		if (files?.length) {
 			event.preventDefault();
@@ -297,7 +549,11 @@
 	}}
 />
 
-<DropOverlay active={dragging} disabled={showTrash} />
+<DropOverlay
+	active={dragging}
+	disabled={!uploadsAvailable || uploadOpen}
+	message={draggingFolder ? 'Use `adrive site put` for folders' : undefined}
+/>
 
 <main class="mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:py-10">
 	{#if !session.ready}
@@ -306,7 +562,11 @@
 		<SignIn {session} />
 	{:else}
 		{#if deviceCode}
-			<DeviceApproval token={session.token} code={deviceCode} />
+			<DeviceApproval
+				token={session.token}
+				code={deviceCode}
+				expiresAt={deviceExpiresAt}
+			/>
 		{/if}
 
 		<header class="flex items-center justify-between gap-4">
@@ -329,11 +589,14 @@
 				>
 			</div>
 			{#if !showTrash}
-				<Button onclick={() => (uploadOpen = true)}>
+				<Button
+					disabled={!uploadsAvailable}
+					onclick={() => (uploadOpen = true)}
+				>
 					<Icon name="plus" />
 					Upload
 				</Button>
-			{:else if filteredFiles.length > 0}
+			{:else if list.current.files.length > 0}
 				<Button variant="danger" onclick={() => (emptyTrashOpen = true)}>
 					Empty trash
 				</Button>
@@ -362,15 +625,23 @@
 						⌘K
 					</span>
 				</div>
-				<select
-					aria-label="Sort files"
-					bind:value={params.sort}
-					class="rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm text-zinc-600"
-				>
-					<option value="updated">Newest</option>
-					<option value="name">Name</option>
-					<option value="size">Size</option>
-				</select>
+				{#if params.q.trim()}
+					<span
+						class="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-500"
+					>
+						Relevance
+					</span>
+				{:else}
+					<select
+						aria-label="Sort files"
+						bind:value={params.sort}
+						class="rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm text-zinc-600"
+					>
+						<option value="updated">Newest</option>
+						<option value="name">Name</option>
+						<option value="size">Size</option>
+					</select>
+				{/if}
 				<div class="inline-flex rounded-md border border-zinc-200 p-0.5">
 					<button
 						type="button"
@@ -402,9 +673,95 @@
 			/>
 		</section>
 
+		{#if selectedFiles.length > 0}
+			<div
+				class="mt-5 flex flex-wrap items-center gap-2 border-y border-zinc-200 py-3"
+				aria-label="Selected file actions"
+			>
+				<p class="mr-auto text-sm font-medium text-zinc-800">
+					{selectedFiles.length} selected
+				</p>
+				{#if showTrash}
+					<Button
+						variant="secondary"
+						disabled={batchBusy}
+						onclick={() =>
+							void mutateSelected('Restored', { action: 'restore' })}
+						>Restore</Button
+					>
+					<Button
+						variant="danger"
+						disabled={batchBusy}
+						onclick={() => (bulkPurgeOpen = true)}>Delete permanently</Button
+					>
+				{:else}
+					<select
+						aria-label="Add tag to selected files"
+						bind:value={bulkTagId}
+						disabled={batchBusy}
+						class="rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm text-zinc-600"
+						onchange={() => {
+							const tag = list.current.tags.find(
+								(candidate) => candidate.id === bulkTagId
+							);
+							if (tag) void addSelectedTag(tag);
+						}}
+					>
+						<option value="">Add tag…</option>
+						{#each list.current.tags as tag (tag.id)}
+							<option value={tag.id}>{tag.name}</option>
+						{/each}
+					</select>
+					<Button
+						variant="secondary"
+						disabled={batchBusy}
+						onclick={() =>
+							void mutateSelected('Made public', {
+								action: 'visibility',
+								public: true
+							})}>Public</Button
+					>
+					<Button
+						variant="secondary"
+						disabled={batchBusy}
+						onclick={() =>
+							void mutateSelected('Made private', {
+								action: 'visibility',
+								public: false
+							})}>Private</Button
+					>
+					<Button
+						variant="danger"
+						disabled={batchBusy}
+						onclick={() =>
+							void mutateSelected('Moved to trash', { action: 'trash' })}
+						>Trash</Button
+					>
+				{/if}
+				<Button
+					variant="ghost"
+					disabled={batchBusy}
+					onclick={() => (selectedIds = [])}>Clear</Button
+				>
+			</div>
+		{/if}
+
 		<section class="mt-8">
+			{#if listError}
+				<div
+					class="mb-5 flex items-center justify-between gap-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3"
+					role="alert"
+				>
+					<p class="text-sm text-red-800">{listError}</p>
+					<Button
+						variant="secondary"
+						disabled={list.loading}
+						onclick={() => void list.refetch()}>Try again</Button
+					>
+				</div>
+			{/if}
 			<FileGrid
-				files={filteredFiles}
+				files={visibleFiles}
 				token={session.token}
 				contentOrigin={list.current.contentOrigin}
 				trashed={showTrash}
@@ -422,14 +779,19 @@
 						purgeOpen = true;
 					}
 				}}
-				onupload={() => (uploadOpen = true)}
+				{selectedIds}
+				onselect={selectFile}
+				onselectall={selectAllVisible}
+				onupload={() => {
+					if (uploadsAvailable) uploadOpen = true;
+				}}
 				onclear={clearFilters}
 			/>
 		</section>
 	{/if}
 </main>
 
-{#if session.token}
+{#if session.token && !session.connecting}
 	<UploadDialog
 		bind:open={uploadOpen}
 		{uploads}
@@ -449,13 +811,23 @@
 		title="Delete permanently?"
 		message={`${purgeTarget?.displayName ?? 'This file'} and every version will be removed from storage. This cannot be undone.`}
 		confirmLabel="Delete permanently"
+		busy={purging}
 		onconfirm={() => (purgeTarget ? purgeFiles([purgeTarget]) : undefined)}
+	/>
+	<Confirm
+		bind:open={bulkPurgeOpen}
+		title="Delete selected files permanently?"
+		message={`${selectedFiles.length} ${selectedFiles.length === 1 ? 'file' : 'files'} and all version history will be removed. This cannot be undone.`}
+		confirmLabel="Delete permanently"
+		busy={purging}
+		onconfirm={() => purgeFiles(selectedFiles)}
 	/>
 	<Confirm
 		bind:open={emptyTrashOpen}
 		title="Empty trash?"
-		message={`${filteredFiles.length} ${filteredFiles.length === 1 ? 'file' : 'files'} and all version history will be permanently removed.`}
+		message="Every file in trash and all version history will be permanently removed."
 		confirmLabel="Empty trash"
-		onconfirm={() => purgeFiles(filteredFiles)}
+		busy={purging}
+		onconfirm={purgeAllTrash}
 	/>
 {/if}

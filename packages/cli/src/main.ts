@@ -5,6 +5,7 @@ import {
 	DevicePendingResponseSchema,
 	DeviceTokenResponseSchema,
 	FileContentLinkResponseSchema,
+	FileListResponseSchema,
 	FileMutationResponseSchema,
 	FileTagsResponseSchema,
 	normalizeSitePath,
@@ -16,7 +17,11 @@ import {
 	UploadResponseSchema,
 	type SiteManifestAsset
 } from '@adrive/shared';
-import { NodeRuntime, NodeServices } from '@effect/platform-node';
+import {
+	NodeHttpClient,
+	NodeRuntime,
+	NodeServices
+} from '@effect/platform-node';
 import { createWriteStream } from 'node:fs';
 import {
 	chmod,
@@ -45,7 +50,6 @@ import {
 } from 'effect';
 import { Argument, Command, Flag } from 'effect/unstable/cli';
 import {
-	FetchHttpClient,
 	HttpBody,
 	HttpClient,
 	HttpClientRequest,
@@ -442,6 +446,28 @@ const put = Command.make(
 			);
 		})
 ).pipe(Command.withDescription('Stream a file to adrive'));
+
+const list = Command.make('list', {}, () =>
+	Effect.gen(function* () {
+		const config = yield* loadConfig;
+		const client = yield* HttpClient.HttpClient;
+		const response = yield* client
+			.execute(apiRequest('GET', `${config.endpoint}/api/files`, config.apiKey))
+			.pipe(Effect.flatMap(ensureOk));
+		const result = yield* HttpClientResponse.schemaBodyJson(
+			FileListResponseSchema
+		)(response);
+		if (wantsJson()) {
+			yield* emit(result);
+		} else {
+			for (const file of result.files) {
+				yield* Console.log(
+					`${file.id}\t${file.displayName}\t${file.sizeBytes}\t${file.public ? 'public' : 'private'}`
+				);
+			}
+		}
+	})
+).pipe(Command.withDescription('List files'));
 
 const filenameFromDisposition = (value: string | undefined) => {
 	if (!value) return undefined;
@@ -897,10 +923,10 @@ const root = Command.make('adrive', {
 	)
 }).pipe(
 	Command.withDescription('A small CLI for an adrive deployment'),
-	Command.withSubcommands([login, put, get, rename, site, tag])
+	Command.withSubcommands([login, list, put, get, rename, site, tag])
 );
 
 Command.run(root, { version: '0.1.0' }).pipe(
-	Effect.provide([NodeServices.layer, FetchHttpClient.layer]),
+	Effect.provide([NodeServices.layer, NodeHttpClient.layerNodeHttp]),
 	NodeRuntime.runMain
 );

@@ -1,6 +1,7 @@
 import type { FileContentLinkResponse, FileSummary } from '@adrive/shared';
 import { Effect } from 'effect';
 import { AppConfig } from './config';
+import { InvalidRequest } from './errors';
 import type { PrivateGrant } from './private-grant';
 import { Files } from './services/files';
 import { GrantSecrets } from './services/grant-secrets';
@@ -17,13 +18,14 @@ export const buildFileContentLink = async (
 	config: ContentLinkConfig,
 	content: ResolvedFileContent,
 	requestedVersion?: number,
-	privateGrant?: PrivateGrant
+	privateGrant?: PrivateGrant,
+	requireGrant = false
 ): Promise<FileContentLinkResponse> => {
 	const url = new URL(
 		`/f/${encodeURIComponent(content.file.id)}`,
 		config.contentOrigin
 	);
-	if (content.file.public) {
+	if (content.file.public && !requireGrant) {
 		if (requestedVersion !== undefined) {
 			url.searchParams.set('v', String(content.file.version));
 		}
@@ -47,21 +49,52 @@ export const buildFileContentLink = async (
 	};
 };
 
-export const resolveFileContentLink = (id: string, version?: number) =>
+export const resolveFileContentLink = (
+	id: string,
+	version?: number,
+	includeUnavailable = false
+) =>
 	Effect.gen(function* () {
 		const config = yield* AppConfig;
 		const files = yield* Files;
 		const grantSecrets = yield* GrantSecrets;
-		const content = yield* files.findContent(id, version);
-		const grant = content.file.public
-			? undefined
-			: yield* grantSecrets.mint({
+		if (includeUnavailable) {
+			const detail = yield* files.detail(id);
+			if (detail.file.kind === 'site') {
+				if (version !== undefined && version !== detail.file.version) {
+					return yield* new InvalidRequest({
+						status: 400,
+						message: 'Only the current site version can be previewed'
+					});
+				}
+				const grant = yield* grantSecrets.mint({
 					contentOrigin: config.contentOrigin,
-					fileId: content.file.id,
-					version: content.file.version
+					fileId: detail.file.id,
+					version: detail.file.version
 				});
+				const url = new URL(
+					`/s/${encodeURIComponent(detail.file.id)}/@grant/${detail.file.version}/${grant.expiresAtSeconds}/${grant.signature}/`,
+					config.contentOrigin
+				);
+				return {
+					url: url.href,
+					expiresAt: new Date(grant.expiresAtSeconds * 1_000).toISOString(),
+					version: detail.file.version,
+					public: false
+				};
+			}
+		}
+		const content = yield* files.findContent(id, version, includeUnavailable);
+		const grant =
+			content.file.public && !includeUnavailable
+				? undefined
+				: yield* grantSecrets.mint({
+						contentOrigin: config.contentOrigin,
+						fileId: content.file.id,
+						version: content.file.version
+					});
 		return yield* Effect.promise(() =>
-			buildFileContentLink(config, content, version, grant)
+			buildFileContentLink(config, content, version, grant, includeUnavailable)
 		);
 	});
 

@@ -18,7 +18,11 @@ export const GET: RequestHandler = ({ cookies, params, request, url }) =>
 			const auth = yield* Auth;
 			yield* authorizeRequest(auth, request, url, cookies);
 			return contentLinkRedirectResponse(
-				yield* resolveFileContentLink(params.id, requestedVersion(url))
+				yield* resolveFileContentLink(
+					params.id,
+					requestedVersion(url),
+					url.searchParams.get('unavailable') === 'true'
+				)
 			);
 		})
 	);

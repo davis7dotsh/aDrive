@@ -14,7 +14,9 @@
 		oncopy,
 		ontrash,
 		onrestore,
-		onpurge
+		onpurge,
+		selected = false,
+		onselect
 	}: {
 		file: DashboardFile;
 		token: string;
@@ -26,6 +28,8 @@
 		ontrash: () => void;
 		onrestore: () => void;
 		onpurge?: () => void;
+		selected?: boolean;
+		onselect?: (selected: boolean, shift: boolean) => void;
 	} = $props();
 
 	const detailUrl = $derived(
@@ -35,9 +39,28 @@
 
 <li class="group min-w-0">
 	<a href={detailUrl} aria-label={`Open ${file.displayName}`}>
-		<FileThumb {file} {token} {contentOrigin} />
+		<FileThumb
+			{file}
+			{token}
+			{contentOrigin}
+			unavailable={trashed ||
+				file.deletedAt !== null ||
+				file.expiresAt !== null}
+		/>
 	</a>
 	<div class="mt-3 flex items-start gap-1">
+		{#if onselect}
+			<input
+				type="checkbox"
+				checked={selected}
+				aria-label={`Select ${file.displayName}`}
+				class="mt-0.5 size-4 shrink-0 rounded border-zinc-300 accent-zinc-950"
+				onclick={(event) => {
+					event.stopPropagation();
+					onselect(event.currentTarget.checked, event.shiftKey);
+				}}
+			/>
+		{/if}
 		<div class="min-w-0 flex-1">
 			<a
 				href={detailUrl}

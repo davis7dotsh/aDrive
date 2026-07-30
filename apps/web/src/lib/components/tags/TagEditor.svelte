@@ -42,12 +42,14 @@
 	};
 
 	const saveColor = async (color: string) => {
-		if (busy) return;
+		if (busy) return false;
 		busy = true;
 		try {
 			onchanged(await updateTag(token, tag.id, { color }));
+			return true;
 		} catch (cause) {
 			toasts.error(cause, 'Could not update the tag color');
+			return false;
 		} finally {
 			busy = false;
 		}

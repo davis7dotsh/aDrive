@@ -28,8 +28,13 @@ export const GET: RequestHandler = ({ params, request, url }) =>
 			const grantSecrets = yield* GrantSecrets;
 			const version = requestedVersion(url);
 			if (version === null) return yield* new NotFound({ id: params.id });
-			const content = yield* files.findContent(params.id, version);
-			if (!content.file.public) {
+			const hasGrant = url.searchParams.has('e') && url.searchParams.has('g');
+			const content = yield* files.findContent(params.id, version, hasGrant);
+			const privateResponse = hasGrant || !content.file.public;
+			const dashboardPreview =
+				content.file.contentType === 'application/pdf' &&
+				url.searchParams.get('preview') === 'dashboard';
+			if (!content.file.public || hasGrant) {
 				const expiresAtSeconds = Number(url.searchParams.get('e'));
 				const signature = url.searchParams.get('g') ?? '';
 				const granted = yield* grantSecrets.verify({
@@ -57,20 +62,19 @@ export const GET: RequestHandler = ({ params, request, url }) =>
 					'Content-Disposition': contentDisposition(
 						content.file.displayName,
 						content.file.contentType,
-						!content.file.public
+						!content.file.public && !dashboardPreview
 					),
 					'Content-Length': String(responseRange.contentLength),
 					'Content-Security-Policy': contentSecurityPolicy(
-						content.file.contentType
+						content.file.contentType,
+						dashboardPreview ? config.dashboardOrigin : "'none'"
 					),
 					'Content-Type': content.file.contentType,
 					ETag: object.httpEtag,
 					...(responseRange.contentRange
 						? { 'Content-Range': responseRange.contentRange }
 						: {}),
-					...(content.file.public
-						? {}
-						: { 'Cache-Control': 'private, no-store' }),
+					...(privateResponse ? { 'Cache-Control': 'private, no-store' } : {}),
 					'Referrer-Policy': 'no-referrer',
 					'X-Content-Type-Options': 'nosniff'
 				}

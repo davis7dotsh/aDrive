@@ -4,10 +4,12 @@
 
 	let {
 		active,
-		disabled = false
+		disabled = false,
+		message
 	}: {
 		active: boolean;
 		disabled?: boolean;
+		message?: string;
 	} = $props();
 </script>
 
@@ -20,7 +22,7 @@
 		<div class="text-center text-accent-700">
 			<Icon name="upload" class="mx-auto size-10" />
 			<p class="mt-3 text-base font-medium">
-				{disabled ? 'Switch to Files to upload' : 'Drop to upload'}
+				{disabled ? 'Switch to Files to upload' : (message ?? 'Drop to upload')}
 			</p>
 		</div>
 	</div>

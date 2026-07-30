@@ -7,12 +7,14 @@
 		file,
 		versions,
 		oncopy,
-		onopen
+		onopen,
+		onrestore
 	}: {
 		file: DashboardFile;
 		versions: ReadonlyArray<FileVersion>;
 		oncopy: (version: number) => string | Promise<string>;
 		onopen: (version: number) => void;
+		onrestore: (version: number) => void;
 	} = $props();
 </script>
 
@@ -34,14 +36,30 @@
 				</p>
 			</div>
 			<div class="flex shrink-0">
-				<CopyButton variant="inline" resolve={() => oncopy(version.version)} />
-				<button
-					type="button"
-					class="rounded px-2 py-1 text-xs text-zinc-700 hover:bg-zinc-100"
-					onclick={() => onopen(version.version)}
-				>
-					{file.public ? 'Open' : 'Download'}
-				</button>
+				{#if file.kind !== 'site' || version.version === file.version}
+					<CopyButton
+						variant="inline"
+						resolve={() => oncopy(version.version)}
+					/>
+				{/if}
+				{#if file.kind !== 'site' && version.version !== file.version && !file.deletedAt}
+					<button
+						type="button"
+						class="rounded px-2 py-1 text-xs text-zinc-700 hover:bg-zinc-100"
+						onclick={() => onrestore(version.version)}
+					>
+						Restore
+					</button>
+				{/if}
+				{#if file.kind !== 'site' || version.version === file.version}
+					<button
+						type="button"
+						class="rounded px-2 py-1 text-xs text-zinc-700 hover:bg-zinc-100"
+						onclick={() => onopen(version.version)}
+					>
+						{file.public ? 'Open' : 'Download'}
+					</button>
+				{/if}
 			</div>
 		</li>
 	{/each}

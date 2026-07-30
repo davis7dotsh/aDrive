@@ -17,6 +17,7 @@ let contentAuthorization: string | undefined;
 let contentRequestUrl = '';
 let devicePolls = 0;
 let deviceAuthorizations = 0;
+let uploadedContentLength: string | undefined;
 
 const deviceApiKey = 'adr_login123_123456789012345678901234';
 
@@ -100,6 +101,12 @@ beforeAll(async () => {
 			return;
 		}
 		if (request.method === 'PUT' && request.url === '/api/files') {
+			uploadedContentLength = request.headers['content-length'];
+			if (uploadedContentLength === undefined) {
+				response.statusCode = 411;
+				response.end('Content-Length is required');
+				return;
+			}
 			const chunks: Array<Buffer> = [];
 			request.on('data', (chunk: Buffer) => chunks.push(chunk));
 			request.on('end', () => {
@@ -113,6 +120,33 @@ beforeAll(async () => {
 					})
 				);
 			});
+			return;
+		}
+		if (request.method === 'GET' && request.url === '/api/files') {
+			response.setHeader('Content-Type', 'application/json');
+			response.end(
+				JSON.stringify({
+					files: [
+						{
+							...file,
+							htmlForcedPublic: false,
+							updatedAt: file.createdAt,
+							deletedAt: null,
+							tags: []
+						}
+					],
+					tags: [],
+					contentOrigin: contentEndpoint,
+					maxUploadBytes: 100_000_000,
+					semantic: {
+						enabled: false,
+						indexedChunks: 0,
+						dimensions: 0,
+						model: '',
+						costNotice: ''
+					}
+				})
+			);
 			return;
 		}
 		if (
@@ -220,11 +254,21 @@ describe('CLI stream and JSON contracts', () => {
 		expect(result.status).toBe(0);
 		expect(result.stderr.toString()).toBe('');
 		expect(uploaded).toEqual(payload);
+		expect(uploadedContentLength).toBe(String(payload.length));
 		const lines = result.stdout.toString().trim().split('\n');
 		expect(lines).toHaveLength(1);
 		expect(JSON.parse(lines[0]!)).toMatchObject({
 			file: { id: file.id },
 			url: `http://content.test/f/${file.id}`
+		});
+	});
+
+	it('lists files through the typed dashboard response', async () => {
+		const result = await run(['--json', 'list']);
+		expect(result.status).toBe(0);
+		expect(result.stderr.toString()).toBe('');
+		expect(JSON.parse(result.stdout.toString())).toMatchObject({
+			files: [{ id: file.id, displayName: file.displayName }]
 		});
 	});
 

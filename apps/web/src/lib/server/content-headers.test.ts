@@ -25,4 +25,23 @@ describe('content response headers', () => {
 		expect(policy).toContain("default-src 'self'");
 		expect(policy).toContain("frame-ancestors 'none'");
 	});
+
+	it('allows a site preview to be framed only by the dashboard origin', () => {
+		const policy = contentSecurityPolicy(
+			'text/html',
+			'https://dashboard.example.test'
+		);
+
+		expect(policy).toContain('frame-ancestors https://dashboard.example.test');
+	});
+
+	it('allows a PDF preview to be framed only by the dashboard origin', () => {
+		const policy = contentSecurityPolicy(
+			'application/pdf',
+			'https://dashboard.example.test'
+		);
+
+		expect(policy).toContain('frame-ancestors https://dashboard.example.test');
+		expect(policy).toContain('sandbox');
+	});
 });

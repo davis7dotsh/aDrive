@@ -2,17 +2,19 @@
 	import type { DashboardFile } from '@adrive/shared';
 	import { getContentLink, getFilePreview } from '$lib/dashboard/api';
 	import Icon from '$lib/components/ui/Icon.svelte';
-	import { useIntersectionObserver } from 'runed';
+	import { resource, useIntersectionObserver } from 'runed';
 	import type { Attachment } from 'svelte/attachments';
 
 	let {
 		file,
 		token,
-		contentOrigin
+		contentOrigin,
+		unavailable = false
 	}: {
 		file: DashboardFile;
 		token: string;
 		contentOrigin: string;
+		unavailable?: boolean;
 	} = $props();
 
 	let element = $state<HTMLElement>();
@@ -22,37 +24,77 @@
 			if (element === node) element = undefined;
 		};
 	};
-	let source = $state('');
-	let text = $state('');
 	const image = $derived(file.contentType.startsWith('image/'));
 	const textLike = $derived(
 		file.contentType.startsWith('text/') ||
 			/(json|javascript|typescript|xml|yaml|csv)/i.test(file.contentType)
 	);
-	let previewLoading = $state(true);
+	let visible = $state(false);
+	let loadedSource = $state('');
+	let failedSource = $state('');
 
 	useIntersectionObserver(
 		() => element,
 		(entries) => {
-			if (!entries.some((entry) => entry.isIntersecting)) return;
-			if (image) {
-				if (file.public) {
-					source = `${contentOrigin}/f/${file.id}`;
-				} else {
-					void getContentLink(token, file.id)
-						.then((link) => (source = link.url))
-						.catch(() => (previewLoading = false));
-				}
-			} else if (textLike) {
-				void getFilePreview(token, file.id)
-					.then((preview) => {
-						text = preview.text.slice(0, 360);
-						previewLoading = false;
-					})
-					.catch(() => (previewLoading = false));
-			}
+			if (entries.some((entry) => entry.isIntersecting)) visible = true;
 		},
 		{ once: true, rootMargin: '160px' }
+	);
+
+	const thumbnail = resource(
+		() =>
+			[
+				visible,
+				token,
+				file.id,
+				file.version,
+				file.public,
+				image,
+				textLike,
+				unavailable,
+				contentOrigin
+			] as const,
+		async (
+			[
+				shouldLoad,
+				auth,
+				id,
+				version,
+				isPublic,
+				isImage,
+				isText,
+				isUnavailable,
+				origin
+			],
+			_previous,
+			{ signal }
+		) => {
+			if (!shouldLoad) return { source: '', text: '' };
+			if (isImage) {
+				const source =
+					isPublic && !isUnavailable
+						? `${origin}/f/${id}?v=${version}`
+						: (await getContentLink(auth, id, version, signal, isUnavailable))
+								.url;
+				signal.throwIfAborted();
+				return { source, text: '' };
+			}
+			if (isText) {
+				const preview = await getFilePreview(auth, id, signal);
+				signal.throwIfAborted();
+				return { source: '', text: preview.text.slice(0, 360) };
+			}
+			return { source: '', text: '' };
+		},
+		{ initialValue: { source: '', text: '' } }
+	);
+	const source = $derived(thumbnail.current.source);
+	const text = $derived(thumbnail.current.text);
+	const previewLoading = $derived(
+		(image || textLike) &&
+			(!visible ||
+				thumbnail.loading ||
+				(Boolean(source) && loadedSource !== source && failedSource !== source))
 	);
 </script>
 
@@ -60,7 +102,7 @@
 	{@attach attachElement}
 	class="relative flex aspect-[4/3] overflow-hidden rounded-xl bg-zinc-100 transition group-hover:bg-zinc-200/70"
 >
-	{#if source}
+	{#if source && failedSource !== source}
 		<img
 			src={source}
 			alt=""
@@ -68,10 +110,9 @@
 			class="size-full object-cover transition-opacity duration-200 {previewLoading
 				? 'opacity-0'
 				: 'opacity-100'}"
-			onload={() => (previewLoading = false)}
+			onload={() => (loadedSource = source)}
 			onerror={() => {
-				source = '';
-				previewLoading = false;
+				failedSource = source;
 			}}
 		/>
 	{:else if text}

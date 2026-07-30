@@ -12,14 +12,16 @@
 	const toasts = getToasts();
 	const keys = resource(
 		() => token,
-		(value, _previous, { signal }) => {
+		async (value, _previous, { signal }) => {
+			const result = await listApiKeys(value, signal);
 			signal.throwIfAborted();
-			return listApiKeys(value);
+			return result;
 		}
 	);
 	let name = $state('');
 	let created = $state('');
 	let revoking = $state<ApiKey>();
+	let revokeOpen = $state(false);
 	let busy = $state(false);
 
 	const create = async () => {
@@ -30,6 +32,7 @@
 			created = result.token;
 			name = '';
 			keys.mutate([result.key, ...(keys.current ?? [])]);
+			void keys.refetch();
 		} catch (cause) {
 			toasts.error(cause, 'Could not create the API key');
 		} finally {
@@ -38,24 +41,31 @@
 	};
 
 	const revoke = async () => {
-		if (!revoking || busy) return;
+		const target = revoking;
+		if (!target || busy) return;
 		busy = true;
 		try {
-			await revokeApiKey(token, revoking.id);
+			await revokeApiKey(token, target.id);
 			keys.mutate(
 				(keys.current ?? []).map((key) =>
-					key.id === revoking?.id
+					key.id === target.id
 						? { ...key, revokedAt: new Date().toISOString() }
 						: key
 				)
 			);
 			toasts.success('API key revoked');
+			revokeOpen = false;
 			revoking = undefined;
 		} catch (cause) {
 			toasts.error(cause, 'Could not revoke the API key');
 		} finally {
 			busy = false;
 		}
+	};
+
+	const openRevoke = (key: ApiKey) => {
+		revoking = key;
+		revokeOpen = true;
 	};
 </script>
 
@@ -94,7 +104,21 @@
 		</div>
 	{/if}
 
-	{#if keys.current?.length}
+	{#if keys.error}
+		<div
+			class="mt-5 flex max-w-xl items-center justify-between gap-3 rounded-md border border-red-200 bg-red-50 px-3 py-2"
+			role="alert"
+		>
+			<p class="text-sm text-red-700">{keys.error.message}</p>
+			<Button variant="secondary" onclick={() => void keys.refetch()}>
+				Try again
+			</Button>
+		</div>
+	{/if}
+
+	{#if keys.loading && keys.current === undefined}
+		<p class="mt-6 text-sm text-zinc-500">Loading API keys…</p>
+	{:else if keys.current?.length}
 		<ul class="mt-6 divide-y divide-zinc-100 border-t border-zinc-100">
 			{#each keys.current as key (key.id)}
 				<li class="flex items-center justify-between gap-3 py-3">
@@ -106,18 +130,24 @@
 						</p>
 					</div>
 					{#if !key.revokedAt}
-						<Button variant="danger" onclick={() => (revoking = key)}>
+						<Button
+							variant="danger"
+							disabled={busy}
+							onclick={() => openRevoke(key)}
+						>
 							Revoke
 						</Button>
 					{/if}
 				</li>
 			{/each}
 		</ul>
+	{:else if !keys.error}
+		<p class="mt-6 text-sm text-zinc-500">No API keys yet.</p>
 	{/if}
 </section>
 
 <Confirm
-	open={Boolean(revoking)}
+	bind:open={revokeOpen}
 	title="Revoke API key?"
 	message={`${revoking?.name ?? 'This key'} will stop working immediately.`}
 	confirmLabel="Revoke key"

@@ -6,6 +6,7 @@ import type { RequestHandler } from './$types';
 import { Effect, Schema } from 'effect';
 import { runEdge } from '$lib/server/edge';
 import { InvalidRequest } from '$lib/server/errors';
+import { readBoundedJson } from '$lib/server/request-json';
 import { Auth, authorizeRequest } from '$lib/server/services/auth';
 import { Sites } from '$lib/server/services/sites';
 
@@ -13,31 +14,10 @@ const MAX_MANIFEST_BYTES = 1024 * 1024;
 
 const readManifest = (request: Request) =>
 	Effect.gen(function* () {
-		const contentLengthHeader = request.headers.get('content-length');
-		if (contentLengthHeader === null) {
-			return yield* new InvalidRequest({
-				status: 411,
-				message: 'Content-Length is required'
-			});
-		}
-		const contentLength = Number(contentLengthHeader);
-		if (
-			!Number.isSafeInteger(contentLength) ||
-			contentLength < 0 ||
-			contentLength > MAX_MANIFEST_BYTES
-		) {
-			return yield* new InvalidRequest({
-				status: contentLength > MAX_MANIFEST_BYTES ? 413 : 400,
-				message: 'Site manifest length is invalid'
-			});
-		}
-		const value = yield* Effect.tryPromise({
-			try: () => request.json(),
-			catch: () =>
-				new InvalidRequest({
-					status: 400,
-					message: 'A JSON site manifest is required'
-				})
+		const value = yield* readBoundedJson(request, {
+			maxBytes: MAX_MANIFEST_BYTES,
+			invalidLengthMessage: 'Site manifest length is invalid',
+			invalidJsonMessage: 'A JSON site manifest is required'
 		});
 		return yield* Schema.decodeUnknownEffect(SiteSessionCreateSchema)(
 			value

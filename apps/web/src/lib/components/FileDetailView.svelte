@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { FileMutation, Tag } from '@adrive/shared';
+	import type { FileDetailResponse, FileMutation, Tag } from '@adrive/shared';
 	import { page } from '$app/state';
 	import {
 		createTag,
@@ -17,7 +17,15 @@
 	import FilePreview from './files/FilePreview.svelte';
 	import FileSidebar from './files/FileSidebar.svelte';
 	import { resource } from 'runed';
+	import { untrack } from 'svelte';
 
+	let {
+		initialDetail = null,
+		initialError = ''
+	}: {
+		initialDetail?: FileDetailResponse | null;
+		initialError?: string;
+	} = $props();
 	const session = getDashboardSession();
 	const toasts = getToasts();
 	const id = $derived(page.params.id);
@@ -28,25 +36,60 @@
 		([ready, token, fileId], _previous, { signal }) =>
 			ready && token && fileId
 				? getFile(token, fileId, signal)
-				: Promise.resolve(null)
+				: Promise.resolve(null),
+		{ initialValue: untrack(() => initialDetail) }
 	);
 	let busy = $state(false);
+	let operation = 0;
+	let serverLoadError = $state(untrack(() => initialError));
+	const detailError = $derived(detail.error?.message ?? serverLoadError);
+
+	$effect(() => {
+		id;
+		operation += 1;
+		busy = false;
+	});
+
+	$effect(() => {
+		if (detail.current) serverLoadError = '';
+	});
 
 	const update = async (mutation: FileMutation, success: string) => {
-		if (!detail.current || busy) return;
+		const current = detail.current;
+		if (!current || busy) return false;
+		const fileId = current.file.id;
+		const currentOperation = ++operation;
 		busy = true;
 		try {
-			const result = await mutateFile(
-				session.token,
-				detail.current.file.id,
-				mutation
-			);
+			const result = await mutateFile(session.token, fileId, mutation);
+			if (
+				operation !== currentOperation ||
+				detail.current?.file.id !== fileId
+			) {
+				return false;
+			}
 			detail.mutate({ ...detail.current, file: result.file });
+			if (mutation.action === 'restore-version') {
+				await detail.refetch();
+				if (
+					operation !== currentOperation ||
+					detail.current?.file.id !== fileId
+				) {
+					return false;
+				}
+			}
 			toasts.success(result.forcedPublic ? 'HTML files stay public' : success);
+			return true;
 		} catch (cause) {
-			toasts.error(cause, 'Could not update the file');
+			if (
+				operation === currentOperation &&
+				detail.current?.file.id === fileId
+			) {
+				toasts.error(cause, 'Could not update the file');
+			}
+			return false;
 		} finally {
-			busy = false;
+			if (operation === currentOperation) busy = false;
 		}
 	};
 
@@ -61,9 +104,28 @@
 	const linkFor = async (version?: number) => {
 		const current = detail.current;
 		if (!current) return { url: '', expiresAt: null };
-		return current.file.public
-			? { url: fileUrl(version), expiresAt: null }
-			: getContentLink(session.token, current.file.id, version);
+		const fileId = current.file.id;
+		const expirationTime = current.file.expiresAt
+			? new Date(current.file.expiresAt).getTime()
+			: Number.NaN;
+		const unavailable =
+			current.file.deletedAt !== null ||
+			(Number.isFinite(expirationTime) && expirationTime <= Date.now());
+		const link =
+			current.file.public && !unavailable
+				? { url: fileUrl(version), expiresAt: null }
+				: getContentLink(
+						session.token,
+						current.file.id,
+						version,
+						undefined,
+						unavailable
+					);
+		const resolved = await link;
+		if (detail.current?.file.id !== fileId) {
+			throw new Error('The selected file changed before the link was ready');
+		}
+		return resolved;
 	};
 
 	const resolveLink = async (version?: number) => (await linkFor(version)).url;
@@ -72,7 +134,9 @@
 		try {
 			const current = detail.current;
 			if (!current) return;
+			const fileId = current.file.id;
 			const link = await linkFor(version);
+			if (detail.current?.file.id !== fileId) return;
 			if (current.file.public) {
 				window.open(link.url, '_blank', 'noopener');
 			} else {
@@ -91,23 +155,38 @@
 	const toggleTag = async (tag: Tag) => {
 		const current = detail.current;
 		if (!current || busy) return;
+		const fileId = current.file.id;
+		const currentOperation = ++operation;
 		busy = true;
 		try {
 			const selected = current.file.tags.some((item) => item.id === tag.id)
 				? current.file.tags.filter((item) => item.id !== tag.id)
 				: [...current.file.tags, tag];
 			const file = await setFileTags(session.token, current.file.id, selected);
+			if (
+				operation !== currentOperation ||
+				detail.current?.file.id !== fileId
+			) {
+				return;
+			}
 			detail.mutate({ ...current, file });
 		} catch (cause) {
-			toasts.error(cause, 'Could not update tags');
+			if (
+				operation === currentOperation &&
+				detail.current?.file.id === fileId
+			) {
+				toasts.error(cause, 'Could not update tags');
+			}
 		} finally {
-			busy = false;
+			if (operation === currentOperation) busy = false;
 		}
 	};
 
 	const addTag = async (name: string) => {
 		const current = detail.current;
 		if (!current || busy) return;
+		const fileId = current.file.id;
+		const currentOperation = ++operation;
 		busy = true;
 		try {
 			const tag = await createTag(session.token, { name });
@@ -115,6 +194,12 @@
 				? current.file.tags
 				: [...current.file.tags, tag];
 			const file = await setFileTags(session.token, current.file.id, selected);
+			if (
+				operation !== currentOperation ||
+				detail.current?.file.id !== fileId
+			) {
+				return;
+			}
 			detail.mutate({
 				...current,
 				file,
@@ -123,15 +208,23 @@
 					: [...current.availableTags, tag]
 			});
 		} catch (cause) {
-			toasts.error(cause, 'Could not create the tag');
+			if (
+				operation === currentOperation &&
+				detail.current?.file.id === fileId
+			) {
+				toasts.error(cause, 'Could not create the tag');
+			}
+			throw cause;
 		} finally {
-			busy = false;
+			if (operation === currentOperation) busy = false;
 		}
 	};
 
 	const putVersion = async (file: File) => {
 		const current = detail.current;
 		if (!current || busy) return;
+		const fileId = current.file.id;
+		const currentOperation = ++operation;
 		if (file.size > current.maxUploadBytes) {
 			toasts.error(
 				new Error('The selected file is larger than the upload limit')
@@ -141,12 +234,28 @@
 		busy = true;
 		try {
 			await uploadVersion(session.token, current.file.id, file);
+			if (
+				operation !== currentOperation ||
+				detail.current?.file.id !== fileId
+			) {
+				return;
+			}
 			await detail.refetch();
-			toasts.success('New version uploaded');
+			if (
+				operation === currentOperation &&
+				detail.current?.file.id === fileId
+			) {
+				toasts.success('New version uploaded');
+			}
 		} catch (cause) {
-			toasts.error(cause, 'Could not upload the version');
+			if (
+				operation === currentOperation &&
+				detail.current?.file.id === fileId
+			) {
+				toasts.error(cause, 'Could not upload the version');
+			}
 		} finally {
-			busy = false;
+			if (operation === currentOperation) busy = false;
 		}
 	};
 </script>
@@ -156,7 +265,7 @@
 </svelte:head>
 
 <main class="mx-auto max-w-7xl px-4 py-5 sm:px-6 sm:py-8">
-	{#if !session.ready || detail.loading}
+	{#if !session.ready || (detail.loading && !detail.current)}
 		<div class="animate-pulse py-12">
 			<div class="h-8 w-1/2 rounded bg-zinc-100"></div>
 			<div class="mt-8 h-[30rem] rounded-xl bg-zinc-100"></div>
@@ -165,12 +274,17 @@
 		<div class="py-20 text-center">
 			<a href="/" class="text-sm font-medium text-zinc-900">Sign in</a>
 		</div>
-	{:else if detail.error}
+	{:else if detailError}
 		<div class="py-20 text-center">
-			<p class="text-sm text-red-700">{detail.error.message}</p>
-			<a href={backHref} class="mt-3 inline-block text-sm font-medium">
-				Files
-			</a>
+			<p class="text-sm text-red-700">{detailError}</p>
+			<div class="mt-4 flex justify-center gap-3">
+				<button
+					type="button"
+					class="text-sm font-medium text-zinc-900"
+					onclick={() => void detail.refetch()}>Try again</button
+				>
+				<a href={backHref} class="text-sm font-medium">Files</a>
+			</div>
 		</div>
 	{:else if detail.current}
 		<header class="mb-6 flex min-w-0 items-center gap-2">
@@ -215,15 +329,20 @@
 						value ? 'File is public' : 'File is private'
 					)}
 				onexpiration={(expiresAt) =>
-					void update(
+					update(
 						{ action: 'expiration', expiresAt },
 						expiresAt ? 'Expiration updated' : 'Expiration removed'
 					)}
 				ontag={(tag) => void toggleTag(tag)}
-				oncreatetag={(name) => void addTag(name)}
+				oncreatetag={addTag}
 				onversion={(file) => void putVersion(file)}
 				oncopyversion={(version) => resolveLink(version)}
 				onopenversion={(version) => void openLink(version)}
+				onrestoreversion={(version) =>
+					void update(
+						{ action: 'restore-version', version },
+						`Version ${version} restored as a new version`
+					)}
 				onreindex={() =>
 					void update({ action: 'reindex' }, 'Reindexing queued')}
 				ontrash={() => void update({ action: 'trash' }, 'File moved to trash')}

@@ -8,7 +8,14 @@ import {
 } from '@sveltejs/kit';
 import { Cause, Effect, Exit } from 'effect';
 import type { SqlClient } from 'effect/unstable/sql';
-import type { AppError } from './errors';
+import {
+	InvalidRequest,
+	MisdirectedRequest,
+	NotFound,
+	StorageError,
+	Unauthorized,
+	type AppError
+} from './errors';
 import { requestLayer } from './layer';
 import type { AppConfig } from './config';
 import type { AuthGuard } from './services/auth-guard';
@@ -39,6 +46,13 @@ type AppServices =
 	| Lifecycle
 	| GrantSecrets;
 
+export const isAppError = (failure: unknown): failure is AppError =>
+	failure instanceof InvalidRequest ||
+	failure instanceof MisdirectedRequest ||
+	failure instanceof Unauthorized ||
+	failure instanceof NotFound ||
+	failure instanceof StorageError;
+
 const throwCauseAsHttp = (cause: Cause.Cause<unknown>): never => {
 	for (const reason of cause.reasons) {
 		if (reason._tag !== 'Die') continue;
@@ -64,7 +78,8 @@ const throwCauseAsHttp = (cause: Cause.Cause<unknown>): never => {
 
 	for (const reason of cause.reasons) {
 		if (reason._tag !== 'Fail') continue;
-		const failure = reason.error as AppError;
+		const failure = reason.error;
+		if (!isAppError(failure)) continue;
 		switch (failure._tag) {
 			case 'InvalidRequest':
 				error(failure.status, failure.message);
