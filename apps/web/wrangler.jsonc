@@ -30,6 +30,12 @@
 			"bucket_name": "adrive"
 		}
 	],
+	"kv_namespaces": [
+		{
+			"binding": "AUTH_GUARD",
+			"id": "419a52adcd9649e0a24e5c47c2748477"
+		}
+	],
 	"observability": {
 		"enabled": true,
 		"logs": {

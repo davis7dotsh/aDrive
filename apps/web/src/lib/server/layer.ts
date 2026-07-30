@@ -1,8 +1,9 @@
 import * as D1 from '@effect/sql-d1/D1Client';
 import { Effect, Layer } from 'effect';
 import { ConfigLive } from './config';
+import { AuthGuardLive } from './services/auth-guard';
 import { AuthLive } from './services/auth';
-import { Db, Bucket } from './services/bindings';
+import { AuthGuardStore, Db, Bucket } from './services/bindings';
 import { BlobsLive } from './services/blobs';
 import { FilesLive } from './services/files';
 import { SearchLive } from './services/search';
@@ -19,6 +20,7 @@ export const requestLayer = (env: Env) => {
 	const bindings = Layer.mergeAll(
 		Layer.succeed(Db, env.DB),
 		Layer.succeed(Bucket, env.BUCKET),
+		Layer.succeed(AuthGuardStore, env.AUTH_GUARD),
 		ConfigLive(env)
 	);
 	const sql = SqlLive.pipe(Layer.provide(bindings));
@@ -26,6 +28,7 @@ export const requestLayer = (env: Env) => {
 	const infrastructure = Layer.mergeAll(bindings, sql, blobs);
 	const semantic = SemanticBindingsLive(env);
 	const auth = AuthLive.pipe(Layer.provide(infrastructure));
+	const authGuard = AuthGuardLive().pipe(Layer.provide(bindings));
 	const grantSecrets = GrantSecretsLive.pipe(Layer.provide(infrastructure));
 	const tags = TagsLive.pipe(Layer.provide(infrastructure));
 	const search = SearchLive.pipe(
@@ -46,6 +49,7 @@ export const requestLayer = (env: Env) => {
 		infrastructure,
 		semantic,
 		auth,
+		authGuard,
 		grantSecrets,
 		tags,
 		search,

@@ -40,6 +40,16 @@ Production passcode login creates a seven-day, host-only
 Tailscale URL. Use the generated API key in the dashboard's “Local HTTP
 fallback” there. Passcode login works when the dashboard origin is HTTPS.
 
+Authentication bootstrap endpoints are protected by the `AUTH_GUARD` Workers
+KV namespace. Login is limited to ten attempts per client every five minutes,
+and five incorrect passcodes within fifteen minutes lock that client out for
+thirty minutes. Device authorization creation is limited to five requests per
+client every ten minutes, while device polling permits 150 requests per client
+every ten minutes so the documented five-second polling interval remains valid.
+Rate-limit and lockout responses use HTTP 429 with `Retry-After`. KV is
+eventually consistent, so these controls are abuse mitigation rather than an
+atomic global security boundary.
+
 In another shell, configure and exercise the CLI:
 
 ```bash
@@ -110,7 +120,8 @@ modify those source tables.
 
 ## Cloudflare resources
 
-The checked-in Wrangler resource names are placeholders. Before deployment,
+The checked-in Wrangler D1 and R2 resource names are placeholders. The
+`AUTH_GUARD` KV namespace is already provisioned and bound. Before deployment,
 create one D1 database and one private R2 bucket, replace the D1 database ID,
 apply the migration remotely, set production dashboard/content origins, and set
 the passcode as a secret:

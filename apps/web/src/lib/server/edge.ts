@@ -11,6 +11,7 @@ import type { SqlClient } from 'effect/unstable/sql';
 import type { AppError } from './errors';
 import { requestLayer } from './layer';
 import type { AppConfig } from './config';
+import type { AuthGuard } from './services/auth-guard';
 import type { Auth } from './services/auth';
 import type { Blobs } from './services/blobs';
 import type { Files } from './services/files';
@@ -25,6 +26,7 @@ import type { GrantSecrets } from './services/grant-secrets';
 type AppServices =
 	| SqlClient.SqlClient
 	| AppConfig
+	| AuthGuard
 	| Auth
 	| Blobs
 	| Files
