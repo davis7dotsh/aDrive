@@ -60,7 +60,7 @@ const parseTags = (value: string | null) => {
 	}
 };
 
-export const GET: RequestHandler = ({ request, url }) =>
+export const GET: RequestHandler = ({ cookies, request, url }) =>
 	runEdge(
 		Effect.gen(function* () {
 			const auth = yield* Auth;
@@ -68,7 +68,7 @@ export const GET: RequestHandler = ({ request, url }) =>
 			const tags = yield* Tags;
 			const indexing = yield* Indexing;
 			const config = yield* AppConfig;
-			yield* authorizeRequest(auth, request, url);
+			yield* authorizeRequest(auth, request, url, cookies);
 			const trashed = url.searchParams.get('trashed') === 'true';
 			return Response.json({
 				files: yield* files.list(trashed),
@@ -81,14 +81,14 @@ export const GET: RequestHandler = ({ request, url }) =>
 	);
 
 export const PUT: RequestHandler = async (event) => {
-	const { request, url } = event;
+	const { cookies, request, url } = event;
 	const output = await runEdgeWithEvent(
 		event,
 		Effect.gen(function* () {
 			const auth = yield* Auth;
 			const files = yield* Files;
 			const config = yield* AppConfig;
-			yield* authorizeRequest(auth, request, url);
+			yield* authorizeRequest(auth, request, url, cookies);
 			const displayName = yield* Effect.try({
 				try: () => decodeName(request.headers.get('x-adrive-file-name')),
 				catch: (cause) =>

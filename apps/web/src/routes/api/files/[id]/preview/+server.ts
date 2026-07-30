@@ -7,13 +7,13 @@ import { Auth, authorizeRequest } from '$lib/server/services/auth';
 import { Blobs } from '$lib/server/services/blobs';
 import { Files } from '$lib/server/services/files';
 
-export const GET: RequestHandler = ({ params, request, url }) =>
+export const GET: RequestHandler = ({ cookies, params, request, url }) =>
 	runEdge(
 		Effect.gen(function* () {
 			const auth = yield* Auth;
 			const blobs = yield* Blobs;
 			const files = yield* Files;
-			yield* authorizeRequest(auth, request, url);
+			yield* authorizeRequest(auth, request, url, cookies);
 
 			const content = yield* files.findContent(params.id);
 			const kind = previewKind(

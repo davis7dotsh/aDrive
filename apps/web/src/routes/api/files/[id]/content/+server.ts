@@ -12,11 +12,11 @@ const requestedVersion = (url: URL) => {
 	return value === null ? undefined : Number(value);
 };
 
-export const GET: RequestHandler = ({ params, request, url }) =>
+export const GET: RequestHandler = ({ cookies, params, request, url }) =>
 	runEdge(
 		Effect.gen(function* () {
 			const auth = yield* Auth;
-			yield* authorizeRequest(auth, request, url);
+			yield* authorizeRequest(auth, request, url, cookies);
 			return contentLinkRedirectResponse(
 				yield* resolveFileContentLink(params.id, requestedVersion(url))
 			);

@@ -1,21 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
-	cookieValue,
 	allowsCredentialOrigin,
 	normalizeUserCode,
-	sessionCookie,
 	shouldCountDownload,
 	validateExpiration
 } from './auth-policy';
 
 describe('auth policy', () => {
-	it('creates a host-only secure cookie and reads it back', () => {
-		const cookie = sessionCookie('a token');
-		expect(cookie).toContain('__Host-adrive-session=a%20token');
-		expect(cookie).toContain('HttpOnly; Secure; SameSite=Strict');
-		expect(cookieValue(cookie, '__Host-adrive-session')).toBe('a token');
-	});
-
 	it('normalizes device approval codes', () => {
 		expect(normalizeUserCode('abcd-1234')).toBe('ABCD-1234');
 	});

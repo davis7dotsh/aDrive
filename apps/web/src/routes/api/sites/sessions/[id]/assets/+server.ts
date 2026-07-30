@@ -5,12 +5,12 @@ import { InvalidRequest } from '$lib/server/errors';
 import { Auth, authorizeRequest } from '$lib/server/services/auth';
 import { Sites } from '$lib/server/services/sites';
 
-export const PUT: RequestHandler = ({ params, request, url }) =>
+export const PUT: RequestHandler = ({ cookies, params, request, url }) =>
 	runEdge(
 		Effect.gen(function* () {
 			const auth = yield* Auth;
 			const sites = yield* Sites;
-			yield* authorizeRequest(auth, request, url);
+			yield* authorizeRequest(auth, request, url, cookies);
 			const path = url.searchParams.get('path');
 			if (path === null) {
 				return yield* new InvalidRequest({

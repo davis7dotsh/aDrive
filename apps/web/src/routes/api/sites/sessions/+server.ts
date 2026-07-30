@@ -52,12 +52,12 @@ const readManifest = (request: Request) =>
 		);
 	});
 
-export const POST: RequestHandler = ({ request, url }) =>
+export const POST: RequestHandler = ({ cookies, request, url }) =>
 	runEdge(
 		Effect.gen(function* () {
 			const auth = yield* Auth;
 			const sites = yield* Sites;
-			yield* authorizeRequest(auth, request, url);
+			yield* authorizeRequest(auth, request, url, cookies);
 			const input: SiteSessionCreate = yield* readManifest(request);
 			return Response.json(yield* sites.createSession(input), { status: 201 });
 		})

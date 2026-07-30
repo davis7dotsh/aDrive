@@ -1,7 +1,10 @@
 import { PasscodeLoginSchema } from '@adrive/shared';
 import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
-import { clearSessionCookie, sessionCookie } from '$lib/server/auth-policy';
+import {
+	SESSION_COOKIE,
+	SESSION_MAX_AGE_SECONDS
+} from '$lib/server/auth-policy';
 import { authRateLimitResponse } from '$lib/server/auth-rate-limit-response';
 import { runEdge } from '$lib/server/edge';
 import { InvalidRequest, Unauthorized } from '$lib/server/errors';
@@ -9,7 +12,12 @@ import { decodeJson } from '$lib/server/request-json';
 import { Auth } from '$lib/server/services/auth';
 import { AuthGuard } from '$lib/server/services/auth-guard';
 
-export const POST: RequestHandler = ({ request, url, getClientAddress }) =>
+export const POST: RequestHandler = ({
+	cookies,
+	request,
+	url,
+	getClientAddress
+}) =>
 	runEdge(
 		Effect.gen(function* () {
 			if (request.headers.get('origin') !== url.origin) {
@@ -51,14 +59,18 @@ export const POST: RequestHandler = ({ request, url, getClientAddress }) =>
 				})
 			);
 			if (outcome instanceof Response) return outcome;
-			return Response.json(
-				{ ok: true as const },
-				{ headers: { 'Set-Cookie': sessionCookie(outcome) } }
-			);
+			cookies.set(SESSION_COOKIE, outcome, {
+				path: '/',
+				httpOnly: true,
+				secure: true,
+				sameSite: 'strict',
+				maxAge: SESSION_MAX_AGE_SECONDS
+			});
+			return Response.json({ ok: true as const });
 		})
 	);
 
-export const DELETE: RequestHandler = ({ request, url }) =>
+export const DELETE: RequestHandler = ({ cookies, request, url }) =>
 	runEdge(
 		Effect.gen(function* () {
 			if (request.headers.get('origin') !== url.origin) {
@@ -68,10 +80,8 @@ export const DELETE: RequestHandler = ({ request, url }) =>
 				});
 			}
 			const auth = yield* Auth;
-			yield* auth.revokeSession(request.headers.get('cookie'));
-			return new Response(null, {
-				status: 204,
-				headers: { 'Set-Cookie': clearSessionCookie() }
-			});
+			yield* auth.revokeSession(cookies.get(SESSION_COOKIE));
+			cookies.delete(SESSION_COOKIE, { path: '/' });
+			return new Response(null, { status: 204 });
 		})
 	);

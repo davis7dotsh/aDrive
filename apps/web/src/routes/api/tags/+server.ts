@@ -26,22 +26,22 @@ const readCreate = (request: Request) =>
 		)
 	);
 
-export const GET: RequestHandler = ({ request, url }) =>
+export const GET: RequestHandler = ({ cookies, request, url }) =>
 	runEdge(
 		Effect.gen(function* () {
 			const auth = yield* Auth;
 			const tags = yield* Tags;
-			yield* authorizeRequest(auth, request, url);
+			yield* authorizeRequest(auth, request, url, cookies);
 			return Response.json({ tags: yield* tags.list });
 		})
 	);
 
-export const POST: RequestHandler = ({ request, url }) =>
+export const POST: RequestHandler = ({ cookies, request, url }) =>
 	runEdge(
 		Effect.gen(function* () {
 			const auth = yield* Auth;
 			const tags = yield* Tags;
-			yield* authorizeRequest(auth, request, url);
+			yield* authorizeRequest(auth, request, url, cookies);
 			const tag = yield* readCreate(request).pipe(
 				Effect.flatMap((input) => tags.create(input))
 			);

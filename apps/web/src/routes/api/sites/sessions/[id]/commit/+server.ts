@@ -7,14 +7,14 @@ import { Indexing } from '$lib/server/services/indexing';
 import { Sites } from '$lib/server/services/sites';
 
 export const POST: RequestHandler = async (event) => {
-	const { params, request, url } = event;
+	const { cookies, params, request, url } = event;
 	const output = await runEdgeWithEvent(
 		event,
 		Effect.gen(function* () {
 			const auth = yield* Auth;
 			const config = yield* AppConfig;
 			const sites = yield* Sites;
-			yield* authorizeRequest(auth, request, url);
+			yield* authorizeRequest(auth, request, url, cookies);
 			const result = yield* sites.commit(params.id);
 			return {
 				fileId: result.file.id,

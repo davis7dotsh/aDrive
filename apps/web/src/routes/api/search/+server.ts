@@ -7,7 +7,7 @@ import { Search } from '$lib/server/services/search';
 import { Tags } from '$lib/server/services/tags';
 import { Indexing } from '$lib/server/services/indexing';
 
-export const GET: RequestHandler = ({ request, url }) =>
+export const GET: RequestHandler = ({ cookies, request, url }) =>
 	runEdge(
 		Effect.gen(function* () {
 			const auth = yield* Auth;
@@ -15,7 +15,7 @@ export const GET: RequestHandler = ({ request, url }) =>
 			const tags = yield* Tags;
 			const indexing = yield* Indexing;
 			const config = yield* AppConfig;
-			yield* authorizeRequest(auth, request, url);
+			yield* authorizeRequest(auth, request, url, cookies);
 			return Response.json({
 				files: yield* search.files({
 					query: url.searchParams.get('q') ?? '',

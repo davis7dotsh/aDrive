@@ -27,13 +27,13 @@ const readNames = (request: Request) =>
 		)
 	);
 
-export const PUT: RequestHandler = ({ params, request, url }) =>
+export const PUT: RequestHandler = ({ cookies, params, request, url }) =>
 	runEdge(
 		Effect.gen(function* () {
 			const auth = yield* Auth;
 			const tags = yield* Tags;
 			const files = yield* Files;
-			yield* authorizeRequest(auth, request, url);
+			yield* authorizeRequest(auth, request, url, cookies);
 			const input = yield* readNames(request);
 			yield* tags.setFileTags(params.id, input.names);
 			return Response.json({ file: (yield* files.detail(params.id)).file });

@@ -5,20 +5,20 @@ import { runEdge } from '$lib/server/edge';
 import { decodeJson } from '$lib/server/request-json';
 import { Auth, authorizeRequest } from '$lib/server/services/auth';
 
-export const GET: RequestHandler = ({ request, url }) =>
+export const GET: RequestHandler = ({ cookies, request, url }) =>
 	runEdge(
 		Effect.gen(function* () {
 			const auth = yield* Auth;
-			yield* authorizeRequest(auth, request, url);
+			yield* authorizeRequest(auth, request, url, cookies);
 			return Response.json({ keys: yield* auth.listApiKeys });
 		})
 	);
 
-export const POST: RequestHandler = ({ request, url }) =>
+export const POST: RequestHandler = ({ cookies, request, url }) =>
 	runEdge(
 		Effect.gen(function* () {
 			const auth = yield* Auth;
-			yield* authorizeRequest(auth, request, url);
+			yield* authorizeRequest(auth, request, url, cookies);
 			const input = yield* decodeJson(
 				request,
 				ApiKeyCreateSchema,

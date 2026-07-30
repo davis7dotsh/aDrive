@@ -1,4 +1,5 @@
 import { API_KEY_PATTERN, type ApiKey } from '@adrive/shared';
+import type { Cookies } from '@sveltejs/kit';
 import { Context, Effect, Layer, Schema } from 'effect';
 import { SqlClient } from 'effect/unstable/sql';
 import {
@@ -8,8 +9,7 @@ import {
 	normalizeApiKeyName,
 	normalizeUserCode,
 	SESSION_COOKIE,
-	SESSION_MAX_AGE_SECONDS,
-	cookieValue
+	SESSION_MAX_AGE_SECONDS
 } from '../auth-policy';
 import { AppConfig } from '../config';
 import {
@@ -47,7 +47,7 @@ const DeviceCodeRow = Schema.Struct({
 
 export interface AuthorizeInput {
 	readonly authorization: string | null;
-	readonly cookie: string | null;
+	readonly sessionToken: string | undefined;
 	readonly requestOrigin: string;
 	readonly origin: string | null;
 	readonly method: string;
@@ -75,7 +75,7 @@ export interface AuthShape {
 		passcode: string
 	) => Effect.Effect<string, Unauthorized | StorageError>;
 	readonly revokeSession: (
-		cookie: string | null
+		sessionToken: string | undefined
 	) => Effect.Effect<void, StorageError>;
 	readonly listApiKeys: Effect.Effect<ReadonlyArray<ApiKey>, StorageError>;
 	readonly createApiKey: (
@@ -104,10 +104,15 @@ export interface AuthShape {
 
 export class Auth extends Context.Service<Auth, AuthShape>()('app/Auth') {}
 
-export const authorizeRequest = (auth: AuthShape, request: Request, url: URL) =>
+export const authorizeRequest = (
+	auth: AuthShape,
+	request: Request,
+	url: URL,
+	cookies: Cookies
+) =>
 	auth.authorize({
 		authorization: request.headers.get('authorization'),
-		cookie: request.headers.get('cookie'),
+		sessionToken: cookies.get(SESSION_COOKIE),
 		requestOrigin: url.origin,
 		origin: request.headers.get('origin'),
 		method: request.method
@@ -219,7 +224,7 @@ const makeAuth = Effect.gen(function* () {
 	return Auth.of({
 		authorize: Effect.fn('Auth.authorize')(function* ({
 			authorization,
-			cookie,
+			sessionToken,
 			requestOrigin,
 			origin,
 			method
@@ -273,7 +278,6 @@ const makeAuth = Effect.gen(function* () {
 				return { credentialId: row.id, kind: 'api-key' as const };
 			}
 
-			const sessionToken = cookieValue(cookie, SESSION_COOKIE);
 			if (!sessionToken) {
 				return yield* new Unauthorized({
 					message: 'A valid credential is required'
@@ -341,10 +345,9 @@ const makeAuth = Effect.gen(function* () {
 			);
 			return token;
 		}),
-		revokeSession: Effect.fn('Auth.revokeSession')(function* (cookie) {
-			const token = cookieValue(cookie, SESSION_COOKIE);
-			if (!token) return;
-			const hash = yield* hashToken(token);
+		revokeSession: Effect.fn('Auth.revokeSession')(function* (sessionToken) {
+			if (!sessionToken) return;
+			const hash = yield* hashToken(sessionToken);
 			yield* sql`DELETE FROM dashboard_sessions WHERE token_hash = ${hash}`.pipe(
 				Effect.mapError(
 					(cause) =>

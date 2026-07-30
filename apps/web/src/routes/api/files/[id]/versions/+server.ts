@@ -6,13 +6,13 @@ import { Files } from '$lib/server/services/files';
 import { Indexing } from '$lib/server/services/indexing';
 
 export const PUT: RequestHandler = async (event) => {
-	const { params, request, url } = event;
+	const { cookies, params, request, url } = event;
 	const output = await runEdgeWithEvent(
 		event,
 		Effect.gen(function* () {
 			const auth = yield* Auth;
 			const files = yield* Files;
-			yield* authorizeRequest(auth, request, url);
+			yield* authorizeRequest(auth, request, url, cookies);
 			const result = yield* files.uploadVersion({
 				id: params.id,
 				contentType:

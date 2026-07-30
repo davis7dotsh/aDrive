@@ -5,28 +5,6 @@ export const SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
 export const DEVICE_CODE_TTL_SECONDS = 10 * 60;
 export const DEVICE_POLL_INTERVAL_SECONDS = 5;
 
-export const sessionCookie = (
-	token: string,
-	maxAge = SESSION_MAX_AGE_SECONDS
-) =>
-	`${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${maxAge}`;
-
-export const clearSessionCookie = () => sessionCookie('', 0);
-
-export const cookieValue = (header: string | null, name: string) => {
-	if (!header) return null;
-	for (const part of header.split(';')) {
-		const [key, ...rest] = part.trim().split('=');
-		if (key !== name) continue;
-		try {
-			return decodeURIComponent(rest.join('='));
-		} catch {
-			return null;
-		}
-	}
-	return null;
-};
-
 export const normalizeApiKeyName = (value: string) => {
 	const name = value.normalize('NFKC').trim().replace(/\s+/g, ' ');
 	if (!name || name.length > 80 || /[\u0000-\u001f\u007f]/.test(name)) {

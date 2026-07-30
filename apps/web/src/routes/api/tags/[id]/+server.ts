@@ -26,12 +26,12 @@ const readUpdate = (request: Request) =>
 		)
 	);
 
-export const PATCH: RequestHandler = ({ params, request, url }) =>
+export const PATCH: RequestHandler = ({ cookies, params, request, url }) =>
 	runEdge(
 		Effect.gen(function* () {
 			const auth = yield* Auth;
 			const tags = yield* Tags;
-			yield* authorizeRequest(auth, request, url);
+			yield* authorizeRequest(auth, request, url, cookies);
 			const tag = yield* readUpdate(request).pipe(
 				Effect.flatMap((input) => tags.update(params.id, input))
 			);
@@ -39,12 +39,12 @@ export const PATCH: RequestHandler = ({ params, request, url }) =>
 		})
 	);
 
-export const DELETE: RequestHandler = ({ params, request, url }) =>
+export const DELETE: RequestHandler = ({ cookies, params, request, url }) =>
 	runEdge(
 		Effect.gen(function* () {
 			const auth = yield* Auth;
 			const tags = yield* Tags;
-			yield* authorizeRequest(auth, request, url);
+			yield* authorizeRequest(auth, request, url, cookies);
 			yield* tags.remove(params.id);
 			return new Response(null, { status: 204 });
 		})

@@ -31,7 +31,7 @@ const readJson = (request: Request) =>
 			})
 	});
 
-export const GET: RequestHandler = ({ params, request, url }) =>
+export const GET: RequestHandler = ({ cookies, params, request, url }) =>
 	runEdge(
 		Effect.gen(function* () {
 			const auth = yield* Auth;
@@ -39,7 +39,7 @@ export const GET: RequestHandler = ({ params, request, url }) =>
 			const tags = yield* Tags;
 			const indexing = yield* Indexing;
 			const config = yield* AppConfig;
-			yield* authorizeRequest(auth, request, url);
+			yield* authorizeRequest(auth, request, url, cookies);
 			const detail = yield* files.detail(params.id);
 			return Response.json({
 				...detail,
@@ -52,14 +52,14 @@ export const GET: RequestHandler = ({ params, request, url }) =>
 	);
 
 export const PATCH: RequestHandler = async (event) => {
-	const { params, request, url } = event;
+	const { cookies, params, request, url } = event;
 	const output = await runEdgeWithEvent(
 		event,
 		Effect.gen(function* () {
 			const auth = yield* Auth;
 			const files = yield* Files;
 			const indexing = yield* Indexing;
-			yield* authorizeRequest(auth, request, url);
+			yield* authorizeRequest(auth, request, url, cookies);
 			const mutation = yield* readJson(request).pipe(
 				Effect.flatMap(decodeMutation)
 			);
