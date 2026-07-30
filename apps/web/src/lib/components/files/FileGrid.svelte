@@ -3,6 +3,7 @@
 	import { formatBytes } from '$lib/dashboard/format';
 	import Button from '$lib/components/ui/Button.svelte';
 	import FileCard from './FileCard.svelte';
+	import FileGridSkeleton from './FileGridSkeleton.svelte';
 	import FileList from './FileList.svelte';
 
 	let {
@@ -40,32 +41,39 @@
 	const totalSize = $derived(
 		files.reduce((sum, file) => sum + file.sizeBytes, 0)
 	);
+	const initialLoading = $derived(loading && files.length === 0);
 </script>
 
-<div class="flex items-center justify-between border-b border-zinc-200 pb-3">
-	<p class="text-sm font-medium text-zinc-700">
-		{files.length}
-		{files.length === 1 ? 'file' : 'files'}
-		{#if files.length > 0}
-			<span class="font-normal text-zinc-400">· {formatBytes(totalSize)}</span>
-		{/if}
-	</p>
-	{#if loading}
-		<span class="text-xs text-zinc-400">Updating…</span>
+<div
+	aria-busy={loading}
+	aria-live="polite"
+	class="flex items-center justify-between border-b border-zinc-200 pb-3"
+>
+	{#if initialLoading}
+		<p class="text-sm font-medium text-zinc-500">Loading files…</p>
+	{:else}
+		<p class="text-sm font-medium text-zinc-700">
+			{files.length}
+			{files.length === 1 ? 'file' : 'files'}
+			{#if files.length > 0}
+				<span class="font-normal text-zinc-400">
+					· {formatBytes(totalSize)}
+				</span>
+			{/if}
+		</p>
+	{/if}
+	{#if loading && !initialLoading}
+		<span class="inline-flex items-center gap-1.5 text-xs text-zinc-400">
+			<span
+				class="size-1.5 animate-pulse rounded-full bg-zinc-400 motion-reduce:animate-none"
+			></span>
+			Updating
+		</span>
 	{/if}
 </div>
 
-{#if loading && files.length === 0}
-	<div
-		class="grid grid-cols-2 gap-x-4 gap-y-8 py-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6"
-	>
-		{#each Array(6) as _, index (index)}
-			<div class="animate-pulse">
-				<div class="aspect-[4/3] rounded-xl bg-zinc-100"></div>
-				<div class="mt-3 h-3 w-2/3 rounded bg-zinc-100"></div>
-			</div>
-		{/each}
-	</div>
+{#if initialLoading}
+	<FileGridSkeleton {view} />
 {:else if files.length === 0}
 	<div class="py-20 text-center">
 		<p class="text-sm font-medium text-zinc-700">

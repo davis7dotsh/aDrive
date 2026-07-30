@@ -12,6 +12,7 @@
 	import { UploadManager } from '$lib/dashboard/uploads.svelte';
 	import DeviceApproval from './auth/DeviceApproval.svelte';
 	import SignIn from './auth/SignIn.svelte';
+	import DashboardSkeleton from './DashboardSkeleton.svelte';
 	import Button from './ui/Button.svelte';
 	import Confirm from './ui/Confirm.svelte';
 	import Icon from './ui/Icon.svelte';
@@ -54,6 +55,9 @@
 	const toasts = getToasts();
 	const showTrash = $derived(params.view === 'trash');
 	const layout = $derived(params.layout === 'list' ? 'list' : 'grid');
+	const loadingLayout = $derived(
+		page.url.searchParams.get('layout') === 'list' ? 'list' : 'grid'
+	);
 	const deviceCode = $derived(page.url.searchParams.get('device') ?? '');
 	const list = resource(
 		() =>
@@ -76,6 +80,7 @@
 		},
 		{ debounce: 200, initialValue: emptyList }
 	);
+	const initialListLoading = $derived(!list.current.contentOrigin);
 	const uploads = new UploadManager(() => {
 		void list.refetch();
 	});
@@ -296,10 +301,7 @@
 
 <main class="mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:py-10">
 	{#if !session.ready}
-		<div class="mx-auto max-w-md animate-pulse py-12">
-			<div class="h-5 w-28 rounded bg-zinc-200"></div>
-			<div class="mt-4 h-10 rounded bg-zinc-100"></div>
-		</div>
+		<DashboardSkeleton view={loadingLayout} />
 	{:else if !session.token}
 		<SignIn {session} />
 	{:else}
@@ -393,6 +395,7 @@
 			<TagFilterBar
 				tags={list.current.tags}
 				selectedIds={params.tags}
+				loading={initialListLoading}
 				ontoggle={toggleTag}
 				onclear={() => (params.tags = [])}
 				onmanage={() => (tagManagerOpen = true)}
@@ -405,7 +408,7 @@
 				token={session.token}
 				contentOrigin={list.current.contentOrigin}
 				trashed={showTrash}
-				loading={list.loading}
+				loading={list.loading || initialListLoading}
 				queryActive={Boolean(params.q || params.tags.length)}
 				returnQuery={page.url.search}
 				view={layout}
