@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>adrive — a personal file drive on Cloudflare</title>
+		<meta
+			name="description"
+			content="adrive is a small, self-hosted personal file drive that runs entirely on Cloudflare Workers, R2, and D1. One user, one passcode, a dashboard, and a CLI."
+		/>
+		<style>
+			:root {
+				--fg: #000;
+				--bg: #fff;
+				--muted: #555;
+				--rule: #e5e5e5;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #fff;
+					--bg: #000;
+					--muted: #aaa;
+					--rule: #262626;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0 auto;
+				padding: 4.5rem 1.25rem 5rem;
+				max-width: 40rem;
+				background: var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.65 ui-sans-serif,
+					system-ui,
+					sans-serif;
+			}
+			h1 {
+				font-size: 1.6rem;
+				letter-spacing: -0.02em;
+				margin: 0 0 0.25rem;
+			}
+			.tagline {
+				color: var(--muted);
+				margin: 0 0 2.5rem;
+			}
+			h2 {
+				font-size: 1rem;
+				margin: 2.5rem 0 0.75rem;
+				text-transform: uppercase;
+				letter-spacing: 0.08em;
+			}
+			p {
+				margin: 0 0 1rem;
+			}
+			a {
+				color: var(--fg);
+				text-underline-offset: 3px;
+			}
+			ul {
+				margin: 0 0 1rem;
+				padding-left: 1.25rem;
+			}
+			li {
+				margin-bottom: 0.4rem;
+			}
+			code {
+				font:
+					0.9em ui-monospace,
+					monospace;
+				border: 1px solid var(--rule);
+				border-radius: 4px;
+				padding: 0.1em 0.35em;
+			}
+			pre {
+				border: 1px solid var(--rule);
+				border-radius: 6px;
+				padding: 0.9rem 1rem;
+				overflow-x: auto;
+			}
+			pre code {
+				border: 0;
+				padding: 0;
+			}
+			.links {
+				display: flex;
+				gap: 1.5rem;
+				margin: 2rem 0 0;
+				padding-top: 2rem;
+				border-top: 1px solid var(--rule);
+			}
+			footer {
+				margin-top: 4rem;
+				color: var(--muted);
+				font-size: 0.85rem;
+			}
+		</style>
+	</head>
+	<body>
+		<h1>adrive</h1>
+		<p class="tagline">
+			A personal file drive that runs entirely on Cloudflare.
+		</p>
+
+		<p>
+			adrive is a small, self-hosted alternative to consumer file drives, built
+			for exactly one user: you. File bytes stream straight into
+			<strong>R2</strong>, metadata and append-only version history live in
+			<strong>D1</strong>, and everything is served by a single
+			<strong>Cloudflare Worker</strong> — no servers to run, nothing to patch.
+		</p>
+
+		<h2>What it does</h2>
+		<ul>
+			<li>Upload from a responsive dashboard or a streaming CLI.</li>
+			<li>Every replacement is a new version; history is append-only.</li>
+			<li>
+				Tags, plus hybrid search: full-text, filename trigram, and optional
+				semantic (Workers AI + Vectorize).
+			</li>
+			<li>
+				Public files get clean shareable URLs; private files use short-lived
+				signed grants.
+			</li>
+			<li>Publish whole static sites with <code>adrive site put</code>.</li>
+			<li>
+				HTML and downloads are isolated on a separate cookie-less content
+				origin, away from the dashboard.
+			</li>
+		</ul>
+
+		<h2>How access works</h2>
+		<p>
+			One passcode signs you into the dashboard with a strict, host-only session
+			cookie. The CLI authorizes itself through a device flow and gets a scoped
+			API key — read-only or read/write, revocable at any time. Scheduled Worker
+			maintenance sweeps expired sessions, trashed files, and storage lifecycle
+			in the background.
+		</p>
+
+		<h2>Getting started</h2>
+		<pre><code>git clone https://github.com/davis7dotsh/aDrive
+cd aDrive
+pnpm install
+pnpm db:migrate:local
+pnpm --filter @adrive/web dev</code></pre>
+		<p>
+			The
+			<a href="https://github.com/davis7dotsh/aDrive#local-setup"
+				>README walks through local setup</a
+			>, and <code>docs/release.md</code> in the repo covers deploying to your
+			own Cloudflare account with two custom domains.
+		</p>
+
+		<div class="links">
+			<a href="https://github.com/davis7dotsh/aDrive">GitHub repo</a>
+			<a href="https://github.com/davis7dotsh/aDrive#local-setup"
+				>Getting started</a
+			>
+		</div>
+
+		<footer>
+			A personal project · built on Cloudflare Workers, R2, D1, and SvelteKit.
+		</footer>
+	</body>
+</html>
