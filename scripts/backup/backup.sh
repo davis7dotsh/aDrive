@@ -18,6 +18,21 @@ source "${SCRIPT_DIR}/backup.env"
 : "${CLOUDFLARE_API_TOKEN:?CLOUDFLARE_API_TOKEN is required}"
 # ALERT_WEBHOOK_URL is optional but strongly recommended.
 
+# Serialize runs: a manual invocation overlapping cron (or a run outliving
+# the next schedule) must not interleave writes to the same dated paths.
+mkdir -p "${BACKUP_ROOT}"
+LOCK_DIR="${BACKUP_ROOT}/.backup.lock"
+if ! mkdir "${LOCK_DIR}" 2>/dev/null; then
+	echo "Another backup run holds ${LOCK_DIR}; exiting." >&2
+	exit 0
+fi
+CLEANUP_FILES=()
+cleanup() {
+	rm -f "${CLEANUP_FILES[@]}" 2>/dev/null || true
+	rmdir "${LOCK_DIR}" 2>/dev/null || true
+}
+trap cleanup EXIT
+
 STAMP_DAY="$(date -u +%Y-%m-%d)"
 STAMP_MONTH="$(date -u +%Y-%m)"
 NOW_ISO="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -117,8 +132,14 @@ for _attempt in $(seq 1 60); do
 done
 [[ -n "${SIGNED_URL}" ]] || fail "d1-export-timeout"
 
-curl -fsS -m 600 "${SIGNED_URL}" | gzip >"${D1_EXPORT}" || fail "d1-download"
-[[ -s "${D1_EXPORT}" ]] || fail "d1-empty-export"
+# Download to a temp file first so a failed rerun never truncates the
+# day's previously good export.
+D1_TMP="$(mktemp "${D1_DIR}/.export-XXXXXX")"
+CLEANUP_FILES+=("${D1_TMP}")
+curl -fsS -m 600 "${SIGNED_URL}" | gzip >"${D1_TMP}" || fail "d1-download"
+gzip -t "${D1_TMP}" || fail "d1-corrupt-export"
+[[ -s "${D1_TMP}" ]] || fail "d1-empty-export"
+mv "${D1_TMP}" "${D1_EXPORT}"
 log "d1 export written: $(du -h "${D1_EXPORT}" | cut -f1) ${D1_EXPORT}"
 
 # Monthly snapshot: first successful run of each month is kept for a year.
@@ -137,7 +158,7 @@ fi
 MANIFEST="${MANIFEST_DIR}/manifest-${STAMP_DAY}.json"
 OBJECTS_TMP="$(mktemp "${MANIFEST_DIR}/.objects-XXXXXX")"
 MANIFEST_TMP="$(mktemp "${MANIFEST_DIR}/.manifest-XXXXXX")"
-trap 'rm -f "${OBJECTS_TMP}" "${MANIFEST_TMP}"' EXIT
+CLEANUP_FILES+=("${OBJECTS_TMP}" "${MANIFEST_TMP}")
 
 rclone lsjson -R --hash "${MIRROR_DIR}" --files-only >"${OBJECTS_TMP}" \
 	|| fail "manifest-enumeration"

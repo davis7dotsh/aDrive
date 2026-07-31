@@ -50,11 +50,16 @@
 		const current = detail.current;
 		const cursor = current?.nextVersionsCursor;
 		if (!token || !current || !cursor || loadingOlderVersions) return;
+		// Participates in the same operation counter as mutations: if a
+		// rename/restore/tag change lands while this request is in flight,
+		// the stale merge is dropped instead of clobbering it.
+		const currentOperation = operation;
 		loadingOlderVersions = true;
 		try {
 			const next = await getFile(token, current.file.id, undefined, cursor);
 			if (
 				session.token !== token ||
+				operation !== currentOperation ||
 				detail.current?.file.id !== current.file.id ||
 				detail.current.nextVersionsCursor !== cursor
 			) {
