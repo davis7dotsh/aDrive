@@ -1127,13 +1127,10 @@ const RELEASES_REPO = 'davis7dotsh/aDrive';
 const CLI_TAG_PREFIX = 'cli-v';
 
 const compareSemver = (left: string, right: string) => {
-	const parse = (value: string) =>
-		value.split('-')[0]!.split('.').map(Number);
+	const parse = (value: string) => value.split('-')[0]!.split('.').map(Number);
 	const [lMajor = 0, lMinor = 0, lPatch = 0] = parse(left);
 	const [rMajor = 0, rMinor = 0, rPatch = 0] = parse(right);
-	return (
-		lMajor - rMajor || lMinor - rMinor || lPatch - rPatch
-	);
+	return lMajor - rMajor || lMinor - rMinor || lPatch - rPatch;
 };
 
 const upgrade = Command.make(
