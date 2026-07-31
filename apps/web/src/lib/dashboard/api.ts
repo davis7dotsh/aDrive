@@ -6,6 +6,7 @@ import {
 	FileListResponseSchema,
 	FileMutationResponseSchema,
 	FileTagsResponseSchema,
+	SessionsRevokedResponseSchema,
 	TagResponseSchema,
 	UploadResponseSchema,
 	type FileContentLinkResponse,
@@ -88,16 +89,27 @@ export const logoutSession = async () => {
 	await request('/api/auth/session', BROWSER_SESSION, { method: 'DELETE' });
 };
 
+export const logoutEverywhere = async (token: string) => {
+	const response = await request('/api/auth/sessions', token, {
+		method: 'DELETE'
+	});
+	return json(SessionsRevokedResponseSchema, response);
+};
+
 export const listApiKeys = async (token: string, signal?: AbortSignal) => {
 	const response = await request('/api/auth/keys', token, { signal });
 	return (await json(ApiKeyListResponseSchema, response)).keys;
 };
 
-export const createApiKey = async (token: string, name: string) => {
+export const createApiKey = async (
+	token: string,
+	name: string,
+	scope: 'read-only' | 'read-write' = 'read-write'
+) => {
 	const response = await request('/api/auth/keys', token, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name })
+		body: JSON.stringify({ name, scope })
 	});
 	return json(ApiKeyCreateResponseSchema, response);
 };
@@ -127,10 +139,14 @@ export const denyDevice = async (token: string, userCode: string) => {
 export const listFiles = async (
 	token: string,
 	trashed: boolean,
-	signal?: AbortSignal
+	signal?: AbortSignal,
+	cursor?: string
 ) => {
+	const params = new URLSearchParams();
+	if (trashed) params.set('trashed', 'true');
+	if (cursor) params.set('cursor', cursor);
 	const response = await request(
-		`/api/files${trashed ? '?trashed=true' : ''}`,
+		`/api/files${params.size > 0 ? `?${params}` : ''}`,
 		token,
 		{ signal }
 	);
@@ -159,10 +175,13 @@ export const searchFiles = async (
 export const getFile = async (
 	token: string,
 	id: string,
-	signal?: AbortSignal
+	signal?: AbortSignal,
+	versionsCursor?: string
 ) => {
+	const params = new URLSearchParams();
+	if (versionsCursor) params.set('versionsCursor', versionsCursor);
 	const response = await request(
-		`/api/files/${encodeURIComponent(id)}`,
+		`/api/files/${encodeURIComponent(id)}${params.size > 0 ? `?${params}` : ''}`,
 		token,
 		{
 			signal

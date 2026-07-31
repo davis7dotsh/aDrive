@@ -18,8 +18,14 @@ import {
 	trashWindow,
 	visibilityForFile
 } from '../file-policy';
+import {
+	decodeListCursor,
+	encodeListCursor,
+	type ListCursor
+} from '../list-cursor';
 import { purgeCompletionCommands, type PurgeSqlCommand } from '../purge-sql';
 import { fileIndexStatements } from '../search-index';
+import { ensureStorageQuota } from '../storage-quota';
 import { retryAt, safeIndexError } from '../semantic-policy';
 import { validateUploadLength } from '../upload-stream';
 import { Blobs } from './blobs';
@@ -43,6 +49,11 @@ const FileVersionRow = Schema.Struct({
 	content_type: Schema.String,
 	created_at: Schema.String
 });
+
+export interface ListPage {
+	readonly cursor: string | null;
+	readonly limit: number;
+}
 
 interface UploadInput {
 	readonly displayName: string;
@@ -88,11 +99,22 @@ export interface FilesShape {
 		version: number
 	) => Effect.Effect<MutationResult, InvalidRequest | NotFound | StorageError>;
 	readonly list: (
-		trashed: boolean
-	) => Effect.Effect<ReadonlyArray<DashboardFile>, StorageError>;
+		trashed: boolean,
+		page?: ListPage
+	) => Effect.Effect<
+		{
+			readonly files: ReadonlyArray<DashboardFile>;
+			readonly nextCursor: string | null;
+		},
+		InvalidRequest | StorageError
+	>;
 	readonly detail: (
-		id: string
-	) => Effect.Effect<FileDetail, NotFound | StorageError>;
+		id: string,
+		versionPage?: ListPage
+	) => Effect.Effect<
+		FileDetail & { readonly nextVersionsCursor: string | null },
+		InvalidRequest | NotFound | StorageError
+	>;
 	readonly setVisibility: (
 		id: string,
 		isPublic: boolean
@@ -197,6 +219,11 @@ const makeFiles = Effect.gen(function* () {
 				);
 			}
 		);
+
+	// One aggregate query per upload; at personal scale this stays cheap
+	// and cannot drift the way a maintained counter can.
+	const checkStorageQuota = (incomingBytes: number) =>
+		ensureStorageQuota(db, config.maxTotalBytes, incomingBytes);
 
 	const findDashboardFile = Effect.fn('Files.findDashboardFile')(function* (
 		id: string
@@ -328,6 +355,7 @@ const makeFiles = Effect.gen(function* () {
 								message: 'File name is invalid'
 							})
 			});
+			yield* checkStorageQuota(size);
 			const contentType = contentTypeForUpload(displayName, input.contentType);
 			const visibility = visibilityForFile(
 				displayName,
@@ -426,6 +454,7 @@ const makeFiles = Effect.gen(function* () {
 								message: 'Upload length is invalid'
 							})
 			});
+			yield* checkStorageQuota(size);
 			const contentType = contentTypeForUpload(
 				current.displayName,
 				input.contentType
@@ -488,6 +517,7 @@ const makeFiles = Effect.gen(function* () {
 			);
 			const source = decodeContentRows(rows)[0];
 			if (!source) return yield* new NotFound({ id });
+			yield* checkStorageQuota(source.size_bytes);
 			const sourceObject = yield* blobs.get(source.r2_key);
 			const r2Key = `v/${current.id}/${crypto.randomUUID()}`;
 			const stored = yield* blobs.put(
@@ -513,17 +543,31 @@ const makeFiles = Effect.gen(function* () {
 				)
 			);
 		}),
-		list: Effect.fn('Files.list')(function* (trashed) {
+		list: Effect.fn('Files.list')(function* (trashed, page) {
 			const now = new Date().toISOString();
+			const limit = page?.limit ?? 200;
+			const cursor = yield* Effect.try({
+				try: () => decodeListCursor(page?.cursor ?? null),
+				catch: (cause) =>
+					cause instanceof InvalidRequest
+						? cause
+						: new InvalidRequest({ status: 400, message: 'Cursor is invalid' })
+			});
+			const sortColumn = trashed ? 'f.deleted_at' : 'f.updated_at';
+			// Keyset pagination over (sort column, id); one extra row tells us
+			// whether another page exists without a second query.
 			const rows = yield* sql
 				.unsafe(
 					`SELECT ${dashboardFileColumns}
 					FROM files f
 					WHERE f.deleted_at IS ${trashed ? 'NOT NULL' : 'NULL'}
 						${trashed ? 'AND (f.purge_at IS NULL OR f.purge_at > ?)' : 'AND (f.expires_at IS NULL OR f.expires_at > ?)'}
-					ORDER BY ${trashed ? 'f.deleted_at' : 'f.updated_at'} DESC, f.id
-					LIMIT 200`,
-					[now]
+						${cursor ? `AND (${sortColumn} < ? OR (${sortColumn} = ? AND f.id > ?))` : ''}
+					ORDER BY ${sortColumn} DESC, f.id
+					LIMIT ?`,
+					cursor
+						? [now, cursor.k, cursor.k, cursor.id, limit + 1]
+						: [now, limit + 1]
 				)
 				.pipe(
 					Effect.mapError(
@@ -534,24 +578,66 @@ const makeFiles = Effect.gen(function* () {
 							})
 					)
 				);
-			return decodeDashboardRows(rows).map(toDashboardFile);
+			const decoded = decodeDashboardRows(rows);
+			const pageRows = decoded.slice(0, limit);
+			const files = pageRows.map(toDashboardFile);
+			const last = pageRows[pageRows.length - 1];
+			const nextCursor =
+				decoded.length > limit && last
+					? encodeListCursor({
+							k: (trashed ? last.deleted_at : last.updated_at) ?? '',
+							id: last.id
+						} satisfies ListCursor)
+					: null;
+			return { files, nextCursor };
 		}),
-		detail: Effect.fn('Files.detail')(function* (id) {
+		detail: Effect.fn('Files.detail')(function* (id, versionPage) {
 			const file = yield* findDashboardFile(id);
-			const rows = yield* sql`
-				SELECT version, size_bytes, content_type, created_at
-				FROM file_versions
-				WHERE file_id = ${id}
-				ORDER BY version DESC
-			`.pipe(
-				Effect.mapError(
-					(cause) =>
-						new StorageError({ operation: 'list file versions', cause })
+			const limit = versionPage?.limit ?? 50;
+			const cursor = yield* Effect.try({
+				try: () => decodeListCursor(versionPage?.cursor ?? null),
+				catch: (cause) =>
+					cause instanceof InvalidRequest
+						? cause
+						: new InvalidRequest({ status: 400, message: 'Cursor is invalid' })
+			});
+			const beforeVersion = cursor ? Number(cursor.k) : null;
+			if (beforeVersion !== null && !Number.isSafeInteger(beforeVersion)) {
+				return yield* new InvalidRequest({
+					status: 400,
+					message: 'Cursor is invalid'
+				});
+			}
+			const rows = yield* sql
+				.unsafe(
+					`SELECT version, size_bytes, content_type, created_at
+					FROM file_versions
+					WHERE file_id = ?${beforeVersion !== null ? ' AND version < ?' : ''}
+					ORDER BY version DESC
+					LIMIT ?`,
+					beforeVersion !== null
+						? [id, beforeVersion, limit + 1]
+						: [id, limit + 1]
 				)
-			);
+				.pipe(
+					Effect.mapError(
+						(cause) =>
+							new StorageError({ operation: 'list file versions', cause })
+					)
+				);
+			const decoded = decodeVersionRows(rows);
+			const pageRows = decoded.slice(0, limit);
+			const lastVersion = pageRows[pageRows.length - 1];
 			return {
 				file,
-				versions: decodeVersionRows(rows).map(toVersion)
+				versions: pageRows.map(toVersion),
+				nextVersionsCursor:
+					decoded.length > limit && lastVersion
+						? encodeListCursor({
+								k: String(lastVersion.version),
+								id
+							} satisfies ListCursor)
+						: null
 			};
 		}),
 		setVisibility: Effect.fn('Files.setVisibility')(function* (id, isPublic) {

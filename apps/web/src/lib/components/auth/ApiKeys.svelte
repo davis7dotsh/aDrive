@@ -19,6 +19,7 @@
 		}
 	);
 	let name = $state('');
+	let scope = $state<'read-only' | 'read-write'>('read-write');
 	let created = $state('');
 	let revoking = $state<ApiKey>();
 	let revokeOpen = $state(false);
@@ -28,7 +29,7 @@
 		if (!name.trim() || busy) return;
 		busy = true;
 		try {
-			const result = await createApiKey(token, name);
+			const result = await createApiKey(token, name, scope);
 			created = result.token;
 			name = '';
 			keys.mutate([result.key, ...(keys.current ?? [])]);
@@ -72,7 +73,8 @@
 <section>
 	<h2 class="text-lg font-semibold text-zinc-950">API keys</h2>
 	<p class="mt-1 text-sm text-zinc-500">
-		API keys have full access to this drive. Store them like passwords.
+		Read/write keys have full access to this drive; read-only keys can list and
+		download but not change anything. Store them like passwords.
 	</p>
 	<form
 		class="mt-5 flex max-w-xl gap-2"
@@ -86,6 +88,14 @@
 			placeholder="Key name, e.g. backup agent"
 			class="min-w-0 flex-1 rounded-md border border-zinc-300 px-3 py-2 text-sm"
 		/>
+		<select
+			bind:value={scope}
+			aria-label="Key scope"
+			class="rounded-md border border-zinc-300 px-2 py-2 text-sm"
+		>
+			<option value="read-write">Read/write</option>
+			<option value="read-only">Read-only</option>
+		</select>
 		<Button type="submit" disabled={!name.trim() || busy}>Create key</Button>
 	</form>
 
@@ -125,7 +135,13 @@
 					<div class="min-w-0">
 						<p class="truncate text-sm font-medium text-zinc-800">{key.name}</p>
 						<p class="mt-0.5 text-xs text-zinc-400">
-							adr_{key.prefix}_… · created {formatDate(key.createdAt)}
+							adr_{key.prefix}_… · {key.scope} · created {formatDate(
+								key.createdAt
+							)}
+							{key.expiresAt ? ` · expires ${formatDate(key.expiresAt)}` : ''}
+							{key.lastUsedAt
+								? ` · last used ${formatDate(key.lastUsedAt)}`
+								: ''}
 							{key.revokedAt ? ' · revoked' : ''}
 						</p>
 					</div>

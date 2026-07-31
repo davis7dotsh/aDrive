@@ -136,6 +136,7 @@ export type FileDetail = typeof FileDetailSchema.Type;
 
 export const FileListResponseSchema = Schema.Struct({
 	files: Schema.Array(DashboardFileSchema),
+	nextCursor: Schema.NullOr(Schema.String),
 	tags: Schema.Array(TagSchema),
 	contentOrigin: Schema.String,
 	maxUploadBytes: Schema.Int,
@@ -153,6 +154,7 @@ export type FileListResponse = typeof FileListResponseSchema.Type;
 export const FileDetailResponseSchema = Schema.Struct({
 	file: DashboardFileSchema,
 	versions: Schema.Array(FileVersionSchema),
+	nextVersionsCursor: Schema.NullOr(Schema.String),
 	availableTags: Schema.Array(TagSchema),
 	contentOrigin: Schema.String,
 	maxUploadBytes: Schema.Int,
@@ -302,19 +304,31 @@ export const AuthCheckResponseSchema = Schema.Struct({
 	ok: Schema.Literal(true)
 });
 
+export const SessionsRevokedResponseSchema = Schema.Struct({
+	revoked: Schema.Int
+});
+
 export const PasscodeLoginSchema = Schema.Struct({
 	passcode: Schema.String
 });
 
+export const ApiKeyScopeSchema = Schema.Literals(['read-only', 'read-write']);
+
+export type ApiKeyScope = typeof ApiKeyScopeSchema.Type;
+
 export const ApiKeyCreateSchema = Schema.Struct({
-	name: Schema.String
+	name: Schema.String,
+	scope: Schema.optional(ApiKeyScopeSchema),
+	expiresAt: Schema.optional(Schema.NullOr(Schema.String))
 });
 
 export const ApiKeySchema = Schema.Struct({
 	id: Schema.String,
 	name: Schema.String,
 	prefix: Schema.String,
+	scope: ApiKeyScopeSchema,
 	createdAt: Schema.String,
+	expiresAt: Schema.NullOr(Schema.String),
 	lastUsedAt: Schema.NullOr(Schema.String),
 	revokedAt: Schema.NullOr(Schema.String)
 });

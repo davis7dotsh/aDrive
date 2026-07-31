@@ -69,7 +69,25 @@ const makeLifecycle = Effect.gen(function* () {
 	const sites = yield* Sites;
 
 	const run = runLifecycleTasks({
-		authentication: auth.sweepExpired(100),
+		// Rotation and sweep are independent: a failed rotation check must
+		// not stop expired-credential cleanup, and vice versa.
+		authentication: Effect.zip(
+			auth.enforcePasscodeRotation.pipe(
+				Effect.map((rotation) => rotation.revoked),
+				Effect.catchCause((cause) =>
+					Effect.sync(() => {
+						console.error(
+							JSON.stringify({
+								message: 'passcode rotation enforcement failed',
+								cause: String(cause)
+							})
+						);
+						return 0;
+					})
+				)
+			),
+			auth.sweepExpired(100)
+		).pipe(Effect.map(([revoked, swept]) => revoked + swept)),
 		sites: sites.sweepLifecycle(10),
 		indexing: indexing.runDue(5),
 		files: files.sweepPurges(5),

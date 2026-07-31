@@ -2,7 +2,7 @@ import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
 import { AppConfig } from '$lib/server/config';
 import { runEdgeWithEvent, runWorkerProgram } from '$lib/server/edge';
-import { Auth, authorizeRequest } from '$lib/server/services/auth';
+import { Auth, authorizeWriteRequest } from '$lib/server/services/auth';
 import { Indexing } from '$lib/server/services/indexing';
 import { Sites } from '$lib/server/services/sites';
 
@@ -14,7 +14,7 @@ export const POST: RequestHandler = async (event) => {
 			const auth = yield* Auth;
 			const config = yield* AppConfig;
 			const sites = yield* Sites;
-			yield* authorizeRequest(auth, request, url, cookies);
+			yield* authorizeWriteRequest(auth, request, url, cookies);
 			const result = yield* sites.commit(params.id);
 			return {
 				fileId: result.file.id,

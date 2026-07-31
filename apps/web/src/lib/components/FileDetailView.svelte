@@ -43,6 +43,43 @@
 	let operation = 0;
 	let serverLoadError = $state(untrack(() => initialError));
 	const detailError = $derived(detail.error?.message ?? serverLoadError);
+	let loadingOlderVersions = $state(false);
+
+	const loadOlderVersions = async () => {
+		const token = session.token;
+		const current = detail.current;
+		const cursor = current?.nextVersionsCursor;
+		if (!token || !current || !cursor || loadingOlderVersions) return;
+		// Participates in the same operation counter as mutations: if a
+		// rename/restore/tag change lands while this request is in flight,
+		// the stale merge is dropped instead of clobbering it.
+		const currentOperation = operation;
+		loadingOlderVersions = true;
+		try {
+			const next = await getFile(token, current.file.id, undefined, cursor);
+			if (
+				session.token !== token ||
+				operation !== currentOperation ||
+				detail.current?.file.id !== current.file.id ||
+				detail.current.nextVersionsCursor !== cursor
+			) {
+				return;
+			}
+			const seen = new Set(current.versions.map((v) => v.version));
+			detail.mutate({
+				...detail.current,
+				versions: [
+					...detail.current.versions,
+					...next.versions.filter((v) => !seen.has(v.version))
+				],
+				nextVersionsCursor: next.nextVersionsCursor
+			});
+		} catch (cause) {
+			toasts.error(cause, 'Could not load older versions');
+		} finally {
+			loadingOlderVersions = false;
+		}
+	};
 
 	$effect(() => {
 		id;
@@ -319,6 +356,9 @@
 			<FileSidebar
 				file={detail.current.file}
 				versions={detail.current.versions}
+				moreVersions={detail.current.nextVersionsCursor !== null}
+				loadingVersions={loadingOlderVersions}
+				onmoreversions={() => void loadOlderVersions()}
 				availableTags={detail.current.availableTags}
 				{busy}
 				oncopy={() => resolveLink()}

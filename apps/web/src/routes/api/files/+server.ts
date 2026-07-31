@@ -3,8 +3,15 @@ import { Effect } from 'effect';
 import { runEdge, runEdgeWithEvent, runWorkerProgram } from '$lib/server/edge';
 import { AppConfig } from '$lib/server/config';
 import { validateExpiration } from '$lib/server/auth-policy';
+import { authRateLimitResponse } from '$lib/server/auth-rate-limit-response';
 import { InvalidRequest } from '$lib/server/errors';
-import { Auth, authorizeRequest } from '$lib/server/services/auth';
+import { parsePageSize } from '$lib/server/list-cursor';
+import {
+	Auth,
+	authorizeRequest,
+	authorizeWriteRequest
+} from '$lib/server/services/auth';
+import { AuthGuard } from '$lib/server/services/auth-guard';
 import { Files } from '$lib/server/services/files';
 import { Indexing } from '$lib/server/services/indexing';
 import { Tags } from '$lib/server/services/tags';
@@ -70,8 +77,23 @@ export const GET: RequestHandler = ({ cookies, request, url }) =>
 			const config = yield* AppConfig;
 			yield* authorizeRequest(auth, request, url, cookies);
 			const trashed = url.searchParams.get('trashed') === 'true';
+			const page = {
+				cursor: url.searchParams.get('cursor'),
+				limit: yield* Effect.try({
+					try: () => parsePageSize(url.searchParams.get('limit'), 200, 200),
+					catch: (cause) =>
+						cause instanceof InvalidRequest
+							? cause
+							: new InvalidRequest({
+									status: 400,
+									message: 'Page size is invalid'
+								})
+				})
+			};
+			const listing = yield* files.list(trashed, page);
 			return Response.json({
-				files: yield* files.list(trashed),
+				files: listing.files,
+				nextCursor: listing.nextCursor,
 				tags: yield* tags.list,
 				contentOrigin: config.contentOrigin,
 				maxUploadBytes: config.maxUploadBytes,
@@ -86,9 +108,28 @@ export const PUT: RequestHandler = async (event) => {
 		event,
 		Effect.gen(function* () {
 			const auth = yield* Auth;
+			const authGuard = yield* AuthGuard;
 			const files = yield* Files;
 			const config = yield* AppConfig;
-			yield* authorizeRequest(auth, request, url, cookies);
+			const credential = yield* authorizeWriteRequest(
+				auth,
+				request,
+				url,
+				cookies
+			);
+			const rateLimit = yield* authGuard.consume(
+				'upload',
+				credential.credentialId
+			);
+			if (!rateLimit.allowed) {
+				return {
+					fileId: null,
+					response: authRateLimitResponse(
+						rateLimit,
+						'Too many uploads. Try again later.'
+					)
+				};
+			}
 			const displayName = yield* Effect.try({
 				try: () => decodeName(request.headers.get('x-adrive-file-name')),
 				catch: (cause) =>
@@ -151,13 +192,14 @@ export const PUT: RequestHandler = async (event) => {
 			};
 		})
 	);
-	if (event.platform) {
+	const uploadedFileId = output.fileId;
+	if (uploadedFileId !== null && event.platform) {
 		event.platform.ctx.waitUntil(
 			runWorkerProgram(
 				event.platform.env,
 				Effect.gen(function* () {
 					const indexing = yield* Indexing;
-					yield* indexing.process(output.fileId);
+					yield* indexing.process(uploadedFileId);
 				})
 			)
 		);
@@ -172,7 +214,7 @@ export const DELETE: RequestHandler = async (event) => {
 		Effect.gen(function* () {
 			const auth = yield* Auth;
 			const files = yield* Files;
-			yield* authorizeRequest(auth, request, url, cookies);
+			yield* authorizeWriteRequest(auth, request, url, cookies);
 			if (url.searchParams.get('trashed') !== 'true') {
 				return yield* new InvalidRequest({
 					status: 400,

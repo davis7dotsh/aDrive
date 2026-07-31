@@ -21,6 +21,8 @@ export const GET: RequestHandler = ({ cookies, request, url }) =>
 					query: url.searchParams.get('q') ?? '',
 					tagIds: url.searchParams.getAll('tag').slice(0, 20)
 				}),
+				// Search results are relevance-bounded rather than paginated.
+				nextCursor: null,
 				tags: yield* tags.list,
 				contentOrigin: config.contentOrigin,
 				maxUploadBytes: config.maxUploadBytes,

@@ -43,6 +43,7 @@
 
 	const emptyList = {
 		files: [],
+		nextCursor: null,
 		tags: [],
 		contentOrigin: '',
 		maxUploadBytes: 0,
@@ -95,9 +96,13 @@
 			{ signal }
 		) => {
 			if (!ready || !token) return emptyList;
+			// Plain browsing pages through /api/files; queries and tag filters
+			// go to search, whose results are relevance-bounded, not paginated.
 			return trashed
 				? listFiles(token, true, signal)
-				: searchFiles(token, query, selectedTags, signal);
+				: query.trim() || selectedTags.length > 0
+					? searchFiles(token, query, selectedTags, signal)
+					: listFiles(token, false, signal);
 		},
 		{
 			debounce: 200,
@@ -112,6 +117,32 @@
 	const uploads = new UploadManager(() => {
 		void list.refetch();
 	});
+	let loadingMore = $state(false);
+
+	const loadMore = async () => {
+		const token = session.token;
+		const cursor = list.current.nextCursor;
+		if (!token || !cursor || loadingMore) return;
+		loadingMore = true;
+		try {
+			const next = await listFiles(token, showTrash, undefined, cursor);
+			if (session.token !== token || list.current.nextCursor !== cursor) {
+				return;
+			}
+			const seen = new Set(list.current.files.map((file) => file.id));
+			list.mutate({
+				...next,
+				files: [
+					...list.current.files,
+					...next.files.filter((file) => !seen.has(file.id))
+				]
+			});
+		} catch (cause) {
+			toasts.error(cause, 'Could not load more files');
+		} finally {
+			loadingMore = false;
+		}
+	};
 	let uploadOpen = $state(false);
 	let tagManagerOpen = $state(false);
 	let purgeTarget = $state<DashboardFile>();
@@ -787,6 +818,21 @@
 				}}
 				onclear={clearFilters}
 			/>
+			{#if list.current.nextCursor}
+				<div class="mt-6 flex flex-col items-center gap-2">
+					<Button
+						variant="secondary"
+						disabled={loadingMore}
+						onclick={() => void loadMore()}
+					>
+						{loadingMore ? 'Loading…' : 'Load more'}
+					</Button>
+					<p class="text-xs text-zinc-400">
+						Not all files are loaded yet — sorting and trash filters apply to
+						the files shown so far.
+					</p>
+				</div>
+			{/if}
 		</section>
 	{/if}
 </main>

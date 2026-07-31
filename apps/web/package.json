@@ -5,7 +5,7 @@
 	"type": "module",
 	"scripts": {
 		"check": "svelte-kit sync && pnpm check:types && pnpm check:effect && pnpm check:svelte",
-		"check:types": "tsc --noEmit",
+		"check:types": "rm -rf .svelte-kit/output .svelte-kit/cloudflare .svelte-kit/cloudflare-tmp && tsc --noEmit",
 		"check:effect": "effect-tsgo diagnostics --project tsconfig.json --format pretty",
 		"check:svelte": "svelte-check --tsconfig ./tsconfig.json --tsgo",
 		"dev": "concurrently --kill-others --names dashboard,content \"pnpm dev:dashboard\" \"pnpm dev:content\"",

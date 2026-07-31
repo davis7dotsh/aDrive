@@ -12,6 +12,7 @@
 		"DASHBOARD_ORIGIN": "http://siva.otter-hawksbill.ts.net:5173",
 		"CONTENT_ORIGIN": "http://siva.otter-hawksbill.ts.net:5174",
 		"MAX_UPLOAD_BYTES": "99614720",
+		"MAX_TOTAL_BYTES": "107374182400",
 		"SEMANTIC_SEARCH": "auto",
 		"EMBEDDING_MODEL": "@cf/baai/bge-small-en-v1.5",
 		"EMBEDDING_POOLING": "cls",
@@ -48,6 +49,65 @@
 		"traces": {
 			"enabled": true,
 			"head_sampling_rate": 0.01
+		}
+	},
+	// Production deploys with `wrangler deploy --env production`. Wrangler
+	// environments do not inherit bindings, so everything is redeclared.
+	// Before the first deploy (see docs/release.md):
+	//   1. Create the production D1 database and paste its id below.
+	//   2. Create the production R2 bucket and KV namespace; paste the KV id.
+	//   3. Point DNS for both hostnames at the Worker (routes below).
+	//   4. `wrangler secret put PASSCODE --env production`
+	//   5. `wrangler d1 migrations apply DB --env production --remote`
+	"env": {
+		"production": {
+			"routes": [
+				{ "pattern": "drive.davis7.space", "custom_domain": true },
+				{ "pattern": "files.davis7.space", "custom_domain": true }
+			],
+			"vars": {
+				"DASHBOARD_ORIGIN": "https://drive.davis7.space",
+				"CONTENT_ORIGIN": "https://files.davis7.space",
+				"MAX_UPLOAD_BYTES": "99614720",
+				"MAX_TOTAL_BYTES": "107374182400",
+				"SEMANTIC_SEARCH": "auto",
+				"EMBEDDING_MODEL": "@cf/baai/bge-small-en-v1.5",
+				"EMBEDDING_POOLING": "cls",
+				"EMBEDDING_DIMENSIONS": "384"
+			},
+			"triggers": {
+				"crons": ["*/5 * * * *"]
+			},
+			"d1_databases": [
+				{
+					"binding": "DB",
+					"database_name": "adrive-production",
+					"database_id": "replace-with-production-d1-database-id",
+					"migrations_dir": "migrations"
+				}
+			],
+			"r2_buckets": [
+				{
+					"binding": "BUCKET",
+					"bucket_name": "adrive-production"
+				}
+			],
+			"kv_namespaces": [
+				{
+					"binding": "AUTH_GUARD",
+					"id": "replace-with-production-kv-namespace-id"
+				}
+			],
+			"observability": {
+				"enabled": true,
+				"logs": {
+					"head_sampling_rate": 1
+				},
+				"traces": {
+					"enabled": true,
+					"head_sampling_rate": 0.01
+				}
+			}
 		}
 	}
 	// Semantic search is deliberately optional. To enable it, create the

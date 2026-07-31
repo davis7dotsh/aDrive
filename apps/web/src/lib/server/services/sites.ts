@@ -9,6 +9,7 @@ import { Context, Effect, Layer, Schema } from 'effect';
 import { AppConfig } from '../config';
 import { InvalidRequest, NotFound, StorageError } from '../errors';
 import { fileIndexStatements } from '../search-index';
+import { ensureStorageQuota } from '../storage-quota';
 import {
 	assertOpenSiteSession,
 	prepareSiteManifest,
@@ -465,6 +466,13 @@ const makeSites = Effect.gen(function* () {
 								message: 'Site manifest is invalid'
 							})
 			});
+			// Declared manifest sizes gate the whole publish before any asset
+			// bytes are accepted; per-asset uploads re-verify actual lengths.
+			const declaredBytes = prepared.assets.reduce(
+				(total, asset) => total + asset.sizeBytes,
+				0
+			);
+			yield* ensureStorageQuota(db, config.maxTotalBytes, declaredBytes);
 
 			let fileId: string = crypto.randomUUID();
 			let version = 1;

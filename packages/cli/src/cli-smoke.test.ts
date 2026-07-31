@@ -18,6 +18,7 @@ let contentRequestUrl = '';
 let devicePolls = 0;
 let deviceAuthorizations = 0;
 let uploadedContentLength: string | undefined;
+let linkUrlOverride: string | undefined;
 
 const deviceApiKey = 'adr_login123_123456789012345678901234';
 
@@ -135,6 +136,7 @@ beforeAll(async () => {
 							tags: []
 						}
 					],
+					nextCursor: null,
 					tags: [],
 					contentOrigin: contentEndpoint,
 					maxUploadBytes: 100_000_000,
@@ -157,7 +159,9 @@ beforeAll(async () => {
 			response.setHeader('Content-Type', 'application/json');
 			response.end(
 				JSON.stringify({
-					url: `${contentEndpoint}/f/${file.id}?v=1&e=1785154500&g=test`,
+					url:
+						linkUrlOverride ??
+						`${contentEndpoint}/f/${file.id}?v=1&e=1785154500&g=test`,
 					expiresAt: '2026-07-27T12:15:00.000Z',
 					version: 1,
 					public: false
@@ -305,7 +309,11 @@ describe('CLI stream and JSON contracts', () => {
 		const saved = JSON.parse(
 			await readFile(join(configHome, 'adrive', 'config.json'), 'utf8')
 		);
-		expect(saved).toEqual({ endpoint, apiKey: deviceApiKey });
+		expect(saved).toEqual({
+			endpoint,
+			apiKey: deviceApiKey,
+			contentOrigin: contentEndpoint
+		});
 	});
 
 	it('keeps JSON login output parseable while polling pending states', async () => {
@@ -332,6 +340,31 @@ describe('CLI stream and JSON contracts', () => {
 		const saved = JSON.parse(
 			await readFile(join(configHome, 'adrive', 'config.json'), 'utf8')
 		);
-		expect(saved).toEqual({ endpoint, apiKey: deviceApiKey });
+		expect(saved).toEqual({
+			endpoint,
+			apiKey: deviceApiKey,
+			contentOrigin: contentEndpoint
+		});
+	});
+
+	it('rejects a download link on an origin the config does not trust', async () => {
+		linkUrlOverride = 'https://evil.example.com/f/steal';
+		try {
+			const result = await run(['get', file.id, '--output', '-']);
+			expect(result.status).not.toBe(0);
+			const combined = result.stdout.toString() + result.stderr.toString();
+			expect(combined).toContain('unexpected origin');
+			expect(result.stdout.toString()).not.toContain('evil.example.com/f');
+		} finally {
+			linkUrlOverride = undefined;
+		}
+	});
+
+	it('rejects logging in to a non-local plain-http server without --allow-http', async () => {
+		const result = await run(['login', 'http://drive.example.com']);
+		expect(result.status).not.toBe(0);
+		expect(result.stdout.toString() + result.stderr.toString()).toContain(
+			'https'
+		);
 	});
 });

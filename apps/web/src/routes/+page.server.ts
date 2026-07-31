@@ -45,9 +45,13 @@ export const load: PageServerLoad = async ({ depends, fetch, url }) => {
 			params.append('tag', tag);
 		}
 	}
+	// Plain browsing pages through /api/files (mirroring the client resource);
+	// queries and tag filters go to relevance-bounded search.
 	const path = trashed
 		? `/api/files?${params}`
-		: `/api/search${params.size > 0 ? `?${params}` : ''}`;
+		: params.size > 0
+			? `/api/search?${params}`
+			: '/api/files';
 	let response: Response;
 	try {
 		response = await fetch(path);

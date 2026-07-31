@@ -69,24 +69,22 @@ export const readBoundedJson = (
 	{ maxBytes, invalidLengthMessage, invalidJsonMessage }: BoundedJsonOptions
 ) =>
 	Effect.gen(function* () {
+		// A declared length is validated up front so oversized requests fail
+		// before any bytes are read, but the header is not required: the
+		// streaming reader below enforces maxBytes for chunked bodies too.
 		const contentLengthHeader = request.headers.get('content-length');
-		if (contentLengthHeader === null) {
-			return yield* new InvalidRequest({
-				status: 411,
-				message: 'Content-Length is required'
-			});
-		}
-
-		const contentLength = Number(contentLengthHeader);
-		if (
-			!Number.isSafeInteger(contentLength) ||
-			contentLength < 0 ||
-			contentLength > maxBytes
-		) {
-			return yield* new InvalidRequest({
-				status: contentLength > maxBytes ? 413 : 400,
-				message: invalidLengthMessage
-			});
+		if (contentLengthHeader !== null) {
+			const contentLength = Number(contentLengthHeader);
+			if (
+				!Number.isSafeInteger(contentLength) ||
+				contentLength < 0 ||
+				contentLength > maxBytes
+			) {
+				return yield* new InvalidRequest({
+					status: contentLength > maxBytes ? 413 : 400,
+					message: invalidLengthMessage
+				});
+			}
 		}
 
 		const body = yield* Effect.promise(() => readBodyAtMost(request, maxBytes));
@@ -113,14 +111,18 @@ export const readBoundedJson = (
 		}
 	});
 
+export const DEFAULT_JSON_BODY_LIMIT = 16 * 1024;
+
 export const decodeJson = <A, I>(
 	request: Request,
 	schema: Schema.Codec<A, I, never>,
-	message: string
+	message: string,
+	maxBytes: number = DEFAULT_JSON_BODY_LIMIT
 ) =>
-	Effect.tryPromise({
-		try: () => request.json(),
-		catch: () => new InvalidRequest({ status: 400, message })
+	readBoundedJson(request, {
+		maxBytes,
+		invalidLengthMessage: message,
+		invalidJsonMessage: message
 	}).pipe(
 		Effect.flatMap(Schema.decodeUnknownEffect(schema)),
 		Effect.mapError((cause) =>

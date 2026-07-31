@@ -1,4 +1,4 @@
-import { API_KEY_PATTERN, type ApiKey } from '@adrive/shared';
+import { API_KEY_PATTERN, type ApiKey, type ApiKeyScope } from '@adrive/shared';
 import type { Cookies } from '@sveltejs/kit';
 import { Context, Effect, Layer, Schema } from 'effect';
 import { SqlClient } from 'effect/unstable/sql';
@@ -9,7 +9,8 @@ import {
 	normalizeApiKeyName,
 	normalizeUserCode,
 	SESSION_COOKIE,
-	SESSION_MAX_AGE_SECONDS
+	SESSION_MAX_AGE_SECONDS,
+	validateExpiration
 } from '../auth-policy';
 import { AppConfig } from '../config';
 import {
@@ -24,8 +25,10 @@ const ApiKeyRow = Schema.Struct({
 	id: Schema.String,
 	name: Schema.String,
 	prefix: Schema.String,
+	scope: Schema.Literals(['read-only', 'read-write']),
 	secret_hash: Schema.String,
 	created_at: Schema.String,
+	expires_at: Schema.NullOr(Schema.String),
 	last_used_at: Schema.NullOr(Schema.String),
 	revoked_at: Schema.NullOr(Schema.String)
 });
@@ -64,11 +67,17 @@ export type DevicePollResult =
 	| { readonly status: 'authorization_pending' | 'slow_down' }
 	| { readonly status: 'complete'; readonly apiKey: string };
 
+export interface AuthorizedCredential {
+	readonly credentialId: string;
+	readonly kind: 'api-key' | 'session';
+	readonly scope: ApiKeyScope;
+}
+
 export interface AuthShape {
 	readonly authorize: (
 		input: AuthorizeInput
 	) => Effect.Effect<
-		{ readonly credentialId: string; readonly kind: 'api-key' | 'session' },
+		AuthorizedCredential,
 		MisdirectedRequest | Unauthorized | StorageError
 	>;
 	readonly createSession: (
@@ -79,7 +88,11 @@ export interface AuthShape {
 	) => Effect.Effect<void, StorageError>;
 	readonly listApiKeys: Effect.Effect<ReadonlyArray<ApiKey>, StorageError>;
 	readonly createApiKey: (
-		name: string
+		name: string,
+		options?: {
+			readonly scope?: ApiKeyScope;
+			readonly expiresAt?: string | null;
+		}
 	) => Effect.Effect<
 		{ readonly key: ApiKey; readonly token: string },
 		InvalidRequest | StorageError
@@ -103,6 +116,15 @@ export interface AuthShape {
 		InvalidRequest | Unauthorized | StorageError
 	>;
 	readonly sweepExpired: (limit: number) => Effect.Effect<number, StorageError>;
+	// Revokes every browser session and outstanding device code. API keys
+	// survive; revoke those individually from the dashboard.
+	readonly revokeAllSessions: Effect.Effect<number, StorageError>;
+	// Compares the deployed PASSCODE with the recorded hash; on change,
+	// revokes all sessions and device codes and records the rotation time.
+	readonly enforcePasscodeRotation: Effect.Effect<
+		{ readonly rotated: boolean; readonly revoked: number },
+		StorageError
+	>;
 }
 
 export class Auth extends Context.Service<Auth, AuthShape>()('app/Auth') {}
@@ -132,6 +154,27 @@ export const authorizeRequest = (
 		origin: request.headers.get('origin'),
 		method: request.method
 	});
+
+// For routes that create, change, or delete data. Read-only API keys are
+// authenticated but rejected here with a 403 rather than a 401.
+export const authorizeWriteRequest = (
+	auth: AuthShape,
+	request: Request,
+	url: URL,
+	cookies: Cookies
+) =>
+	authorizeRequest(auth, request, url, cookies).pipe(
+		Effect.flatMap((credential) =>
+			credential.scope === 'read-write'
+				? Effect.succeed(credential)
+				: Effect.fail(
+						new InvalidRequest({
+							status: 403,
+							message: 'This API key is read-only'
+						})
+					)
+		)
+	);
 
 const randomToken = (bytes = 32) => {
 	const value = new Uint8Array(bytes);
@@ -195,7 +238,9 @@ const toApiKey = (row: typeof ApiKeyRow.Type): ApiKey => ({
 	id: row.id,
 	name: row.name,
 	prefix: row.prefix,
+	scope: row.scope,
 	createdAt: row.created_at,
+	expiresAt: row.expires_at,
 	lastUsedAt: row.last_used_at,
 	revokedAt: row.revoked_at
 });
@@ -225,7 +270,8 @@ const makeAuth = Effect.gen(function* () {
 	});
 
 	const listApiKeys = sql`
-		SELECT id, name, prefix, secret_hash, created_at, last_used_at, revoked_at
+		SELECT id, name, prefix, scope, secret_hash, created_at, expires_at,
+			last_used_at, revoked_at
 		FROM api_keys
 		ORDER BY created_at DESC, id
 	`.pipe(
@@ -261,7 +307,8 @@ const makeAuth = Effect.gen(function* () {
 					});
 				}
 				const rows = yield* sql`
-					SELECT id, name, prefix, secret_hash, created_at, last_used_at, revoked_at
+					SELECT id, name, prefix, scope, secret_hash, created_at, expires_at,
+						last_used_at, revoked_at
 					FROM api_keys
 					WHERE prefix = ${match[1]} AND revoked_at IS NULL
 					LIMIT 1
@@ -280,9 +327,15 @@ const makeAuth = Effect.gen(function* () {
 						message: 'A valid credential is required'
 					});
 				}
+				const nowIso = new Date().toISOString();
+				if (row.expires_at !== null && row.expires_at <= nowIso) {
+					return yield* new Unauthorized({
+						message: 'This API key has expired'
+					});
+				}
 				yield* sql`
 					UPDATE api_keys
-					SET last_used_at = ${new Date().toISOString()}
+					SET last_used_at = ${nowIso}
 					WHERE id = ${row.id}
 				`.pipe(
 					Effect.mapError(
@@ -290,7 +343,11 @@ const makeAuth = Effect.gen(function* () {
 							new StorageError({ operation: 'update API key usage', cause })
 					)
 				);
-				return { credentialId: row.id, kind: 'api-key' as const };
+				return {
+					credentialId: row.id,
+					kind: 'api-key' as const,
+					scope: row.scope
+				};
 			}
 
 			if (!sessionToken) {
@@ -331,7 +388,11 @@ const makeAuth = Effect.gen(function* () {
 						new StorageError({ operation: 'update dashboard session', cause })
 				)
 			);
-			return { credentialId: row.token_hash, kind: 'session' as const };
+			return {
+				credentialId: row.token_hash,
+				kind: 'session' as const,
+				scope: 'read-write' as const
+			};
 		}),
 		createSession: Effect.fn('Auth.createSession')(function* (passcode) {
 			const expected = yield* hashToken(config.passcode);
@@ -371,14 +432,26 @@ const makeAuth = Effect.gen(function* () {
 			);
 		}),
 		listApiKeys,
-		createApiKey: Effect.fn('Auth.createApiKey')(function* (name) {
+		createApiKey: Effect.fn('Auth.createApiKey')(function* (name, options) {
+			const scope = options?.scope ?? 'read-write';
+			const expiresAt = yield* Effect.try({
+				try: () => validateExpiration(options?.expiresAt ?? null),
+				catch: (cause) =>
+					cause instanceof InvalidRequest
+						? cause
+						: new InvalidRequest({
+								status: 400,
+								message: 'Key expiration is invalid'
+							})
+			});
 			const generated = yield* makeApiKey(name);
 			yield* sql`
 				INSERT INTO api_keys (
-					id, name, prefix, secret_hash, created_at
+					id, name, prefix, scope, secret_hash, created_at, expires_at
 				) VALUES (
 					${generated.row.id}, ${generated.row.name}, ${generated.row.prefix},
-					${generated.secretHash}, ${generated.row.createdAt}
+					${scope}, ${generated.secretHash}, ${generated.row.createdAt},
+					${expiresAt}
 				)
 			`.pipe(
 				Effect.mapError(
@@ -388,6 +461,8 @@ const makeAuth = Effect.gen(function* () {
 			return {
 				key: {
 					...generated.row,
+					scope,
+					expiresAt,
 					lastUsedAt: null,
 					revokedAt: null
 				},
@@ -628,6 +703,83 @@ const makeAuth = Effect.gen(function* () {
 			}
 			return { status: 'complete' as const, apiKey: generated.token };
 		}),
+		revokeAllSessions: Effect.gen(function* () {
+			const results = yield* Effect.tryPromise({
+				try: () =>
+					db.batch([
+						db.prepare('DELETE FROM dashboard_sessions'),
+						db.prepare(
+							`UPDATE device_codes SET status = 'denied'
+							WHERE status IN ('pending', 'approved')`
+						)
+					]),
+				catch: (cause) =>
+					new StorageError({ operation: 'revoke all sessions', cause })
+			});
+			return results.reduce(
+				(count, result) => count + (result.meta.changes ?? 0),
+				0
+			);
+		}).pipe(Effect.withSpan('Auth.revokeAllSessions')),
+		enforcePasscodeRotation: Effect.gen(function* () {
+			const passcodeHash = yield* hashToken(config.passcode);
+			const now = new Date().toISOString();
+			// One transactional batch (D1 batches are transactions): seed the
+			// row on first boot without revoking anything, revoke while the
+			// stored hash still differs from the deployed one, then record the
+			// new hash. A failure anywhere rolls the whole claim back, so a
+			// rotation can never be marked recorded with revocation skipped.
+			const results = yield* Effect.tryPromise({
+				try: () =>
+					db.batch([
+						db
+							.prepare(
+								`INSERT INTO credential_state (id, passcode_hash, rotated_at)
+								VALUES (1, ?1, ?2)
+								ON CONFLICT(id) DO NOTHING`
+							)
+							.bind(passcodeHash, now),
+						db
+							.prepare(
+								`DELETE FROM dashboard_sessions
+								WHERE EXISTS (
+									SELECT 1 FROM credential_state
+									WHERE id = 1 AND passcode_hash <> ?1
+								)`
+							)
+							.bind(passcodeHash),
+						db
+							.prepare(
+								`UPDATE device_codes SET status = 'denied'
+								WHERE status IN ('pending', 'approved')
+									AND EXISTS (
+										SELECT 1 FROM credential_state
+										WHERE id = 1 AND passcode_hash <> ?1
+									)`
+							)
+							.bind(passcodeHash),
+						db
+							.prepare(
+								`UPDATE credential_state
+								SET passcode_hash = ?1, rotated_at = ?2
+								WHERE id = 1 AND passcode_hash <> ?1`
+							)
+							.bind(passcodeHash, now)
+					]),
+				catch: (cause) =>
+					new StorageError({
+						operation: 'enforce passcode rotation',
+						cause
+					})
+			});
+			const rotated = results[3]?.meta.changes === 1;
+			return {
+				rotated,
+				revoked: rotated
+					? (results[1]?.meta.changes ?? 0) + (results[2]?.meta.changes ?? 0)
+					: 0
+			};
+		}).pipe(Effect.withSpan('Auth.enforcePasscodeRotation')),
 		sweepExpired: Effect.fn('Auth.sweepExpired')(function* (limit) {
 			const bounded = Math.max(1, Math.min(limit, 100));
 			const now = new Date().toISOString();

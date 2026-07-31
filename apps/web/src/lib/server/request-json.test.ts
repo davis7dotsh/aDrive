@@ -38,13 +38,28 @@ describe('bounded JSON requests', () => {
 		});
 	});
 
-	it('preserves missing and invalid Content-Length statuses', async () => {
-		const missing = await readFailure(
+	it('accepts a valid body without Content-Length, still bounded', async () => {
+		const accepted = await Effect.runPromise(
+			readBoundedJson(
+				new Request('https://drive.example.com/api/sites/sessions', {
+					method: 'POST',
+					body: '{}'
+				}),
+				options
+			)
+		);
+		expect(accepted).toEqual({});
+
+		const oversized = await readFailure(
 			new Request('https://drive.example.com/api/sites/sessions', {
 				method: 'POST',
-				body: '{}'
+				body: '{"key":"too large"}'
 			})
 		);
+		expect(oversized.status).toBe(413);
+	});
+
+	it('rejects an invalid Content-Length header', async () => {
 		const invalid = await readFailure(
 			new Request('https://drive.example.com/api/sites/sessions', {
 				method: 'POST',
@@ -53,7 +68,6 @@ describe('bounded JSON requests', () => {
 			})
 		);
 
-		expect(missing.status).toBe(411);
 		expect(invalid.status).toBe(400);
 	});
 

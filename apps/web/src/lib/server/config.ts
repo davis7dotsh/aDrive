@@ -5,6 +5,7 @@ export interface AppConfigShape {
 	readonly dashboardOrigin: string;
 	readonly contentOrigin: string;
 	readonly maxUploadBytes: number;
+	readonly maxTotalBytes: number;
 	readonly passcode: string;
 	readonly semanticSearch: 'off' | 'auto' | 'required';
 	readonly embeddingModel: '@cf/baai/bge-small-en-v1.5';
@@ -36,6 +37,16 @@ export const configFromEnv = (env: Env) => {
 	if (!Number.isSafeInteger(maxUploadBytes) || maxUploadBytes <= 0) {
 		throw new Error('MAX_UPLOAD_BYTES must be a positive safe integer');
 	}
+	// Global cap on stored bytes across all live file versions. Defaults to
+	// 100 GiB when unset so a leaked credential cannot fill the bucket.
+	const rawMaxTotalBytes = env.MAX_TOTAL_BYTES as string | undefined;
+	const maxTotalBytes =
+		rawMaxTotalBytes === undefined || rawMaxTotalBytes === ''
+			? 100 * 1024 ** 3
+			: Number(rawMaxTotalBytes);
+	if (!Number.isSafeInteger(maxTotalBytes) || maxTotalBytes <= 0) {
+		throw new Error('MAX_TOTAL_BYTES must be a positive safe integer');
+	}
 	if (typeof env.PASSCODE !== 'string' || env.PASSCODE.length < 12) {
 		throw new Error('PASSCODE must contain at least 12 characters');
 	}
@@ -52,6 +63,7 @@ export const configFromEnv = (env: Env) => {
 	return {
 		...origins,
 		maxUploadBytes,
+		maxTotalBytes,
 		passcode: env.PASSCODE,
 		semanticSearch,
 		embeddingModel: '@cf/baai/bge-small-en-v1.5',
