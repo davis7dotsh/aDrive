@@ -2,8 +2,9 @@ import { Effect } from 'effect';
 import { InvalidRequest, StorageError } from './errors';
 
 // Bytes actually held in R2: every version of a regular file is stored,
-// but a site keeps only its current version's assets (old assets are
-// deleted at commit), so superseded site version rows must not count.
+// a site keeps only its current version's assets (old assets are deleted
+// at commit), and assets staged into an uncommitted publish session are
+// already in R2 so they must count before the commit creates file rows.
 // Concurrent uploads can each pass this check before the other commits —
 // for a single-user deployment that bounded overshoot (≤ one upload per
 // concurrent request) is accepted; the quota is a safety net, not billing.
@@ -18,6 +19,14 @@ const TOTAL_STORED_BYTES_SQL = `
 		+
 		COALESCE((
 			SELECT SUM(size_bytes) FROM files WHERE is_site = 1
+		), 0)
+		+
+		COALESCE((
+			SELECT SUM(a.stored_size_bytes)
+			FROM staged_site_assets a
+			JOIN site_upload_sessions s ON s.id = a.session_id
+			WHERE a.stored_size_bytes IS NOT NULL
+				AND s.status IN ('open', 'committing')
 		), 0)
 	AS total`;
 

@@ -1,10 +1,13 @@
 import type { BlockedAuthAttempt } from './services/auth-guard';
 
-export const authRateLimitResponse = (decision: BlockedAuthAttempt) => {
+export const authRateLimitResponse = (
+	decision: BlockedAuthAttempt,
+	rateLimitMessage = 'Too many authentication requests. Try again later.'
+) => {
 	const message =
 		decision.reason === 'lockout'
 			? 'Too many incorrect passcode attempts. Try again later.'
-			: 'Too many authentication requests. Try again later.';
+			: rateLimitMessage;
 	return Response.json(
 		{ message },
 		{

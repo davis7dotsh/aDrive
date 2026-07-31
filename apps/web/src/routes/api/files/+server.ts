@@ -124,7 +124,10 @@ export const PUT: RequestHandler = async (event) => {
 			if (!rateLimit.allowed) {
 				return {
 					fileId: null,
-					response: authRateLimitResponse(rateLimit)
+					response: authRateLimitResponse(
+						rateLimit,
+						'Too many uploads. Try again later.'
+					)
 				};
 			}
 			const displayName = yield* Effect.try({

@@ -20,31 +20,46 @@ source "${SCRIPT_DIR}/backup.env"
 
 # Serialize runs: a manual invocation overlapping cron (or a run outliving
 # the next schedule) must not interleave writes to the same dated paths.
-# The lock records its owner PID so a lock orphaned by SIGKILL or power
-# loss is reclaimed instead of silently halting every future backup.
+# The lock records the owner's PID *and* process start time so a lock
+# orphaned by SIGKILL/power loss is reclaimed even if the PID was since
+# reused by an unrelated process (PID alone is not an identity).
+process_start_time() {
+	# Portable-enough for macOS and Linux: lstart is stable for a live PID.
+	ps -o lstart= -p "$1" 2>/dev/null | tr -s ' ' || true
+}
+
 mkdir -p "${BACKUP_ROOT}"
 LOCK_DIR="${BACKUP_ROOT}/.backup.lock"
-if ! mkdir "${LOCK_DIR}" 2>/dev/null; then
+acquire_lock() {
+	mkdir "${LOCK_DIR}" 2>/dev/null || return 1
+	echo "$$" >"${LOCK_DIR}/pid"
+	process_start_time "$$" >"${LOCK_DIR}/start"
+	return 0
+}
+
+if ! acquire_lock; then
 	HOLDER_PID="$(cat "${LOCK_DIR}/pid" 2>/dev/null || echo '')"
-	if [[ -n "${HOLDER_PID}" ]] && kill -0 "${HOLDER_PID}" 2>/dev/null; then
+	HOLDER_START="$(cat "${LOCK_DIR}/start" 2>/dev/null || echo '')"
+	CURRENT_START="$([[ -n "${HOLDER_PID}" ]] && process_start_time "${HOLDER_PID}")"
+	if [[ -n "${HOLDER_PID}" && -n "${CURRENT_START}" && "${CURRENT_START}" == "${HOLDER_START}" ]]; then
 		echo "Another backup run (pid ${HOLDER_PID}) holds ${LOCK_DIR}; exiting." >&2
 		exit 0
 	fi
-	# Reclaim atomically: mv renames the stale directory in one step, so if
-	# two processes race here only one succeeds and the loser's mv fails
+	# Holder is gone or the PID now belongs to a different process. Reclaim
+	# atomically: mv renames the stale directory in one step, so if two
+	# processes race here only one succeeds and the loser's mv fails
 	# without touching whatever lock the winner has since created.
 	if ! mv "${LOCK_DIR}" "${LOCK_DIR}.stale.$$" 2>/dev/null; then
 		echo "Lost the stale-lock reclaim race to another run; exiting." >&2
 		exit 0
 	fi
 	rm -rf "${LOCK_DIR}.stale.$$"
-	echo "Reclaimed stale lock (holder ${HOLDER_PID:-unknown} gone)." >&2
-	if ! mkdir "${LOCK_DIR}" 2>/dev/null; then
+	echo "Reclaimed stale lock (holder ${HOLDER_PID:-unknown} gone or replaced)." >&2
+	if ! acquire_lock; then
 		echo "Lost the lock race to another run; exiting." >&2
 		exit 0
 	fi
 fi
-echo "$$" >"${LOCK_DIR}/pid"
 CLEANUP_FILES=()
 cleanup() {
 	rm -f "${CLEANUP_FILES[@]}" 2>/dev/null || true
