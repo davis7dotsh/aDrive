@@ -1,31 +1,14 @@
 import { FileTagsUpdateSchema } from '@adrive/shared';
 import type { RequestHandler } from './$types';
-import { Effect, Schema } from 'effect';
+import { Effect } from 'effect';
 import { runEdge } from '$lib/server/edge';
-import { InvalidRequest } from '$lib/server/errors';
+import { decodeJson } from '$lib/server/request-json';
 import { Auth, authorizeRequest } from '$lib/server/services/auth';
 import { Files } from '$lib/server/services/files';
 import { Tags } from '$lib/server/services/tags';
 
 const readNames = (request: Request) =>
-	Effect.tryPromise({
-		try: () => request.json(),
-		catch: () =>
-			new InvalidRequest({
-				status: 400,
-				message: 'A JSON request body is required'
-			})
-	}).pipe(
-		Effect.flatMap(Schema.decodeUnknownEffect(FileTagsUpdateSchema)),
-		Effect.mapError((cause) =>
-			cause instanceof InvalidRequest
-				? cause
-				: new InvalidRequest({
-						status: 400,
-						message: 'File tags are invalid'
-					})
-		)
-	);
+	decodeJson(request, FileTagsUpdateSchema, 'File tags are invalid');
 
 export const PUT: RequestHandler = ({ cookies, params, request, url }) =>
 	runEdge(

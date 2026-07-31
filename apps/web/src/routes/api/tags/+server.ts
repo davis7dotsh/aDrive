@@ -1,30 +1,13 @@
 import { TagCreateSchema } from '@adrive/shared';
 import type { RequestHandler } from './$types';
-import { Effect, Schema } from 'effect';
+import { Effect } from 'effect';
 import { runEdge } from '$lib/server/edge';
-import { InvalidRequest } from '$lib/server/errors';
+import { decodeJson } from '$lib/server/request-json';
 import { Auth, authorizeRequest } from '$lib/server/services/auth';
 import { Tags } from '$lib/server/services/tags';
 
 const readCreate = (request: Request) =>
-	Effect.tryPromise({
-		try: () => request.json(),
-		catch: () =>
-			new InvalidRequest({
-				status: 400,
-				message: 'A JSON request body is required'
-			})
-	}).pipe(
-		Effect.flatMap(Schema.decodeUnknownEffect(TagCreateSchema)),
-		Effect.mapError((cause) =>
-			cause instanceof InvalidRequest
-				? cause
-				: new InvalidRequest({
-						status: 400,
-						message: 'Tag input is invalid'
-					})
-		)
-	);
+	decodeJson(request, TagCreateSchema, 'Tag input is invalid');
 
 export const GET: RequestHandler = ({ cookies, request, url }) =>
 	runEdge(

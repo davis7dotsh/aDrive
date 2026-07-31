@@ -1,35 +1,18 @@
 import { FileMutationSchema } from '@adrive/shared';
 import type { RequestHandler } from './$types';
-import { Effect, Schema } from 'effect';
+import { Effect } from 'effect';
 import { runEdge, runEdgeWithEvent, runWorkerProgram } from '$lib/server/edge';
 import { AppConfig } from '$lib/server/config';
 import { validateExpiration } from '$lib/server/auth-policy';
 import { InvalidRequest } from '$lib/server/errors';
+import { decodeJson } from '$lib/server/request-json';
 import { Auth, authorizeRequest } from '$lib/server/services/auth';
 import { Files } from '$lib/server/services/files';
 import { Tags } from '$lib/server/services/tags';
 import { Indexing } from '$lib/server/services/indexing';
 
-const decodeMutation = (value: unknown) =>
-	Schema.decodeUnknownEffect(FileMutationSchema)(value).pipe(
-		Effect.mapError(
-			() =>
-				new InvalidRequest({
-					status: 400,
-					message: 'File mutation is invalid'
-				})
-		)
-	);
-
-const readJson = (request: Request) =>
-	Effect.tryPromise({
-		try: () => request.json(),
-		catch: () =>
-			new InvalidRequest({
-				status: 400,
-				message: 'A JSON request body is required'
-			})
-	});
+const readMutation = (request: Request) =>
+	decodeJson(request, FileMutationSchema, 'File mutation is invalid');
 
 export const GET: RequestHandler = ({ cookies, params, request, url }) =>
 	runEdge(
@@ -60,9 +43,7 @@ export const PATCH: RequestHandler = async (event) => {
 			const files = yield* Files;
 			const indexing = yield* Indexing;
 			yield* authorizeRequest(auth, request, url, cookies);
-			const mutation = yield* readJson(request).pipe(
-				Effect.flatMap(decodeMutation)
-			);
+			const mutation = yield* readMutation(request);
 			const result =
 				mutation.action === 'visibility'
 					? yield* files.setVisibility(params.id, mutation.public)

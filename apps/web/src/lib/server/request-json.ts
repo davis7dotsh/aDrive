@@ -113,14 +113,18 @@ export const readBoundedJson = (
 		}
 	});
 
+export const DEFAULT_JSON_BODY_LIMIT = 16 * 1024;
+
 export const decodeJson = <A, I>(
 	request: Request,
 	schema: Schema.Codec<A, I, never>,
-	message: string
+	message: string,
+	maxBytes: number = DEFAULT_JSON_BODY_LIMIT
 ) =>
-	Effect.tryPromise({
-		try: () => request.json(),
-		catch: () => new InvalidRequest({ status: 400, message })
+	readBoundedJson(request, {
+		maxBytes,
+		invalidLengthMessage: message,
+		invalidJsonMessage: message
 	}).pipe(
 		Effect.flatMap(Schema.decodeUnknownEffect(schema)),
 		Effect.mapError((cause) =>
