@@ -56,9 +56,10 @@
 	// Before the first deploy (see docs/release.md):
 	//   1. Create the production D1 database and paste its id below.
 	//   2. Create the production R2 bucket and KV namespace; paste the KV id.
-	//   3. Point DNS for both hostnames at the Worker (routes below).
-	//   4. `wrangler secret put PASSCODE --env production`
-	//   5. `wrangler d1 migrations apply DB --env production --remote`
+	//   3. Create the Vectorize index and its metadata indexes (docs/release.md).
+	//   4. Point DNS for both hostnames at the Worker (routes below).
+	//   5. `wrangler secret put PASSCODE --env production`
+	//   6. `wrangler d1 migrations apply DB --env production --remote`
 	"env": {
 		"production": {
 			"routes": [
@@ -70,11 +71,22 @@
 				"CONTENT_ORIGIN": "https://files.davis7.space",
 				"MAX_UPLOAD_BYTES": "99614720",
 				"MAX_TOTAL_BYTES": "107374182400",
-				"SEMANTIC_SEARCH": "auto",
+				// required (not auto) so a missing AI/Vectorize binding fails
+				// the deploy loudly instead of silently degrading to keyword.
+				"SEMANTIC_SEARCH": "required",
 				"EMBEDDING_MODEL": "@cf/baai/bge-small-en-v1.5",
 				"EMBEDDING_POOLING": "cls",
 				"EMBEDDING_DIMENSIONS": "384"
 			},
+			"ai": {
+				"binding": "AI"
+			},
+			"vectorize": [
+				{
+					"binding": "VECTORIZE",
+					"index_name": "adrive-production"
+				}
+			],
 			"triggers": {
 				"crons": ["*/5 * * * *"]
 			},
@@ -110,9 +122,9 @@
 			}
 		}
 	}
-	// Semantic search is deliberately optional. To enable it, create the
-	// 384-dimension cosine index and its metadata indexes, then add:
-	// "ai": { "binding": "AI" },
-	// "vectorize": [{ "binding": "VECTORIZE", "index_name": "adrive" }]
-	// Run `pnpm types:worker` after changing bindings. See README.md.
+	// Local dev runs keyword-only (SEMANTIC_SEARCH=auto, no AI/Vectorize
+	// bindings above). Production declares both bindings and uses
+	// SEMANTIC_SEARCH=required. To enable semantic search locally, create a
+	// 384-dimension cosine index and add the same two bindings to the top
+	// level, then run `pnpm types:worker`. See README.md.
 }

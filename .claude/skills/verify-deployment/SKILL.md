@@ -57,8 +57,8 @@ key-only run can conclude at best INCONCLUSIVE — never PASS.
   repo, or `wrangler deployments list --env production` when wrangler
   is authenticated) plus the current UTC time.
 - **[M]** If wrangler is available: confirm the production env lists DB
-  (D1), BUCKET (R2), and AUTH_GUARD (KV) bindings
-  (`wrangler deploy --dry-run --env production` output). Without
+  (D1), BUCKET (R2), AUTH_GUARD (KV), AI (Workers AI), and VECTORIZE
+  bindings (`wrangler deploy --dry-run --env production` output). Without
   wrangler this mandatory check is SKIPPED and the run cannot PASS.
 
 ## 2. Authentication
@@ -114,6 +114,12 @@ SHA-256 before upload.
   least two pages; confirm both clients follow the cursor and the
   combined listing has no gaps or duplicates.
 - **[M]** Search for the run prefix; results contain the uploads.
+- Semantic search: settings shows semantic enabled with a nonzero
+  indexed-chunk count once the disposable text upload has been indexed
+  (wait out one or two 5-minute cron ticks); a conceptual query for the
+  text file's _content_ (words related to, but not literally in, its
+  text) surfaces it. SKIP with reason if indexing hasn't caught up
+  within a reasonable wait.
 - **[M]** Rename one file (dashboard or CLI) and confirm the new name.
 - **[M]** Create a prefixed tag, add it to a file, filter by it, remove
   it.

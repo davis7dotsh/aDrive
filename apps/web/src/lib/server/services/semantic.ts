@@ -172,7 +172,7 @@ const liveLayers = (env: SemanticBoundEnv) => {
 							Effect.map((result) => collapseVectorMatches(result.matches))
 						),
 			count: Effect.tryPromise({
-				try: async () => (await env.VECTORIZE.describe()).vectorCount,
+				try: async () => (await env.VECTORIZE.describe()).vectorsCount,
 				catch: (cause) =>
 					new StorageError({ operation: 'describe semantic index', cause })
 			})

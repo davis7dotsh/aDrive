@@ -10,15 +10,42 @@ installer run from the repository root.
 2. From `apps/web`: `wrangler r2 bucket create adrive-production`
 3. From `apps/web`: `wrangler kv namespace create AUTH_GUARD --env production`
    — paste the id into `env.production.kv_namespaces[0].id`.
-4. From `apps/web`: `wrangler secret put PASSCODE --env production`
+4. From `apps/web`: create the semantic-search index (the production env
+   sets `SEMANTIC_SEARCH=required`, so the deploy fails without it):
+
+   ```
+   wrangler vectorize create adrive-production --dimensions=384 --metric=cosine
+   wrangler vectorize create-metadata-index adrive-production --property-name=deleted --type=boolean
+   wrangler vectorize create-metadata-index adrive-production --property-name=kind --type=string
+   wrangler vectorize create-metadata-index adrive-production --property-name=visibility --type=string
+   ```
+
+   The Workers AI binding needs no provisioning — it activates with the
+   `ai` binding already declared in `wrangler.jsonc`. Both services sit
+   inside the Workers Paid plan's included allocation at personal scale
+   (50M queried + 10M stored vector dimensions per month ≈ 26k chunks at
+   384 dims; embeddings run within the 10k neurons/day allocation).
+
+5. From `apps/web`: `wrangler secret put PASSCODE --env production`
    (12+ characters).
-5. DNS for `drive.davis7.space` and `files.davis7.space` must be on the
+6. DNS for `drive.davis7.space` and `files.davis7.space` must be on the
    Cloudflare zone for davis7.space; the custom-domain routes in
    `wrangler.jsonc` attach them on first deploy.
-6. From the repo root: `pnpm release`
-7. From the repo root: set up backups on nexus
+7. From the repo root: `pnpm release`
+8. From the repo root: set up backups on nexus
    (`scripts/backup/install-on-nexus.sh`) and complete the restore drill
    in `docs/backup-restore.md`.
+
+Semantic search notes for the first deploy:
+
+- Files uploaded before the index existed (or while bindings were absent)
+  sit in `index_state = 'disabled'` and are backfilled by the maintenance
+  cron at 5 files per 5 minutes. A large pre-existing corpus takes hours;
+  the settings page's "indexed chunks" count shows progress.
+- Vectorize contents are derived state (like the FTS tables): after a D1
+  restore, vectors for purged files are orphaned but harmless, and
+  missing vectors regenerate on reindex. They are deliberately not part
+  of the backup set.
 
 ## Releasing
 
