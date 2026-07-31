@@ -1,5 +1,3 @@
-#!/usr/bin/env -S node --experimental-strip-types
-
 import {
 	DeviceAuthorizationResponseSchema,
 	DevicePendingResponseSchema,
@@ -17,11 +15,12 @@ import {
 	UploadResponseSchema,
 	type SiteManifestAsset
 } from '@adrive/shared';
-import {
-	NodeHttpClient,
-	NodeRuntime,
-	NodeServices
-} from '@effect/platform-node';
+// Deep imports on purpose: the package barrel re-exports NodeRedis,
+// whose static `import "ioredis"` would drag the redis client into the
+// release bundle (ioredis is a non-optional peer of platform-node).
+import * as NodeHttpClient from '@effect/platform-node/NodeHttpClient';
+import * as NodeRuntime from '@effect/platform-node/NodeRuntime';
+import * as NodeServices from '@effect/platform-node/NodeServices';
 import { createWriteStream } from 'node:fs';
 import {
 	chmod,
@@ -56,6 +55,12 @@ import {
 	HttpClientResponse
 } from 'effect/unstable/http';
 import mime from 'mime';
+
+// Replaced by esbuild --define at release build time; running from
+// source (strip-types) leaves it undefined and falls back to "dev".
+declare const __ADRIVE_VERSION__: string | undefined;
+const CLI_VERSION =
+	typeof __ADRIVE_VERSION__ === 'string' ? __ADRIVE_VERSION__ : 'dev';
 
 const JSON_MODE = process.argv.includes('--json');
 if (JSON_MODE) {
@@ -1127,7 +1132,7 @@ const root = Command.make('adrive', {
 	Command.withSubcommands([login, list, put, get, rename, site, tag])
 );
 
-Command.run(root, { version: '0.1.0' }).pipe(
+Command.run(root, { version: CLI_VERSION }).pipe(
 	Effect.provide([NodeServices.layer, NodeHttpClient.layerNodeHttp]),
 	NodeRuntime.runMain
 );
