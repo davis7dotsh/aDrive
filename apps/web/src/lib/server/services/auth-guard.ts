@@ -28,6 +28,13 @@ const ratePolicies = {
 		key: 'device-poll',
 		limit: 150,
 		windowSeconds: 10 * 60
+	},
+	// Keyed by credential id, not client address: bounds how fast a single
+	// leaked API key can pump objects into the bucket.
+	upload: {
+		key: 'upload',
+		limit: 120,
+		windowSeconds: 10 * 60
 	}
 };
 

@@ -12,6 +12,7 @@
 		"DASHBOARD_ORIGIN": "http://siva.otter-hawksbill.ts.net:5173",
 		"CONTENT_ORIGIN": "http://siva.otter-hawksbill.ts.net:5174",
 		"MAX_UPLOAD_BYTES": "99614720",
+		"MAX_TOTAL_BYTES": "107374182400",
 		"SEMANTIC_SEARCH": "auto",
 		"EMBEDDING_MODEL": "@cf/baai/bge-small-en-v1.5",
 		"EMBEDDING_POOLING": "cls",

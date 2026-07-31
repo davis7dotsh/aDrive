@@ -93,11 +93,15 @@ export const listApiKeys = async (token: string, signal?: AbortSignal) => {
 	return (await json(ApiKeyListResponseSchema, response)).keys;
 };
 
-export const createApiKey = async (token: string, name: string) => {
+export const createApiKey = async (
+	token: string,
+	name: string,
+	scope: 'read-only' | 'read-write' = 'read-write'
+) => {
 	const response = await request('/api/auth/keys', token, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name })
+		body: JSON.stringify({ name, scope })
 	});
 	return json(ApiKeyCreateResponseSchema, response);
 };

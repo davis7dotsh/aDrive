@@ -7,7 +7,7 @@ import { Effect, Schema } from 'effect';
 import { runEdge } from '$lib/server/edge';
 import { InvalidRequest } from '$lib/server/errors';
 import { readBoundedJson } from '$lib/server/request-json';
-import { Auth, authorizeRequest } from '$lib/server/services/auth';
+import { Auth, authorizeWriteRequest } from '$lib/server/services/auth';
 import { Sites } from '$lib/server/services/sites';
 
 const MAX_MANIFEST_BYTES = 1024 * 1024;
@@ -37,7 +37,7 @@ export const POST: RequestHandler = ({ cookies, request, url }) =>
 		Effect.gen(function* () {
 			const auth = yield* Auth;
 			const sites = yield* Sites;
-			yield* authorizeRequest(auth, request, url, cookies);
+			yield* authorizeWriteRequest(auth, request, url, cookies);
 			const input: SiteSessionCreate = yield* readManifest(request);
 			return Response.json(yield* sites.createSession(input), { status: 201 });
 		})

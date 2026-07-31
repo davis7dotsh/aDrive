@@ -3,7 +3,11 @@ import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
 import { runEdge } from '$lib/server/edge';
 import { decodeJson } from '$lib/server/request-json';
-import { Auth, authorizeRequest } from '$lib/server/services/auth';
+import {
+	Auth,
+	authorizeRequest,
+	authorizeWriteRequest
+} from '$lib/server/services/auth';
 import { Tags } from '$lib/server/services/tags';
 
 const readCreate = (request: Request) =>
@@ -24,7 +28,7 @@ export const POST: RequestHandler = ({ cookies, request, url }) =>
 		Effect.gen(function* () {
 			const auth = yield* Auth;
 			const tags = yield* Tags;
-			yield* authorizeRequest(auth, request, url, cookies);
+			yield* authorizeWriteRequest(auth, request, url, cookies);
 			const tag = yield* readCreate(request).pipe(
 				Effect.flatMap((input) => tags.create(input))
 			);

@@ -6,7 +6,11 @@ import { AppConfig } from '$lib/server/config';
 import { validateExpiration } from '$lib/server/auth-policy';
 import { InvalidRequest } from '$lib/server/errors';
 import { decodeJson } from '$lib/server/request-json';
-import { Auth, authorizeRequest } from '$lib/server/services/auth';
+import {
+	Auth,
+	authorizeRequest,
+	authorizeWriteRequest
+} from '$lib/server/services/auth';
 import { Files } from '$lib/server/services/files';
 import { Tags } from '$lib/server/services/tags';
 import { Indexing } from '$lib/server/services/indexing';
@@ -42,7 +46,7 @@ export const PATCH: RequestHandler = async (event) => {
 			const auth = yield* Auth;
 			const files = yield* Files;
 			const indexing = yield* Indexing;
-			yield* authorizeRequest(auth, request, url, cookies);
+			yield* authorizeWriteRequest(auth, request, url, cookies);
 			const mutation = yield* readMutation(request);
 			const result =
 				mutation.action === 'visibility'

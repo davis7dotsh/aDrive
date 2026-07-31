@@ -2,7 +2,7 @@ import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
 import { runEdge } from '$lib/server/edge';
 import { InvalidRequest } from '$lib/server/errors';
-import { Auth, authorizeRequest } from '$lib/server/services/auth';
+import { Auth, authorizeWriteRequest } from '$lib/server/services/auth';
 import { Sites } from '$lib/server/services/sites';
 
 export const PUT: RequestHandler = ({ cookies, params, request, url }) =>
@@ -10,7 +10,7 @@ export const PUT: RequestHandler = ({ cookies, params, request, url }) =>
 		Effect.gen(function* () {
 			const auth = yield* Auth;
 			const sites = yield* Sites;
-			yield* authorizeRequest(auth, request, url, cookies);
+			yield* authorizeWriteRequest(auth, request, url, cookies);
 			const path = url.searchParams.get('path');
 			if (path === null) {
 				return yield* new InvalidRequest({
