@@ -69,7 +69,13 @@ const makeLifecycle = Effect.gen(function* () {
 	const sites = yield* Sites;
 
 	const run = runLifecycleTasks({
-		authentication: auth.sweepExpired(100),
+		authentication: auth.enforcePasscodeRotation.pipe(
+			Effect.flatMap((rotation) =>
+				auth
+					.sweepExpired(100)
+					.pipe(Effect.map((swept) => rotation.revoked + swept))
+			)
+		),
 		sites: sites.sweepLifecycle(10),
 		indexing: indexing.runDue(5),
 		files: files.sweepPurges(5),

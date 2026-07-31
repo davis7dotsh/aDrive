@@ -1,17 +1,39 @@
 <script lang="ts">
-	import { listFiles } from '$lib/dashboard/api';
+	import { goto } from '$app/navigation';
+	import { listFiles, logoutEverywhere } from '$lib/dashboard/api';
 	import { formatBytes } from '$lib/dashboard/format';
 	import { getDashboardSession } from '$lib/dashboard/session.svelte';
+	import { getToasts } from '$lib/dashboard/toast.svelte';
 	import ApiKeys from '$lib/components/auth/ApiKeys.svelte';
+	import Button from '$lib/components/ui/Button.svelte';
+	import Confirm from '$lib/components/ui/Confirm.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { resource } from 'runed';
 
 	const session = getDashboardSession();
+	const toasts = getToasts();
 	const settings = resource(
 		() => [session.ready, session.token] as const,
 		([ready, token], _previous, { signal }) =>
 			ready && token ? listFiles(token, false, signal) : Promise.resolve(null)
 	);
+	let signOutEverywhereOpen = $state(false);
+	let signingOut = $state(false);
+
+	const signOutEverywhere = async () => {
+		if (!session.token || signingOut) return;
+		signingOut = true;
+		try {
+			await logoutEverywhere(session.token);
+			signOutEverywhereOpen = false;
+			await session.disconnect();
+			await goto('/');
+		} catch (cause) {
+			toasts.error(cause, 'Could not sign out everywhere');
+		} finally {
+			signingOut = false;
+		}
+	};
 </script>
 
 <svelte:head>
@@ -97,5 +119,32 @@
 		<div class="mt-10 border-t border-zinc-200 pt-8">
 			<ApiKeys token={session.token} />
 		</div>
+
+		<section class="mt-10 border-t border-zinc-200 pt-8">
+			<h2 class="text-lg font-semibold text-zinc-950">Sessions</h2>
+			<p class="mt-1 text-sm text-zinc-500">
+				Sign out every browser and cancel pending device approvals. API keys
+				keep working — revoke them above if one may have leaked. Changing the
+				PASSCODE secret also signs out every browser on the next maintenance
+				run.
+			</p>
+			<Button
+				variant="danger"
+				class="mt-4"
+				disabled={signingOut}
+				onclick={() => (signOutEverywhereOpen = true)}
+			>
+				Sign out everywhere
+			</Button>
+		</section>
 	{/if}
 </main>
+
+<Confirm
+	bind:open={signOutEverywhereOpen}
+	title="Sign out everywhere?"
+	message="Every browser session will end immediately, including this one."
+	confirmLabel="Sign out everywhere"
+	busy={signingOut}
+	onconfirm={signOutEverywhere}
+/>

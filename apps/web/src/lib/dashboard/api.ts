@@ -6,6 +6,7 @@ import {
 	FileListResponseSchema,
 	FileMutationResponseSchema,
 	FileTagsResponseSchema,
+	SessionsRevokedResponseSchema,
 	TagResponseSchema,
 	UploadResponseSchema,
 	type FileContentLinkResponse,
@@ -86,6 +87,13 @@ export const loginWithPasscode = async (passcode: string) => {
 
 export const logoutSession = async () => {
 	await request('/api/auth/session', BROWSER_SESSION, { method: 'DELETE' });
+};
+
+export const logoutEverywhere = async (token: string) => {
+	const response = await request('/api/auth/sessions', token, {
+		method: 'DELETE'
+	});
+	return json(SessionsRevokedResponseSchema, response);
 };
 
 export const listApiKeys = async (token: string, signal?: AbortSignal) => {

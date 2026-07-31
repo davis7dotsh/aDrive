@@ -120,6 +120,15 @@ export interface AuthShape {
 		InvalidRequest | Unauthorized | StorageError
 	>;
 	readonly sweepExpired: (limit: number) => Effect.Effect<number, StorageError>;
+	// Revokes every browser session and outstanding device code. API keys
+	// survive; revoke those individually from the dashboard.
+	readonly revokeAllSessions: Effect.Effect<number, StorageError>;
+	// Compares the deployed PASSCODE with the recorded hash; on change,
+	// revokes all sessions and device codes and records the rotation time.
+	readonly enforcePasscodeRotation: Effect.Effect<
+		{ readonly rotated: boolean; readonly revoked: number },
+		StorageError
+	>;
 }
 
 export class Auth extends Context.Service<Auth, AuthShape>()('app/Auth') {}
@@ -698,6 +707,71 @@ const makeAuth = Effect.gen(function* () {
 			}
 			return { status: 'complete' as const, apiKey: generated.token };
 		}),
+		revokeAllSessions: Effect.gen(function* () {
+			const results = yield* Effect.tryPromise({
+				try: () =>
+					db.batch([
+						db.prepare('DELETE FROM dashboard_sessions'),
+						db.prepare(
+							`UPDATE device_codes SET status = 'denied'
+							WHERE status IN ('pending', 'approved')`
+						)
+					]),
+				catch: (cause) =>
+					new StorageError({ operation: 'revoke all sessions', cause })
+			});
+			return results.reduce(
+				(count, result) => count + (result.meta.changes ?? 0),
+				0
+			);
+		}).pipe(Effect.withSpan('Auth.revokeAllSessions')),
+		enforcePasscodeRotation: Effect.gen(function* () {
+			const passcodeHash = yield* hashToken(config.passcode);
+			const now = new Date().toISOString();
+			const claimed = yield* Effect.tryPromise({
+				try: () =>
+					db
+						.prepare(
+							`INSERT INTO credential_state (id, passcode_hash, rotated_at)
+							VALUES (1, ?1, ?2)
+							ON CONFLICT(id) DO UPDATE
+								SET passcode_hash = ?1, rotated_at = ?2
+								WHERE passcode_hash <> ?1`
+						)
+						.bind(passcodeHash, now)
+						.run(),
+				catch: (cause) =>
+					new StorageError({ operation: 'record passcode state', cause })
+			});
+			if (claimed.meta.changes !== 1) {
+				return { rotated: false, revoked: 0 };
+			}
+			// A row changed: either first boot or an actual rotation. Revoking
+			// on first boot is harmless (there are no sessions yet) and keeps
+			// this a single atomic claim under D1's consistency model.
+			const results = yield* Effect.tryPromise({
+				try: () =>
+					db.batch([
+						db.prepare('DELETE FROM dashboard_sessions'),
+						db.prepare(
+							`UPDATE device_codes SET status = 'denied'
+							WHERE status IN ('pending', 'approved')`
+						)
+					]),
+				catch: (cause) =>
+					new StorageError({
+						operation: 'revoke credentials after rotation',
+						cause
+					})
+			});
+			return {
+				rotated: true,
+				revoked: results.reduce(
+					(count, result) => count + (result.meta.changes ?? 0),
+					0
+				)
+			};
+		}).pipe(Effect.withSpan('Auth.enforcePasscodeRotation')),
 		sweepExpired: Effect.fn('Auth.sweepExpired')(function* (limit) {
 			const bounded = Math.max(1, Math.min(limit, 100));
 			const now = new Date().toISOString();
