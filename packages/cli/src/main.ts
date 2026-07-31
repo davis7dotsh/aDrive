@@ -64,7 +64,9 @@ if (JSON_MODE) {
 
 const CliConfigSchema = Schema.Struct({
 	endpoint: Schema.String,
-	apiKey: Schema.String
+	apiKey: Schema.String,
+	contentOrigin: Schema.optional(Schema.String),
+	allowHttp: Schema.optional(Schema.Boolean)
 });
 
 class CliFailure extends Data.TaggedError('CliFailure')<{
@@ -79,7 +81,22 @@ const configPath = () =>
 		'config.json'
 	);
 
-const normalizeEndpoint = (value: string) => {
+const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+
+const isLocalHostname = (hostname: string) =>
+	LOCAL_HOSTNAMES.has(hostname) || hostname.endsWith('.localhost');
+
+const assertSecureUrl = (url: URL, allowHttp: boolean, label: string) => {
+	if (url.protocol === 'https:') return;
+	if (url.protocol === 'http:' && isLocalHostname(url.hostname)) return;
+	if (url.protocol === 'http:' && allowHttp) return;
+	throw new Error(
+		`${label} must use https (or http on localhost). ` +
+			'Pass --allow-http at login only for trusted private networks.'
+	);
+};
+
+const normalizeEndpoint = (value: string, allowHttp: boolean) => {
 	const url = new URL(value);
 	if (
 		!['http:', 'https:'].includes(url.protocol) ||
@@ -89,21 +106,89 @@ const normalizeEndpoint = (value: string) => {
 	) {
 		throw new Error('The server URL must be an http(s) origin without a path');
 	}
+	assertSecureUrl(url, allowHttp, 'The server URL');
 	return url.origin;
 };
 
-const saveConfig = (endpoint: string, apiKey: string) =>
+// Server-returned URLs are only trusted on origins the user configured:
+// the endpoint itself, or the content origin recorded at login. Anything
+// else is rejected before the CLI fetches it or opens a browser to it.
+const assertTrustedServerUrl = (
+	value: string,
+	config: typeof CliConfigSchema.Type,
+	label: string
+) => {
+	const url = new URL(value);
+	assertSecureUrl(url, config.allowHttp === true, label);
+	const trusted = [config.endpoint, config.contentOrigin].filter(
+		(origin): origin is string => typeof origin === 'string'
+	);
+	if (!trusted.includes(url.origin)) {
+		throw new Error(
+			`${label} points at an unexpected origin (${url.origin}). ` +
+				'Re-run `adrive login` if the server moved.'
+		);
+	}
+	return value;
+};
+
+const trustedServerUrl = (
+	value: string,
+	config: typeof CliConfigSchema.Type,
+	label: string
+) =>
+	Effect.try({
+		try: () => assertTrustedServerUrl(value, config, label),
+		catch: (cause) =>
+			new CliFailure({
+				message: cause instanceof Error ? cause.message : `${label} is invalid`,
+				cause
+			})
+	});
+
+// Configs written before contentOrigin was recorded learn it on demand
+// from the authenticated list endpoint, then persist it.
+const withContentOrigin = (config: typeof CliConfigSchema.Type) =>
+	config.contentOrigin !== undefined
+		? Effect.succeed(config)
+		: Effect.tryPromise({
+				try: async () => {
+					const response = await fetch(`${config.endpoint}/api/files`, {
+						headers: { authorization: `Bearer ${config.apiKey}` }
+					});
+					if (!response.ok) return config;
+					const body: unknown = await response.json();
+					if (
+						typeof body === 'object' &&
+						body !== null &&
+						'contentOrigin' in body &&
+						typeof body.contentOrigin === 'string'
+					) {
+						return { ...config, contentOrigin: new URL(body.contentOrigin).origin };
+					}
+					return config;
+				},
+				catch: (cause) =>
+					new CliFailure({
+						message: 'Could not reach the server to confirm its origins',
+						cause
+					})
+			}).pipe(
+				Effect.tap((updated) =>
+					updated.contentOrigin !== undefined
+						? saveConfig(updated).pipe(Effect.ignore)
+						: Effect.void
+				)
+			);
+
+const saveConfig = (config: typeof CliConfigSchema.Type) =>
 	Effect.tryPromise({
 		try: async () => {
 			const path = configPath();
 			await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-			await writeFile(
-				path,
-				`${JSON.stringify({ endpoint, apiKey }, null, 2)}\n`,
-				{
-					mode: 0o600
-				}
-			);
+			await writeFile(path, `${JSON.stringify(config, null, 2)}\n`, {
+				mode: 0o600
+			});
 			await chmod(path, 0o600);
 		},
 		catch: (cause) =>
@@ -132,6 +217,26 @@ const loadConfig = Effect.tryPromise({
 		cause instanceof CliFailure
 			? cause
 			: new CliFailure({ message: 'Could not read credentials', cause })
+	),
+	Effect.flatMap((config) =>
+		Effect.try({
+			try: () => {
+				assertSecureUrl(
+					new URL(config.endpoint),
+					config.allowHttp === true,
+					'The configured server URL'
+				);
+				return config;
+			},
+			catch: (cause) =>
+				new CliFailure({
+					message:
+						cause instanceof Error
+							? `${cause.message} Re-run \`adrive login\`.`
+							: 'The configured server URL is invalid',
+					cause
+				})
+		})
 	)
 );
 
@@ -218,17 +323,28 @@ const login = Command.make(
 		headless: Flag.boolean('headless').pipe(
 			Flag.withDescription('Print the approval URL without opening a browser')
 		),
+		allowHttp: Flag.boolean('allow-http').pipe(
+			Flag.withDescription(
+				'Allow a plain-http server on a trusted private network'
+			)
+		),
 		name: Flag.string('name').pipe(
 			Flag.withDefault('adrive CLI'),
 			Flag.withDescription('Name for the full-access key created on approval')
 		)
 	},
-	({ endpoint: rawEndpoint, headless, name }) =>
+	({ endpoint: rawEndpoint, headless, allowHttp, name }) =>
 		Effect.gen(function* () {
 			const endpoint = yield* Effect.try({
-				try: () => normalizeEndpoint(rawEndpoint),
+				try: () => normalizeEndpoint(rawEndpoint, allowHttp),
 				catch: (cause) =>
-					new CliFailure({ message: 'The server URL is invalid', cause })
+					new CliFailure({
+						message:
+							cause instanceof Error
+								? cause.message
+								: 'The server URL is invalid',
+						cause
+					})
 			});
 			const authorizationBody = yield* Effect.tryPromise({
 				try: async () => {
@@ -259,6 +375,13 @@ const login = Command.make(
 							cause
 						})
 				)
+			);
+			// The approval URL is opened in a browser where the dashboard
+			// session lives; never follow it to an origin we didn't dial.
+			yield* trustedServerUrl(
+				authorization.verificationUriComplete,
+				{ endpoint, apiKey: '', allowHttp },
+				'The verification URL returned by the server'
 			);
 			if (wantsJson()) {
 				yield* emit({
@@ -342,7 +465,33 @@ const login = Command.make(
 					yield* Effect.sleep(`${authorization.interval} seconds`);
 				}
 			}
-			yield* saveConfig(endpoint, apiKey);
+			// Record the deployment's content origin so later commands can
+			// verify that server-returned download URLs stay on known ground.
+			const contentOrigin = yield* Effect.tryPromise({
+				try: async () => {
+					const response = await fetch(`${endpoint}/api/files`, {
+						headers: { authorization: `Bearer ${apiKey}` }
+					});
+					if (!response.ok) return undefined;
+					const body: unknown = await response.json();
+					if (
+						typeof body === 'object' &&
+						body !== null &&
+						'contentOrigin' in body &&
+						typeof body.contentOrigin === 'string'
+					) {
+						return new URL(body.contentOrigin).origin;
+					}
+					return undefined;
+				},
+				catch: () => new CliFailure({ message: 'unreachable' })
+			}).pipe(Effect.orElseSucceed(() => undefined));
+			yield* saveConfig({
+				endpoint,
+				apiKey,
+				...(contentOrigin ? { contentOrigin } : {}),
+				...(allowHttp ? { allowHttp } : {})
+			});
 			yield* emit(
 				wantsJson()
 					? { status: 'authenticated', endpoint }
@@ -514,7 +663,7 @@ const get = Command.make(
 	},
 	({ id, output }) =>
 		Effect.gen(function* () {
-			const config = yield* loadConfig;
+			const config = yield* loadConfig.pipe(Effect.flatMap(withContentOrigin));
 			const client = yield* HttpClient.HttpClient;
 			const fs = yield* FileSystem.FileSystem;
 			if (Option.getOrUndefined(output) === '-' && wantsJson()) {
@@ -534,8 +683,13 @@ const get = Command.make(
 			const link = yield* HttpClientResponse.schemaBodyJson(
 				FileContentLinkResponseSchema
 			)(linkResponse);
+			const downloadUrl = yield* trustedServerUrl(
+				link.url,
+				config,
+				'The download URL returned by the server'
+			);
 			const response = yield* client
-				.execute(HttpClientRequest.get(link.url))
+				.execute(HttpClientRequest.get(downloadUrl))
 				.pipe(Effect.flatMap(ensureOk));
 			const destination = Option.getOrElse(
 				output,
