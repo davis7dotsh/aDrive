@@ -724,48 +724,60 @@ const makeAuth = Effect.gen(function* () {
 		enforcePasscodeRotation: Effect.gen(function* () {
 			const passcodeHash = yield* hashToken(config.passcode);
 			const now = new Date().toISOString();
-			const claimed = yield* Effect.tryPromise({
-				try: () =>
-					db
-						.prepare(
-							`INSERT INTO credential_state (id, passcode_hash, rotated_at)
-							VALUES (1, ?1, ?2)
-							ON CONFLICT(id) DO UPDATE
-								SET passcode_hash = ?1, rotated_at = ?2
-								WHERE passcode_hash <> ?1`
-						)
-						.bind(passcodeHash, now)
-						.run(),
-				catch: (cause) =>
-					new StorageError({ operation: 'record passcode state', cause })
-			});
-			if (claimed.meta.changes !== 1) {
-				return { rotated: false, revoked: 0 };
-			}
-			// A row changed: either first boot or an actual rotation. Revoking
-			// on first boot is harmless (there are no sessions yet) and keeps
-			// this a single atomic claim under D1's consistency model.
+			// One transactional batch (D1 batches are transactions): seed the
+			// row on first boot without revoking anything, revoke while the
+			// stored hash still differs from the deployed one, then record the
+			// new hash. A failure anywhere rolls the whole claim back, so a
+			// rotation can never be marked recorded with revocation skipped.
 			const results = yield* Effect.tryPromise({
 				try: () =>
 					db.batch([
-						db.prepare('DELETE FROM dashboard_sessions'),
-						db.prepare(
-							`UPDATE device_codes SET status = 'denied'
-							WHERE status IN ('pending', 'approved')`
-						)
+						db
+							.prepare(
+								`INSERT INTO credential_state (id, passcode_hash, rotated_at)
+								VALUES (1, ?1, ?2)
+								ON CONFLICT(id) DO NOTHING`
+							)
+							.bind(passcodeHash, now),
+						db
+							.prepare(
+								`DELETE FROM dashboard_sessions
+								WHERE EXISTS (
+									SELECT 1 FROM credential_state
+									WHERE id = 1 AND passcode_hash <> ?1
+								)`
+							)
+							.bind(passcodeHash),
+						db
+							.prepare(
+								`UPDATE device_codes SET status = 'denied'
+								WHERE status IN ('pending', 'approved')
+									AND EXISTS (
+										SELECT 1 FROM credential_state
+										WHERE id = 1 AND passcode_hash <> ?1
+									)`
+							)
+							.bind(passcodeHash),
+						db
+							.prepare(
+								`UPDATE credential_state
+								SET passcode_hash = ?1, rotated_at = ?2
+								WHERE id = 1 AND passcode_hash <> ?1`
+							)
+							.bind(passcodeHash, now)
 					]),
 				catch: (cause) =>
 					new StorageError({
-						operation: 'revoke credentials after rotation',
+						operation: 'enforce passcode rotation',
 						cause
 					})
 			});
+			const rotated = results[3]?.meta.changes === 1;
 			return {
-				rotated: true,
-				revoked: results.reduce(
-					(count, result) => count + (result.meta.changes ?? 0),
-					0
-				)
+				rotated,
+				revoked: rotated
+					? (results[1]?.meta.changes ?? 0) + (results[2]?.meta.changes ?? 0)
+					: 0
 			};
 		}).pipe(Effect.withSpan('Auth.enforcePasscodeRotation')),
 		sweepExpired: Effect.fn('Auth.sweepExpired')(function* (limit) {

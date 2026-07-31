@@ -25,6 +25,7 @@ import {
 } from '../list-cursor';
 import { purgeCompletionCommands, type PurgeSqlCommand } from '../purge-sql';
 import { fileIndexStatements } from '../search-index';
+import { ensureStorageQuota } from '../storage-quota';
 import { retryAt, safeIndexError } from '../semantic-policy';
 import { validateUploadLength } from '../upload-stream';
 import { Blobs } from './blobs';
@@ -219,30 +220,10 @@ const makeFiles = Effect.gen(function* () {
 			}
 		);
 
-	// One aggregate over live version rows per upload; at personal scale
-	// this stays cheap and cannot drift the way a maintained counter can.
-	const ensureStorageQuota = Effect.fn('Files.ensureStorageQuota')(function* (
-		incomingBytes: number
-	) {
-		const rows = yield* sql`
-			SELECT COALESCE(SUM(size_bytes), 0) AS total FROM file_versions
-		`.pipe(
-			Effect.mapError(
-				(cause) =>
-					new StorageError({ operation: 'measure stored bytes', cause })
-			)
-		);
-		const decoded = Schema.decodeUnknownOption(
-			Schema.Array(Schema.Struct({ total: Schema.Int }))
-		)(rows);
-		const total = decoded._tag === 'Some' ? (decoded.value[0]?.total ?? 0) : 0;
-		if (total + incomingBytes > config.maxTotalBytes) {
-			return yield* new InvalidRequest({
-				status: 413,
-				message: 'The storage quota is exhausted'
-			});
-		}
-	});
+	// One aggregate query per upload; at personal scale this stays cheap
+	// and cannot drift the way a maintained counter can.
+	const checkStorageQuota = (incomingBytes: number) =>
+		ensureStorageQuota(db, config.maxTotalBytes, incomingBytes);
 
 	const findDashboardFile = Effect.fn('Files.findDashboardFile')(function* (
 		id: string
@@ -374,7 +355,7 @@ const makeFiles = Effect.gen(function* () {
 								message: 'File name is invalid'
 							})
 			});
-			yield* ensureStorageQuota(size);
+			yield* checkStorageQuota(size);
 			const contentType = contentTypeForUpload(displayName, input.contentType);
 			const visibility = visibilityForFile(
 				displayName,
@@ -473,7 +454,7 @@ const makeFiles = Effect.gen(function* () {
 								message: 'Upload length is invalid'
 							})
 			});
-			yield* ensureStorageQuota(size);
+			yield* checkStorageQuota(size);
 			const contentType = contentTypeForUpload(
 				current.displayName,
 				input.contentType
@@ -536,7 +517,7 @@ const makeFiles = Effect.gen(function* () {
 			);
 			const source = decodeContentRows(rows)[0];
 			if (!source) return yield* new NotFound({ id });
-			yield* ensureStorageQuota(source.size_bytes);
+			yield* checkStorageQuota(source.size_bytes);
 			const sourceObject = yield* blobs.get(source.r2_key);
 			const r2Key = `v/${current.id}/${crypto.randomUUID()}`;
 			const stored = yield* blobs.put(

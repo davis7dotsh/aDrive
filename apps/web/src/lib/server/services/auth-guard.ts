@@ -30,11 +30,16 @@ const ratePolicies = {
 		windowSeconds: 10 * 60
 	},
 	// Keyed by credential id, not client address: bounds how fast a single
-	// leaked API key can pump objects into the bucket.
+	// leaked API key can pump objects into the bucket. KV allows roughly one
+	// write per second per key and is eventually consistent, so this is an
+	// approximate abuse brake, not an exact ceiling — legitimate concurrent
+	// uploads must not be failed by a KV write conflict (tolerateWriteFailure),
+	// and a burst may briefly exceed the nominal limit.
 	upload: {
 		key: 'upload',
 		limit: 120,
-		windowSeconds: 10 * 60
+		windowSeconds: 10 * 60,
+		tolerateWriteFailure: true
 	}
 };
 
@@ -218,6 +223,19 @@ const makeAuthGuard = (now: () => Date) =>
 				}
 
 				const nextCount = count + 1;
+				// High-frequency policies (uploads) hit KV's ~1 write/sec/key
+				// ceiling under normal concurrent use; failing the counter
+				// write must not fail the legitimate request there. Abuse
+				// bootstrap policies (login, device) stay fail-closed.
+				if ('tolerateWriteFailure' in policy && policy.tolerateWriteFailure) {
+					yield* write(
+						key,
+						{ count: nextCount, resetAtMs },
+						retryAfter(resetAtMs, currentTime) + MINIMUM_KV_TTL_SECONDS,
+						`update ${policy.key} rate limit`
+					).pipe(Effect.ignore);
+					return allowed(policy.limit - nextCount, resetAtMs);
+				}
 				const writeFailure = yield* writeOrBlock(
 					key,
 					{ count: nextCount, resetAtMs },

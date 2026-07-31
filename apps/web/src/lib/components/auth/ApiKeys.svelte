@@ -138,6 +138,7 @@
 							adr_{key.prefix}_… · {key.scope} · created {formatDate(
 								key.createdAt
 							)}
+							{key.expiresAt ? ` · expires ${formatDate(key.expiresAt)}` : ''}
 							{key.lastUsedAt
 								? ` · last used ${formatDate(key.lastUsedAt)}`
 								: ''}

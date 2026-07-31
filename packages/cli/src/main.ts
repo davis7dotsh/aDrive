@@ -603,14 +603,21 @@ const list = Command.make('list', {}, () =>
 	Effect.gen(function* () {
 		const config = yield* loadConfig;
 		const client = yield* HttpClient.HttpClient;
-		// Follow cursors until the listing is complete; the guard mirrors the
-		// server-side page cap so a misbehaving server cannot loop us forever.
+		// Follow cursors until the listing is complete; the page guard exists
+		// so a misbehaving server cannot loop us forever. JSON mode stays a
+		// single document: files accumulate and emit once after the loop.
+		const allFiles: Array<
+			typeof FileListResponseSchema.Type.files extends ReadonlyArray<infer F>
+				? F
+				: never
+		> = [];
+		let lastPage: typeof FileListResponseSchema.Type | null = null;
 		let cursor: string | null = null;
 		let pages = 0;
 		do {
 			const params = new URLSearchParams();
 			if (cursor) params.set('cursor', cursor);
-			const response = yield* client
+			const result = yield* client
 				.execute(
 					apiRequest(
 						'GET',
@@ -618,12 +625,15 @@ const list = Command.make('list', {}, () =>
 						config.apiKey
 					)
 				)
-				.pipe(Effect.flatMap(ensureOk));
-			const result = yield* HttpClientResponse.schemaBodyJson(
-				FileListResponseSchema
-			)(response);
+				.pipe(
+					Effect.flatMap(ensureOk),
+					Effect.flatMap(
+						HttpClientResponse.schemaBodyJson(FileListResponseSchema)
+					)
+				);
+			lastPage = result;
 			if (wantsJson()) {
-				yield* emit(result);
+				allFiles.push(...result.files);
 			} else {
 				for (const file of result.files) {
 					yield* Console.log(
@@ -634,6 +644,15 @@ const list = Command.make('list', {}, () =>
 			cursor = result.nextCursor;
 			pages += 1;
 		} while (cursor !== null && pages < 500);
+		if (cursor !== null) {
+			return yield* new CliFailure({
+				message:
+					'Listing stopped after 500 pages with more remaining; the server may be misbehaving'
+			});
+		}
+		if (wantsJson() && lastPage !== null) {
+			yield* emit({ ...lastPage, files: allFiles, nextCursor: null });
+		}
 	})
 ).pipe(Command.withDescription('List files'));
 

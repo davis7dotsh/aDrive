@@ -3,17 +3,16 @@ import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
 import { runEdge } from '$lib/server/edge';
 import { decodeJson } from '$lib/server/request-json';
-import {
-	Auth,
-	authorizeRequest,
-	authorizeWriteRequest
-} from '$lib/server/services/auth';
+import { Auth, authorizeWriteRequest } from '$lib/server/services/auth';
 
+// Key inventory is credential-adjacent: a leaked read-only key should not
+// be able to enumerate the other credentials, so listing requires write
+// scope just like creation and revocation.
 export const GET: RequestHandler = ({ cookies, request, url }) =>
 	runEdge(
 		Effect.gen(function* () {
 			const auth = yield* Auth;
-			yield* authorizeRequest(auth, request, url, cookies);
+			yield* authorizeWriteRequest(auth, request, url, cookies);
 			return Response.json({ keys: yield* auth.listApiKeys });
 		})
 	);

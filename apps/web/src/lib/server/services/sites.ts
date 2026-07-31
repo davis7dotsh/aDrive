@@ -9,6 +9,7 @@ import { Context, Effect, Layer, Schema } from 'effect';
 import { AppConfig } from '../config';
 import { InvalidRequest, NotFound, StorageError } from '../errors';
 import { fileIndexStatements } from '../search-index';
+import { ensureStorageQuota } from '../storage-quota';
 import {
 	assertOpenSiteSession,
 	prepareSiteManifest,
@@ -471,22 +472,7 @@ const makeSites = Effect.gen(function* () {
 				(total, asset) => total + asset.sizeBytes,
 				0
 			);
-			const quotaRows = yield* Effect.tryPromise({
-				try: () =>
-					db
-						.prepare(
-							'SELECT COALESCE(SUM(size_bytes), 0) AS total FROM file_versions'
-						)
-						.first<{ total: number }>(),
-				catch: (cause) =>
-					new StorageError({ operation: 'measure stored bytes', cause })
-			});
-			if ((quotaRows?.total ?? 0) + declaredBytes > config.maxTotalBytes) {
-				return yield* new InvalidRequest({
-					status: 413,
-					message: 'The storage quota is exhausted'
-				});
-			}
+			yield* ensureStorageQuota(db, config.maxTotalBytes, declaredBytes);
 
 			let fileId: string = crypto.randomUUID();
 			let version = 1;
