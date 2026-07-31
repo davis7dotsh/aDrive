@@ -68,17 +68,26 @@ ACTUAL="$("${SHA_CMD[@]}" "${WORK_DIR}/adrive.mjs" | awk '{ print $1 }')"
 say "checksum verified"
 
 # --- install -----------------------------------------------------------------
+# Stage under temporary names and verify the new bundle actually runs
+# BEFORE swapping it in, so a broken download can never clobber a
+# working installation.
 mkdir -p "${INSTALL_DIR}"
-install -m 0755 "${WORK_DIR}/adrive.mjs" "${INSTALL_DIR}/adrive.mjs"
-cat >"${INSTALL_DIR}/adrive" <<'LAUNCHER'
+# The staged name must keep the .mjs extension — Node refuses to load
+# ESM from an unknown extension like .new.
+install -m 0755 "${WORK_DIR}/adrive.mjs" "${INSTALL_DIR}/.staged-adrive.mjs"
+cat >"${INSTALL_DIR}/.staged-adrive" <<'LAUNCHER'
 #!/usr/bin/env bash
 exec node "$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")/adrive.mjs" "$@"
 LAUNCHER
-chmod 0755 "${INSTALL_DIR}/adrive"
+chmod 0755 "${INSTALL_DIR}/.staged-adrive"
 
-INSTALLED_VERSION="$("${INSTALL_DIR}/adrive" --version 2>/dev/null | head -1)" ||
-	die "Installed CLI failed to run"
-say "installed: ${INSTALLED_VERSION} -> ${INSTALL_DIR}/adrive"
+STAGED_VERSION="$(node "${INSTALL_DIR}/.staged-adrive.mjs" --version 2>/dev/null | head -1)" || {
+	rm -f "${INSTALL_DIR}/.staged-adrive.mjs" "${INSTALL_DIR}/.staged-adrive"
+	die "Downloaded CLI failed to run; existing installation left untouched"
+}
+mv "${INSTALL_DIR}/.staged-adrive.mjs" "${INSTALL_DIR}/adrive.mjs"
+mv "${INSTALL_DIR}/.staged-adrive" "${INSTALL_DIR}/adrive"
+say "installed: ${STAGED_VERSION} -> ${INSTALL_DIR}/adrive"
 
 # --- PATH --------------------------------------------------------------------
 case ":${PATH}:" in

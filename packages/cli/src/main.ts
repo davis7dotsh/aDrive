@@ -1126,11 +1126,40 @@ const tag = Command.make('tag').pipe(
 const RELEASES_REPO = 'davis7dotsh/aDrive';
 const CLI_TAG_PREFIX = 'cli-v';
 
+// Semver comparison including prerelease precedence (1.0.0-beta.1 < 1.0.0;
+// prerelease identifiers compare numerically when both numeric, else
+// lexically, per semver.org #11).
 const compareSemver = (left: string, right: string) => {
-	const parse = (value: string) => value.split('-')[0]!.split('.').map(Number);
-	const [lMajor = 0, lMinor = 0, lPatch = 0] = parse(left);
-	const [rMajor = 0, rMinor = 0, rPatch = 0] = parse(right);
-	return lMajor - rMajor || lMinor - rMinor || lPatch - rPatch;
+	const [leftCore, leftPre = ''] = left.split(/-(.*)/s) as [string, string?];
+	const [rightCore, rightPre = ''] = right.split(/-(.*)/s) as [string, string?];
+	const parseCore = (value: string) => value.split('.').map(Number);
+	const [lMajor = 0, lMinor = 0, lPatch = 0] = parseCore(leftCore);
+	const [rMajor = 0, rMinor = 0, rPatch = 0] = parseCore(rightCore);
+	const core = lMajor - rMajor || lMinor - rMinor || lPatch - rPatch;
+	if (core !== 0) return core;
+	if (leftPre === rightPre) return 0;
+	if (leftPre === '') return 1; // release > any prerelease
+	if (rightPre === '') return -1;
+	const leftIds = leftPre.split('.');
+	const rightIds = rightPre.split('.');
+	for (let i = 0; i < Math.max(leftIds.length, rightIds.length); i += 1) {
+		const l = leftIds[i];
+		const r = rightIds[i];
+		if (l === undefined) return -1; // shorter prerelease sorts first
+		if (r === undefined) return 1;
+		const lNum = /^\d+$/.test(l) ? Number(l) : null;
+		const rNum = /^\d+$/.test(r) ? Number(r) : null;
+		if (lNum !== null && rNum !== null) {
+			if (lNum !== rNum) return lNum - rNum;
+		} else if (lNum !== null) {
+			return -1; // numeric < alphanumeric
+		} else if (rNum !== null) {
+			return 1;
+		} else if (l !== r) {
+			return l < r ? -1 : 1;
+		}
+	}
+	return 0;
 };
 
 const upgrade = Command.make(
@@ -1148,25 +1177,47 @@ const upgrade = Command.make(
 						'This CLI is running from source; update with `git pull` instead.'
 				});
 			}
+			// /releases/latest returns the newest release of ANY kind; the CLI
+			// shares its repo with the app, so list releases and pick the
+			// newest cli-v* tag instead.
 			const release = yield* Effect.tryPromise({
 				try: async () => {
 					const response = await fetch(
-						`https://api.github.com/repos/${RELEASES_REPO}/releases/latest`,
+						`https://api.github.com/repos/${RELEASES_REPO}/releases?per_page=30`,
 						{ headers: { accept: 'application/vnd.github+json' } }
 					);
 					if (!response.ok) {
 						throw new Error(`GitHub returned ${response.status}`);
 					}
 					const body: unknown = await response.json();
-					if (
-						typeof body !== 'object' ||
-						body === null ||
-						!('tag_name' in body) ||
-						typeof body.tag_name !== 'string'
-					) {
-						throw new Error('Release response had no tag_name');
+					if (!Array.isArray(body)) {
+						throw new Error('Release list response was not an array');
 					}
-					return { tag: body.tag_name };
+					const tags = body
+						.map((entry: unknown) =>
+							typeof entry === 'object' &&
+							entry !== null &&
+							'tag_name' in entry &&
+							typeof entry.tag_name === 'string'
+								? entry.tag_name
+								: null
+						)
+						.filter(
+							(tag): tag is string =>
+								tag !== null && tag.startsWith(CLI_TAG_PREFIX)
+						);
+					if (tags.length === 0) {
+						throw new Error('No CLI releases found');
+					}
+					const newest = tags.reduce((best, tag) =>
+						compareSemver(
+							tag.slice(CLI_TAG_PREFIX.length),
+							best.slice(CLI_TAG_PREFIX.length)
+						) > 0
+							? tag
+							: best
+					);
+					return { tag: newest };
 				},
 				catch: (cause) =>
 					new CliFailure({
@@ -1177,11 +1228,6 @@ const upgrade = Command.make(
 						cause
 					})
 			});
-			if (!release.tag.startsWith(CLI_TAG_PREFIX)) {
-				return yield* new CliFailure({
-					message: `Latest release tag ${release.tag} is not a CLI release`
-				});
-			}
 			const latest = release.tag.slice(CLI_TAG_PREFIX.length);
 			if (compareSemver(latest, CLI_VERSION) <= 0) {
 				yield* emit(
@@ -1199,7 +1245,11 @@ const upgrade = Command.make(
 				);
 				return;
 			}
-			yield* Console.log(`Upgrading adrive v${CLI_VERSION} -> v${latest}…`);
+			// JSON mode stays machine-parseable: suppress human narration and
+			// the installer's own stdout, then emit a single result line.
+			if (!wantsJson()) {
+				yield* Console.log(`Upgrading adrive v${CLI_VERSION} -> v${latest}…`);
+			}
 			// Reuse the blessed installer so upgrade and fresh install can
 			// never drift; it verifies checksums and replaces ~/.adrive/bin.
 			const script = yield* Effect.tryPromise({
@@ -1225,7 +1275,11 @@ const upgrade = Command.make(
 				try: () =>
 					new Promise<void>((resolve, reject) => {
 						const child = spawn('bash', ['-s', '--'], {
-							stdio: ['pipe', 'inherit', 'inherit'],
+							// In JSON mode the installer's stdout would corrupt the
+							// output stream; route it to stderr instead.
+							stdio: wantsJson()
+								? ['pipe', process.stderr, 'inherit']
+								: ['pipe', 'inherit', 'inherit'],
 							env: {
 								...process.env,
 								ADRIVE_CLI_VERSION: release.tag
@@ -1248,6 +1302,9 @@ const upgrade = Command.make(
 						cause
 					})
 			});
+			if (wantsJson()) {
+				yield* emit({ status: 'upgraded', from: CLI_VERSION, to: latest });
+			}
 		})
 ).pipe(Command.withDescription('Update this CLI to the latest release'));
 
