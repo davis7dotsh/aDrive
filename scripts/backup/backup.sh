@@ -20,16 +20,28 @@ source "${SCRIPT_DIR}/backup.env"
 
 # Serialize runs: a manual invocation overlapping cron (or a run outliving
 # the next schedule) must not interleave writes to the same dated paths.
+# The lock records its owner PID so a lock orphaned by SIGKILL or power
+# loss is reclaimed instead of silently halting every future backup.
 mkdir -p "${BACKUP_ROOT}"
 LOCK_DIR="${BACKUP_ROOT}/.backup.lock"
 if ! mkdir "${LOCK_DIR}" 2>/dev/null; then
-	echo "Another backup run holds ${LOCK_DIR}; exiting." >&2
-	exit 0
+	HOLDER_PID="$(cat "${LOCK_DIR}/pid" 2>/dev/null || echo '')"
+	if [[ -n "${HOLDER_PID}" ]] && kill -0 "${HOLDER_PID}" 2>/dev/null; then
+		echo "Another backup run (pid ${HOLDER_PID}) holds ${LOCK_DIR}; exiting." >&2
+		exit 0
+	fi
+	echo "Reclaiming stale lock ${LOCK_DIR} (holder ${HOLDER_PID:-unknown} gone)." >&2
+	rm -rf "${LOCK_DIR}"
+	if ! mkdir "${LOCK_DIR}" 2>/dev/null; then
+		echo "Lost the lock race to another run; exiting." >&2
+		exit 0
+	fi
 fi
+echo "$$" >"${LOCK_DIR}/pid"
 CLEANUP_FILES=()
 cleanup() {
 	rm -f "${CLEANUP_FILES[@]}" 2>/dev/null || true
-	rmdir "${LOCK_DIR}" 2>/dev/null || true
+	rm -rf "${LOCK_DIR}" 2>/dev/null || true
 }
 trap cleanup EXIT
 
