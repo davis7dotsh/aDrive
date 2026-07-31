@@ -15,6 +15,7 @@
 		"format": "prettier --write .",
 		"format:check": "prettier --check .",
 		"key:create:local": "node scripts/create-local-key.mjs",
+		"release": "bash scripts/release.sh",
 		"search:rebuild:local": "pnpm --filter @adrive/web search:rebuild:local",
 		"test": "pnpm -r --if-present test"
 	},

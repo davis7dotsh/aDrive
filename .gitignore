@@ -13,3 +13,4 @@ scripts/backup/backup.env
 !.env.example
 *.tsbuildinfo
 
+.release-history
