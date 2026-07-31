@@ -1123,13 +1123,144 @@ const tag = Command.make('tag').pipe(
 	Command.withSubcommands([tagList, tagCreate, tagUpdate, tagDelete, tagSet])
 );
 
+const RELEASES_REPO = 'davis7dotsh/aDrive';
+const CLI_TAG_PREFIX = 'cli-v';
+
+const compareSemver = (left: string, right: string) => {
+	const parse = (value: string) =>
+		value.split('-')[0]!.split('.').map(Number);
+	const [lMajor = 0, lMinor = 0, lPatch = 0] = parse(left);
+	const [rMajor = 0, rMinor = 0, rPatch = 0] = parse(right);
+	return (
+		lMajor - rMajor || lMinor - rMinor || lPatch - rPatch
+	);
+};
+
+const upgrade = Command.make(
+	'upgrade',
+	{
+		check: Flag.boolean('check').pipe(
+			Flag.withDescription('Only report whether a newer release exists')
+		)
+	},
+	({ check }) =>
+		Effect.gen(function* () {
+			if (CLI_VERSION === 'dev') {
+				return yield* new CliFailure({
+					message:
+						'This CLI is running from source; update with `git pull` instead.'
+				});
+			}
+			const release = yield* Effect.tryPromise({
+				try: async () => {
+					const response = await fetch(
+						`https://api.github.com/repos/${RELEASES_REPO}/releases/latest`,
+						{ headers: { accept: 'application/vnd.github+json' } }
+					);
+					if (!response.ok) {
+						throw new Error(`GitHub returned ${response.status}`);
+					}
+					const body: unknown = await response.json();
+					if (
+						typeof body !== 'object' ||
+						body === null ||
+						!('tag_name' in body) ||
+						typeof body.tag_name !== 'string'
+					) {
+						throw new Error('Release response had no tag_name');
+					}
+					return { tag: body.tag_name };
+				},
+				catch: (cause) =>
+					new CliFailure({
+						message:
+							cause instanceof Error
+								? `Could not check for updates: ${cause.message}`
+								: 'Could not check for updates',
+						cause
+					})
+			});
+			if (!release.tag.startsWith(CLI_TAG_PREFIX)) {
+				return yield* new CliFailure({
+					message: `Latest release tag ${release.tag} is not a CLI release`
+				});
+			}
+			const latest = release.tag.slice(CLI_TAG_PREFIX.length);
+			if (compareSemver(latest, CLI_VERSION) <= 0) {
+				yield* emit(
+					wantsJson()
+						? { status: 'current', version: CLI_VERSION, latest }
+						: `adrive v${CLI_VERSION} is up to date`
+				);
+				return;
+			}
+			if (check) {
+				yield* emit(
+					wantsJson()
+						? { status: 'outdated', version: CLI_VERSION, latest }
+						: `adrive v${latest} is available (installed: v${CLI_VERSION}). Run \`adrive upgrade\` to install it.`
+				);
+				return;
+			}
+			yield* Console.log(`Upgrading adrive v${CLI_VERSION} -> v${latest}…`);
+			// Reuse the blessed installer so upgrade and fresh install can
+			// never drift; it verifies checksums and replaces ~/.adrive/bin.
+			const script = yield* Effect.tryPromise({
+				try: async () => {
+					const response = await fetch(
+						`https://github.com/${RELEASES_REPO}/releases/download/${release.tag}/install-cli.sh`
+					);
+					if (!response.ok) {
+						throw new Error(`installer download returned ${response.status}`);
+					}
+					return response.text();
+				},
+				catch: (cause) =>
+					new CliFailure({
+						message:
+							cause instanceof Error
+								? `Could not download the installer: ${cause.message}`
+								: 'Could not download the installer',
+						cause
+					})
+			});
+			yield* Effect.tryPromise({
+				try: () =>
+					new Promise<void>((resolve, reject) => {
+						const child = spawn('bash', ['-s', '--'], {
+							stdio: ['pipe', 'inherit', 'inherit'],
+							env: {
+								...process.env,
+								ADRIVE_CLI_VERSION: release.tag
+							}
+						});
+						child.once('error', reject);
+						child.once('close', (status) =>
+							status === 0
+								? resolve()
+								: reject(new Error(`installer exited with ${status}`))
+						);
+						child.stdin.end(script);
+					}),
+				catch: (cause) =>
+					new CliFailure({
+						message:
+							cause instanceof Error
+								? cause.message
+								: 'The installer did not complete',
+						cause
+					})
+			});
+		})
+).pipe(Command.withDescription('Update this CLI to the latest release'));
+
 const root = Command.make('adrive', {
 	json: Flag.boolean('json').pipe(
 		Flag.withDescription('Emit JSON lines on stdout (accepted anywhere)')
 	)
 }).pipe(
 	Command.withDescription('A small CLI for an adrive deployment'),
-	Command.withSubcommands([login, list, put, get, rename, site, tag])
+	Command.withSubcommands([login, list, put, get, rename, site, tag, upgrade])
 );
 
 Command.run(root, { version: CLI_VERSION }).pipe(
