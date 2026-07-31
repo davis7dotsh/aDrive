@@ -8,6 +8,7 @@ build/
 coverage/
 .dev.vars
 .env
+scripts/backup/backup.env
 .env.*
 !.env.example
 *.tsbuildinfo
