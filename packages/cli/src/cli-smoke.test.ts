@@ -136,6 +136,7 @@ beforeAll(async () => {
 							tags: []
 						}
 					],
+					nextCursor: null,
 					tags: [],
 					contentOrigin: contentEndpoint,
 					maxUploadBytes: 100_000_000,

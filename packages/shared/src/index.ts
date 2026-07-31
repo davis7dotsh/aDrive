@@ -136,6 +136,7 @@ export type FileDetail = typeof FileDetailSchema.Type;
 
 export const FileListResponseSchema = Schema.Struct({
 	files: Schema.Array(DashboardFileSchema),
+	nextCursor: Schema.NullOr(Schema.String),
 	tags: Schema.Array(TagSchema),
 	contentOrigin: Schema.String,
 	maxUploadBytes: Schema.Int,
@@ -153,6 +154,7 @@ export type FileListResponse = typeof FileListResponseSchema.Type;
 export const FileDetailResponseSchema = Schema.Struct({
 	file: DashboardFileSchema,
 	versions: Schema.Array(FileVersionSchema),
+	nextVersionsCursor: Schema.NullOr(Schema.String),
 	availableTags: Schema.Array(TagSchema),
 	contentOrigin: Schema.String,
 	maxUploadBytes: Schema.Int,

@@ -600,21 +600,37 @@ const list = Command.make('list', {}, () =>
 	Effect.gen(function* () {
 		const config = yield* loadConfig;
 		const client = yield* HttpClient.HttpClient;
-		const response = yield* client
-			.execute(apiRequest('GET', `${config.endpoint}/api/files`, config.apiKey))
-			.pipe(Effect.flatMap(ensureOk));
-		const result = yield* HttpClientResponse.schemaBodyJson(
-			FileListResponseSchema
-		)(response);
-		if (wantsJson()) {
-			yield* emit(result);
-		} else {
-			for (const file of result.files) {
-				yield* Console.log(
-					`${file.id}\t${file.displayName}\t${file.sizeBytes}\t${file.public ? 'public' : 'private'}`
-				);
+		// Follow cursors until the listing is complete; the guard mirrors the
+		// server-side page cap so a misbehaving server cannot loop us forever.
+		let cursor: string | null = null;
+		let pages = 0;
+		do {
+			const params = new URLSearchParams();
+			if (cursor) params.set('cursor', cursor);
+			const response = yield* client
+				.execute(
+					apiRequest(
+						'GET',
+						`${config.endpoint}/api/files${params.size > 0 ? `?${params}` : ''}`,
+						config.apiKey
+					)
+				)
+				.pipe(Effect.flatMap(ensureOk));
+			const result = yield* HttpClientResponse.schemaBodyJson(
+				FileListResponseSchema
+			)(response);
+			if (wantsJson()) {
+				yield* emit(result);
+			} else {
+				for (const file of result.files) {
+					yield* Console.log(
+						`${file.id}\t${file.displayName}\t${file.sizeBytes}\t${file.public ? 'public' : 'private'}`
+					);
+				}
 			}
-		}
+			cursor = result.nextCursor;
+			pages += 1;
+		} while (cursor !== null && pages < 500);
 	})
 ).pipe(Command.withDescription('List files'));
 

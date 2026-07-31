@@ -139,10 +139,14 @@ export const denyDevice = async (token: string, userCode: string) => {
 export const listFiles = async (
 	token: string,
 	trashed: boolean,
-	signal?: AbortSignal
+	signal?: AbortSignal,
+	cursor?: string
 ) => {
+	const params = new URLSearchParams();
+	if (trashed) params.set('trashed', 'true');
+	if (cursor) params.set('cursor', cursor);
 	const response = await request(
-		`/api/files${trashed ? '?trashed=true' : ''}`,
+		`/api/files${params.size > 0 ? `?${params}` : ''}`,
 		token,
 		{ signal }
 	);

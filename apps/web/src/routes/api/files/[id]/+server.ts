@@ -6,6 +6,7 @@ import { AppConfig } from '$lib/server/config';
 import { validateExpiration } from '$lib/server/auth-policy';
 import { InvalidRequest } from '$lib/server/errors';
 import { decodeJson } from '$lib/server/request-json';
+import { parsePageSize } from '$lib/server/list-cursor';
 import {
 	Auth,
 	authorizeRequest,
@@ -27,7 +28,20 @@ export const GET: RequestHandler = ({ cookies, params, request, url }) =>
 			const indexing = yield* Indexing;
 			const config = yield* AppConfig;
 			yield* authorizeRequest(auth, request, url, cookies);
-			const detail = yield* files.detail(params.id);
+			const detail = yield* files.detail(params.id, {
+				cursor: url.searchParams.get('versionsCursor'),
+				limit: yield* Effect.try({
+					try: () =>
+						parsePageSize(url.searchParams.get('versionsLimit'), 50, 200),
+					catch: (cause) =>
+						cause instanceof InvalidRequest
+							? cause
+							: new InvalidRequest({
+									status: 400,
+									message: 'Page size is invalid'
+								})
+				})
+			});
 			return Response.json({
 				...detail,
 				availableTags: yield* tags.list,
