@@ -1,0 +1,92 @@
+name: CLI release
+
+on:
+  push:
+    tags: ['cli-v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cli-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Full gate
+        run: |
+          pnpm format:check
+          pnpm check
+          pnpm test
+
+      - name: Derive version from tag
+        id: version
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#cli-v}"
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "Tag $TAG does not contain a valid semver" >&2
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build bundle
+        working-directory: packages/cli
+        env:
+          ADRIVE_CLI_VERSION: ${{ steps.version.outputs.version }}
+        run: pnpm build
+
+      - name: Smoke the bundle
+        working-directory: packages/cli
+        run: |
+          REPORTED="$(node dist/adrive.mjs --version)"
+          echo "bundle reports: $REPORTED"
+          if [ "$REPORTED" != "adrive v${{ steps.version.outputs.version }}" ]; then
+            echo "Bundle version does not match the tag" >&2
+            exit 1
+          fi
+          # Run the full contract suite against the built artifact.
+          ADRIVE_TEST_BUNDLE="$PWD/dist/adrive.mjs" pnpm test
+
+      - name: Checksums
+        working-directory: packages/cli/dist
+        run: |
+          cp ../../../scripts/install-cli.sh .
+          sha256sum adrive.mjs install-cli.sh > checksums.txt
+          cat checksums.txt
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: adrive CLI ${{ steps.version.outputs.version }}
+          files: |
+            packages/cli/dist/adrive.mjs
+            packages/cli/dist/install-cli.sh
+            packages/cli/dist/checksums.txt
+          body: |
+            Single-file build of the adrive CLI (requires Node >= 20).
+
+            Install or update:
+
+            ```
+            curl -fsSL https://raw.githubusercontent.com/davis7dotsh/aDrive/main/scripts/install-cli.sh | bash
+            ```
+
+            Already installed? `adrive upgrade` gets you here too.
+
+            Assets are SHA-256 verified by the installer via `checksums.txt`.
