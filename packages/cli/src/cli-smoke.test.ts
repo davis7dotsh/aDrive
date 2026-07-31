@@ -352,8 +352,7 @@ describe('CLI stream and JSON contracts', () => {
 		try {
 			const result = await run(['get', file.id, '--output', '-']);
 			expect(result.status).not.toBe(0);
-			const combined =
-				result.stdout.toString() + result.stderr.toString();
+			const combined = result.stdout.toString() + result.stderr.toString();
 			expect(combined).toContain('unexpected origin');
 			expect(result.stdout.toString()).not.toContain('evil.example.com/f');
 		} finally {

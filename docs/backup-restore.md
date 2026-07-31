@@ -11,14 +11,14 @@ important.
 Nightly cron on nexus (02:17 local, `scripts/backup/backup.sh`) writes to
 `~/Backups/a-drive`:
 
-| Path | Contents | Retention |
-| --- | --- | --- |
-| `r2-mirror/` | Full mirror of the production R2 bucket | Live mirror |
-| `r2-deleted/<date>/` | Objects deleted/overwritten upstream that day | 30 days |
-| `d1/daily/` | Nightly gzipped D1 SQL export | 30 days |
-| `d1/monthly/` | First export of each month | 12 months |
-| `manifests/` | Object keys, sizes, hashes, D1 digest per run | 30 days |
-| `logs/`, `last-run.json` | Run logs and machine-readable status | 30 days |
+| Path                     | Contents                                      | Retention   |
+| ------------------------ | --------------------------------------------- | ----------- |
+| `r2-mirror/`             | Full mirror of the production R2 bucket       | Live mirror |
+| `r2-deleted/<date>/`     | Objects deleted/overwritten upstream that day | 30 days     |
+| `d1/daily/`              | Nightly gzipped D1 SQL export                 | 30 days     |
+| `d1/monthly/`            | First export of each month                    | 12 months   |
+| `manifests/`             | Object keys, sizes, hashes, D1 digest per run | 30 days     |
+| `logs/`, `last-run.json` | Run logs and machine-readable status          | 30 days     |
 
 Deletions are **not** mirrored immediately: `rclone sync --backup-dir`
 moves upstream-deleted objects into the dated trash directory, so an
@@ -39,7 +39,7 @@ Failures and suspicious shrinkage post to `ALERT_WEBHOOK_URL` from
 ## Restore procedures
 
 Restores need a machine with rclone/wrangler and a Cloudflare token with
-write access (deliberately *not* stored on nexus).
+write access (deliberately _not_ stored on nexus).
 
 ### One file
 
@@ -104,6 +104,6 @@ date and outcome at the bottom of this file:
 
 ## Drill log
 
-| Date | Drill | Outcome |
-| --- | --- | --- |
-| _pending_ | — | — |
+| Date      | Drill | Outcome |
+| --------- | ----- | ------- |
+| _pending_ | —     | —       |

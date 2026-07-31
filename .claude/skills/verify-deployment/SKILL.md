@@ -39,7 +39,7 @@ FAIL, or SKIPPED (with reason), and finish with the report.
   is authenticated) plus the current UTC time.
 - If wrangler is available: confirm the production env lists DB (D1),
   BUCKET (R2), and AUTH_GUARD (KV) bindings (`wrangler deploy --dry-run
-  --env production` output). Otherwise mark SKIPPED.
+--env production` output). Otherwise mark SKIPPED.
 
 ## 2. Authentication
 
@@ -106,12 +106,12 @@ SHA-256 before upload.
 - Session cookie attributes: `HttpOnly`, `Secure`, `SameSite=Strict`,
   host-only (no `Domain=`).
 - Dashboard HTML response headers include: CSP with `frame-ancestors
-  'none'`, `Strict-Transport-Security`, `X-Content-Type-Options:
-  nosniff`, `Referrer-Policy`, `Permissions-Policy`.
+'none'`, `Strict-Transport-Security`, `X-Content-Type-Options:
+nosniff`, `Referrer-Policy`, `Permissions-Policy`.
 - `GET <dashboard>/api/files` (authenticated) returns
   `Cache-Control: private, no-store`.
 - A cookie-authenticated mutation with a forged `Origin:
-  https://evil.example.com` header is rejected.
+https://evil.example.com` header is rejected.
 - CLI: `adrive login http://<dashboard-host-without-tls>` is refused
   (https required).
 

@@ -73,8 +73,8 @@
 <section>
 	<h2 class="text-lg font-semibold text-zinc-950">API keys</h2>
 	<p class="mt-1 text-sm text-zinc-500">
-		Read/write keys have full access to this drive; read-only keys can list
-		and download but not change anything. Store them like passwords.
+		Read/write keys have full access to this drive; read-only keys can list and
+		download but not change anything. Store them like passwords.
 	</p>
 	<form
 		class="mt-5 flex max-w-xl gap-2"
@@ -138,7 +138,9 @@
 							adr_{key.prefix}_… · {key.scope} · created {formatDate(
 								key.createdAt
 							)}
-							{key.lastUsedAt ? ` · last used ${formatDate(key.lastUsedAt)}` : ''}
+							{key.lastUsedAt
+								? ` · last used ${formatDate(key.lastUsedAt)}`
+								: ''}
 							{key.revokedAt ? ' · revoked' : ''}
 						</p>
 					</div>

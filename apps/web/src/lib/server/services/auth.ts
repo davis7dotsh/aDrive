@@ -1,8 +1,4 @@
-import {
-	API_KEY_PATTERN,
-	type ApiKey,
-	type ApiKeyScope
-} from '@adrive/shared';
+import { API_KEY_PATTERN, type ApiKey, type ApiKeyScope } from '@adrive/shared';
 import type { Cookies } from '@sveltejs/kit';
 import { Context, Effect, Layer, Schema } from 'effect';
 import { SqlClient } from 'effect/unstable/sql';

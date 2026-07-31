@@ -39,7 +39,7 @@ Migrations apply before the new Worker deploys, and rollback re-runs the
 previous Worker against the migrated schema. Therefore every migration
 must be backwards-compatible for at least one release: additive tables
 and columns (with defaults) only; never drop, rename, or repurpose a
-column until the release *after* the last code that used it is gone.
+column until the release _after_ the last code that used it is gone.
 
 ## Rollback
 

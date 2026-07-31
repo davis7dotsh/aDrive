@@ -22,9 +22,7 @@ const fromBase64Url = (value: string) => {
 		.replaceAll('-', '+')
 		.replaceAll('_', '/')
 		.padEnd(Math.ceil(value.length / 4) * 4, '=');
-	return Uint8Array.from(atob(padded), (character) =>
-		character.charCodeAt(0)
-	);
+	return Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
 };
 
 export const encodeListCursor = (cursor: ListCursor) =>

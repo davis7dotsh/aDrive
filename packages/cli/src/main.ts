@@ -164,7 +164,10 @@ const withContentOrigin = (config: typeof CliConfigSchema.Type) =>
 						'contentOrigin' in body &&
 						typeof body.contentOrigin === 'string'
 					) {
-						return { ...config, contentOrigin: new URL(body.contentOrigin).origin };
+						return {
+							...config,
+							contentOrigin: new URL(body.contentOrigin).origin
+						};
 					}
 					return config;
 				},
