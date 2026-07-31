@@ -81,6 +81,29 @@ describe('applySecurityHeaders', () => {
 		expect(response.headers.get('Referrer-Policy')).toBe('no-referrer');
 	});
 
+	it('marks API responses private and uncacheable', () => {
+		const response = applySecurityHeaders(
+			new Response('{}', {
+				headers: { 'Content-Type': 'application/json' }
+			}),
+			{ ...context, pathname: '/api/files' }
+		);
+		expect(response.headers.get('Cache-Control')).toBe('private, no-store');
+	});
+
+	it('keeps a route-supplied Cache-Control', () => {
+		const response = applySecurityHeaders(
+			new Response('{}', {
+				headers: {
+					'Content-Type': 'application/json',
+					'Cache-Control': 'public, max-age=60'
+				}
+			}),
+			{ ...context, pathname: '/api/files' }
+		);
+		expect(response.headers.get('Cache-Control')).toBe('public, max-age=60');
+	});
+
 	it('applies no dashboard CSP to non-HTML API responses', () => {
 		const response = applySecurityHeaders(
 			new Response('{}', {

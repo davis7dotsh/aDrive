@@ -61,6 +61,15 @@ export const applySecurityHeaders = (
 		);
 	}
 
+	// Every dashboard API response carries account or credential data;
+	// content routes (/f, /s) own their own caching policy per file.
+	if (
+		context.pathname.startsWith('/api/') &&
+		!headers.has('Cache-Control')
+	) {
+		headers.set('Cache-Control', 'private, no-store');
+	}
+
 	// Content routes (/f, /s) set a per-file CSP in their handlers; leave it.
 	// Dashboard pages get the full policy, preserving SvelteKit's nonce.
 	if (route === 'dashboard' && isHtml) {
