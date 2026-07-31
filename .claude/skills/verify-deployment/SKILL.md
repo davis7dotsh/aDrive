@@ -25,10 +25,13 @@ may be SKIPPED with a documented reason.
   files this run creates)
 
 **Access-mode branching:** passcode access enables the full run. With
-only an API key, every browser sign-in, wrong-passcode, and
-dashboard-upload check must be recorded as SKIPPED (reason: no
-passcode), and because several of those are mandatory, a key-only run
-can conclude at best INCONCLUSIVE — never PASS.
+only an API key, record as SKIPPED (reason: no passcode) every check
+that needs a browser session or key management: browser sign-in,
+wrong-passcode, dashboard uploads and previews, disposable key creation
+(read-write, read-only, and short-expiry), the read-only-scope 403
+checks, the key-listing check, cookie-attribute checks, and
+cookie-origin forgery checks. Because several of those are mandatory, a
+key-only run can conclude at best INCONCLUSIVE — never PASS.
 
 ## Safety boundaries (non-negotiable)
 
@@ -71,12 +74,18 @@ curl) so no prior session can mask a failure.
   returns 401.
 - **[M]** Create a disposable **read-write** API key named with the run
   prefix (dashboard settings), or complete CLI device authorization
-  (`adrive login <dashboard-origin>`).
+  (`pnpm adrive login <dashboard-origin>`).
 - **[M]** Create a disposable **read-only** key; verify `GET /api/files`
   succeeds while each of these mutations returns 403: an upload, a
   rename, a tag creation, a trash, and a version upload.
+- **[M]** With the read-only key, `GET /api/auth/keys` must return 403
+  (key inventory requires write scope).
 - Create a key with a short expiry (e.g. two minutes), wait for it to
   lapse, and confirm requests with it return 401.
+- If the run may rotate the passcode (scratch deployment only — ask
+  first): create a session and a pending device authorization, change
+  the PASSCODE secret, wait for the maintenance cron, and confirm both
+  are revoked. On the production deployment SKIP with reason.
 
 ## 3. Upload coverage
 
@@ -85,13 +94,15 @@ and binary (a few hundred random bytes, .bin). Record each one's
 SHA-256 before upload.
 
 - **[M]** Upload the text and image through the dashboard.
-- **[M]** Upload the PDF and binary through the CLI (`adrive put`).
+- **[M]** Upload the PDF and binary through the CLI (`pnpm adrive put`).
 - **[M]** After each upload, verify via `GET /api/files/<id>`: display
   name, size, content type match the source.
 - **[M]** Download each file and compare checksums with the source.
 - Negative cases (verify the documented rejection status and that no
   partial file, version, or R2 object is left behind):
   - An upload whose declared size exceeds the per-file limit.
+  - A chunked upload with no Content-Length whose streamed bytes exceed
+    the per-file limit (the streaming reader must cut it off).
   - A burst of uploads beyond the configured upload rate (429).
   - If a scratch quota configuration is available, an upload beyond
     `MAX_TOTAL_BYTES` (413); otherwise SKIP with reason.
@@ -109,6 +120,9 @@ SHA-256 before upload.
 - **[M]** Upload a replacement version to one file; version history
   shows both versions; download the current and the older version and
   verify each checksum against the right source bytes.
+- Upload enough versions to one file (or use `versionsLimit=1`) to force
+  version-history pagination; follow the cursor and confirm no gaps or
+  duplicates across pages.
 - **[M]** Trash a file, confirm it lists under trash, restore it,
   confirm it's back.
 - **[M]** Purge one file and confirm it is gone from list and trash.
@@ -163,7 +177,7 @@ Compare header **values**, not just presence, against
 - **[M]** A cookie-authenticated mutation with a forged
   `Origin: https://evil.example.com` header is rejected.
 - **[M]** CLI transport trust:
-  - `adrive login http://<dashboard-host>` (plain http, non-localhost)
+  - `pnpm adrive login http://<dashboard-host>` (plain http, non-localhost)
     is refused.
   - With a config whose trusted origins are the real deployment, verify
     a download link pointing at an untrusted HTTPS origin is refused

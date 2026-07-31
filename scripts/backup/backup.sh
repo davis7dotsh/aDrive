@@ -30,8 +30,15 @@ if ! mkdir "${LOCK_DIR}" 2>/dev/null; then
 		echo "Another backup run (pid ${HOLDER_PID}) holds ${LOCK_DIR}; exiting." >&2
 		exit 0
 	fi
-	echo "Reclaiming stale lock ${LOCK_DIR} (holder ${HOLDER_PID:-unknown} gone)." >&2
-	rm -rf "${LOCK_DIR}"
+	# Reclaim atomically: mv renames the stale directory in one step, so if
+	# two processes race here only one succeeds and the loser's mv fails
+	# without touching whatever lock the winner has since created.
+	if ! mv "${LOCK_DIR}" "${LOCK_DIR}.stale.$$" 2>/dev/null; then
+		echo "Lost the stale-lock reclaim race to another run; exiting." >&2
+		exit 0
+	fi
+	rm -rf "${LOCK_DIR}.stale.$$"
+	echo "Reclaimed stale lock (holder ${HOLDER_PID:-unknown} gone)." >&2
 	if ! mkdir "${LOCK_DIR}" 2>/dev/null; then
 		echo "Lost the lock race to another run; exiting." >&2
 		exit 0
