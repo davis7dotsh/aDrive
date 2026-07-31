@@ -94,7 +94,7 @@
 				{
 					"binding": "DB",
 					"database_name": "adrive-production",
-					"database_id": "replace-with-production-d1-database-id",
+					"database_id": "29891a68-07c7-47e4-94db-b0123982fc1f",
 					"migrations_dir": "migrations"
 				}
 			],
@@ -107,7 +107,7 @@
 			"kv_namespaces": [
 				{
 					"binding": "AUTH_GUARD",
-					"id": "replace-with-production-kv-namespace-id"
+					"id": "09b884a95e5e40389d8554b3cd690d3f"
 				}
 			],
 			"observability": {
