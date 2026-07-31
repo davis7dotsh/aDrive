@@ -65,12 +65,19 @@ export holds the matching `file_versions` rows.
 
 ### Complete D1 database
 
-1. Create or wipe the target database:
-   `wrangler d1 create adrive-restore` (or reuse production).
+Always restore into a fresh database and cut over — never import over the
+production database, so it stays untouched for rollback.
+
+1. `wrangler d1 create adrive-restore`
 2. `gunzip -k d1/daily/adrive-<date>.sql.gz`
-3. `wrangler d1 execute <name> --remote --file adrive-<date>.sql`
-4. Point `wrangler.jsonc` `env.production.d1_databases[0].database_id` at
-   the restored database and redeploy if a new database was created.
+3. `wrangler d1 execute adrive-restore --remote --file adrive-<date>.sql`
+4. Validate before cutover: spot-check table row counts and schema
+   (`wrangler d1 execute adrive-restore --remote --command "SELECT COUNT(*) FROM files"`,
+   same for `file_versions`, `tags`) against expectations from the
+   manifest.
+5. Point `wrangler.jsonc` `env.production.d1_databases[0].database_id` at
+   the restored database and redeploy. Keep the previous database until
+   the deployment is verified.
 
 ### Whole application in a clean Cloudflare account
 

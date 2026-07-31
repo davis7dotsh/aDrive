@@ -146,34 +146,58 @@ const trustedServerUrl = (
 			})
 	});
 
-// Configs written before contentOrigin was recorded learn it on demand
-// from the authenticated list endpoint, then persist it.
+// The deployment's content origin is learned from the authenticated list
+// endpoint. It must clear the same transport bar as the endpoint itself
+// before joining the trust list; an insecure advertisement is discarded.
+const discoverContentOrigin = async (
+	endpoint: string,
+	apiKey: string,
+	allowHttp: boolean
+) => {
+	const response = await fetch(`${endpoint}/api/files`, {
+		headers: { authorization: `Bearer ${apiKey}` }
+	});
+	if (!response.ok) return undefined;
+	const body: unknown = await response.json();
+	if (
+		typeof body === 'object' &&
+		body !== null &&
+		'contentOrigin' in body &&
+		typeof body.contentOrigin === 'string'
+	) {
+		const origin = new URL(body.contentOrigin);
+		assertSecureUrl(
+			origin,
+			allowHttp,
+			'The content origin advertised by the server'
+		);
+		return origin.origin;
+	}
+	return undefined;
+};
+
+// Configs written before contentOrigin was recorded learn it on demand,
+// then persist it.
 const withContentOrigin = (config: typeof CliConfigSchema.Type) =>
 	config.contentOrigin !== undefined
 		? Effect.succeed(config)
 		: Effect.tryPromise({
 				try: async () => {
-					const response = await fetch(`${config.endpoint}/api/files`, {
-						headers: { authorization: `Bearer ${config.apiKey}` }
-					});
-					if (!response.ok) return config;
-					const body: unknown = await response.json();
-					if (
-						typeof body === 'object' &&
-						body !== null &&
-						'contentOrigin' in body &&
-						typeof body.contentOrigin === 'string'
-					) {
-						return {
-							...config,
-							contentOrigin: new URL(body.contentOrigin).origin
-						};
-					}
-					return config;
+					const discovered = await discoverContentOrigin(
+						config.endpoint,
+						config.apiKey,
+						config.allowHttp === true
+					);
+					return discovered !== undefined
+						? { ...config, contentOrigin: discovered }
+						: config;
 				},
 				catch: (cause) =>
 					new CliFailure({
-						message: 'Could not reach the server to confirm its origins',
+						message:
+							cause instanceof Error
+								? cause.message
+								: 'Could not reach the server to confirm its origins',
 						cause
 					})
 			}).pipe(
@@ -471,22 +495,7 @@ const login = Command.make(
 			// Record the deployment's content origin so later commands can
 			// verify that server-returned download URLs stay on known ground.
 			const contentOrigin = yield* Effect.tryPromise({
-				try: async () => {
-					const response = await fetch(`${endpoint}/api/files`, {
-						headers: { authorization: `Bearer ${apiKey}` }
-					});
-					if (!response.ok) return undefined;
-					const body: unknown = await response.json();
-					if (
-						typeof body === 'object' &&
-						body !== null &&
-						'contentOrigin' in body &&
-						typeof body.contentOrigin === 'string'
-					) {
-						return new URL(body.contentOrigin).origin;
-					}
-					return undefined;
-				},
+				try: () => discoverContentOrigin(endpoint, apiKey, allowHttp),
 				catch: () => new CliFailure({ message: 'unreachable' })
 			}).pipe(Effect.orElseSucceed(() => undefined));
 			yield* saveConfig({

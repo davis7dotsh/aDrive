@@ -3,6 +3,9 @@
 # Runs on nexus from cron. Configuration comes from backup.env next to
 # this script (see backup.env.example). Never prints secrets.
 set -euo pipefail
+# Backup artifacts contain the full drive contents; never let group/world
+# permissions leak in from the invoking account's umask.
+umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
@@ -85,21 +88,24 @@ EXPORT_RESPONSE=$(curl -fsS -m 600 -X POST \
 	-H 'Content-Type: application/json' \
 	-d '{"output_format":"polling"}') || fail "d1-export-start"
 
+# The polling export API returns signed_url/at_bookmark under `result`
+# (per Cloudflare's D1 backup example); accept a doubly nested
+# `result.result` too in case the response shape shifts.
+extract_export_field() {
+	python3 -c '
+import json, sys
+body = json.load(sys.stdin)
+result = body.get("result") or {}
+inner = result.get("result") if isinstance(result.get("result"), dict) else {}
+print(result.get(sys.argv[1]) or inner.get(sys.argv[1]) or "")
+' "$1"
+}
+
 SIGNED_URL=""
 for _attempt in $(seq 1 60); do
-	SIGNED_URL=$(printf '%s' "${EXPORT_RESPONSE}" | python3 -c '
-import json, sys
-body = json.load(sys.stdin)
-result = body.get("result") or {}
-print(result.get("signed_url") or "")
-')
+	SIGNED_URL=$(printf '%s' "${EXPORT_RESPONSE}" | extract_export_field signed_url)
 	[[ -n "${SIGNED_URL}" ]] && break
-	BOOKMARK=$(printf '%s' "${EXPORT_RESPONSE}" | python3 -c '
-import json, sys
-body = json.load(sys.stdin)
-result = body.get("result") or {}
-print(result.get("at_bookmark") or "")
-')
+	BOOKMARK=$(printf '%s' "${EXPORT_RESPONSE}" | extract_export_field at_bookmark)
 	[[ -z "${BOOKMARK}" ]] && fail "d1-export-poll"
 	sleep 5
 	EXPORT_RESPONSE=$(curl -fsS -m 600 -X POST \
@@ -125,16 +131,28 @@ fi
 # --- 3. Manifest ------------------------------------------------------------
 # Object keys, sizes, and rclone-side hashes for every mirrored object, plus
 # the D1 export digest — enough to audit a restore without the live account.
+# The enumeration is written to a temp file and validated before the final
+# manifest is atomically published, so a failed lsjson can't publish a
+# malformed manifest under a success status.
 MANIFEST="${MANIFEST_DIR}/manifest-${STAMP_DAY}.json"
+OBJECTS_TMP="$(mktemp "${MANIFEST_DIR}/.objects-XXXXXX")"
+MANIFEST_TMP="$(mktemp "${MANIFEST_DIR}/.manifest-XXXXXX")"
+trap 'rm -f "${OBJECTS_TMP}" "${MANIFEST_TMP}"' EXIT
+
+rclone lsjson -R --hash "${MIRROR_DIR}" --files-only >"${OBJECTS_TMP}" \
+	|| fail "manifest-enumeration"
 {
 	printf '{"generatedAt":"%s","objects":' "${NOW_ISO}"
-	rclone lsjson -R --hash "${MIRROR_DIR}" --files-only
+	cat "${OBJECTS_TMP}"
 	printf ',"objectCount":%s' "${CURRENT_COUNT}"
 	printf ',"d1Export":{"file":"%s","sha256":"%s"}' \
 		"$(basename "${D1_EXPORT}")" \
 		"$(shasum -a 256 "${D1_EXPORT}" | cut -d' ' -f1)"
 	printf '}\n'
-} >"${MANIFEST}" || fail "manifest"
+} >"${MANIFEST_TMP}" || fail "manifest"
+python3 -c "import json,sys; json.load(open(sys.argv[1]))" "${MANIFEST_TMP}" \
+	|| fail "manifest-validation"
+mv "${MANIFEST_TMP}" "${MANIFEST}"
 log "manifest written: ${MANIFEST}"
 
 # --- 4. Retention -----------------------------------------------------------

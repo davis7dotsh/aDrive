@@ -819,7 +819,7 @@
 				onclear={clearFilters}
 			/>
 			{#if list.current.nextCursor}
-				<div class="mt-6 flex justify-center">
+				<div class="mt-6 flex flex-col items-center gap-2">
 					<Button
 						variant="secondary"
 						disabled={loadingMore}
@@ -827,6 +827,10 @@
 					>
 						{loadingMore ? 'Loading…' : 'Load more'}
 					</Button>
+					<p class="text-xs text-zinc-400">
+						Not all files are loaded yet — sorting and trash filters apply to
+						the files shown so far.
+					</p>
 				</div>
 			{/if}
 		</section>

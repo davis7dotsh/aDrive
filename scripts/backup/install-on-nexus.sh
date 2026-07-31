@@ -14,9 +14,16 @@ command -v rclone >/dev/null || {
 command -v curl >/dev/null || { echo "curl is required" >&2; exit 1; }
 command -v python3 >/dev/null || { echo "python3 is required" >&2; exit 1; }
 
+umask 077
 mkdir -p "${INSTALL_DIR}"
 cp "${SCRIPT_DIR}/backup.sh" "${INSTALL_DIR}/backup.sh"
 chmod 700 "${INSTALL_DIR}/backup.sh"
+
+# Tighten an existing backup destination created under a looser umask.
+DEFAULT_BACKUP_ROOT="${HOME}/Backups/a-drive"
+if [[ -d "${DEFAULT_BACKUP_ROOT}" ]]; then
+	chmod -R go-rwx "${DEFAULT_BACKUP_ROOT}"
+fi
 
 if [[ ! -f "${INSTALL_DIR}/backup.env" ]]; then
 	cp "${SCRIPT_DIR}/backup.env.example" "${INSTALL_DIR}/backup.env"

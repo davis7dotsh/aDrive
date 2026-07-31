@@ -175,10 +175,13 @@ export const searchFiles = async (
 export const getFile = async (
 	token: string,
 	id: string,
-	signal?: AbortSignal
+	signal?: AbortSignal,
+	versionsCursor?: string
 ) => {
+	const params = new URLSearchParams();
+	if (versionsCursor) params.set('versionsCursor', versionsCursor);
 	const response = await request(
-		`/api/files/${encodeURIComponent(id)}`,
+		`/api/files/${encodeURIComponent(id)}${params.size > 0 ? `?${params}` : ''}`,
 		token,
 		{
 			signal

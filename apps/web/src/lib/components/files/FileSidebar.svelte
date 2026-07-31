@@ -24,7 +24,10 @@
 		onrestoreversion,
 		onreindex,
 		ontrash,
-		onrestore
+		onrestore,
+		moreVersions = false,
+		loadingVersions = false,
+		onmoreversions
 	}: {
 		file: DashboardFile;
 		versions: ReadonlyArray<FileVersion>;
@@ -45,6 +48,9 @@
 		onreindex: () => void;
 		ontrash: () => void;
 		onrestore: () => void;
+		moreVersions?: boolean;
+		loadingVersions?: boolean;
+		onmoreversions?: () => void;
 	} = $props();
 </script>
 
@@ -149,6 +155,16 @@
 				onopen={onopenversion}
 				onrestore={onrestoreversion}
 			/>
+			{#if moreVersions}
+				<button
+					type="button"
+					class="mt-2 w-full rounded px-2 py-1.5 text-xs text-zinc-600 hover:bg-zinc-100"
+					disabled={loadingVersions}
+					onclick={() => onmoreversions?.()}
+				>
+					{loadingVersions ? 'Loading…' : 'Load older versions'}
+				</button>
+			{/if}
 		</div>
 	</section>
 

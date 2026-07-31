@@ -2,20 +2,23 @@
 
 ## First-time setup (once)
 
-From `apps/web` with an authenticated wrangler (`wrangler login`):
+Wrangler commands run from `apps/web`; `pnpm release` and the backup
+installer run from the repository root.
 
-1. `wrangler d1 create adrive-production` — paste the id into
-   `wrangler.jsonc` `env.production.d1_databases[0].database_id`.
-2. `wrangler r2 bucket create adrive-production`
-3. `wrangler kv namespace create AUTH_GUARD --env production` — paste the
-   id into `env.production.kv_namespaces[0].id`.
-4. `wrangler secret put PASSCODE --env production` (12+ characters).
+1. From `apps/web`: `wrangler d1 create adrive-production` — paste the id
+   into `wrangler.jsonc` `env.production.d1_databases[0].database_id`.
+2. From `apps/web`: `wrangler r2 bucket create adrive-production`
+3. From `apps/web`: `wrangler kv namespace create AUTH_GUARD --env production`
+   — paste the id into `env.production.kv_namespaces[0].id`.
+4. From `apps/web`: `wrangler secret put PASSCODE --env production`
+   (12+ characters).
 5. DNS for `drive.davis7.space` and `files.davis7.space` must be on the
    Cloudflare zone for davis7.space; the custom-domain routes in
    `wrangler.jsonc` attach them on first deploy.
-6. `pnpm release`
-7. Set up backups on nexus (`scripts/backup/install-on-nexus.sh`) and
-   complete the restore drill in `docs/backup-restore.md`.
+6. From the repo root: `pnpm release`
+7. From the repo root: set up backups on nexus
+   (`scripts/backup/install-on-nexus.sh`) and complete the restore drill
+   in `docs/backup-restore.md`.
 
 ## Releasing
 
