@@ -16,6 +16,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # contents: write is only for the release step; package scripts
+          # must not see a persisted token.
+          persist-credentials: false
 
       - uses: pnpm/action-setup@v4
 

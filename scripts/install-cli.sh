@@ -35,12 +35,27 @@ else
 fi
 
 # --- resolve release ---------------------------------------------------------
+# List releases and pick the newest cli-v* tag: /releases/latest returns
+# the newest release of ANY kind, and the repo also publishes app releases.
 TAG="${ADRIVE_CLI_VERSION:-}"
 if [[ -z "${TAG}" ]]; then
 	TAG="$(curl -fsSL -H 'accept: application/vnd.github+json' \
-		"https://api.github.com/repos/${REPO}/releases/latest" |
-		node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const t=JSON.parse(d).tag_name;if(!t)process.exit(1);console.log(t)})')" ||
-		die "Could not resolve the latest release from GitHub"
+		"https://api.github.com/repos/${REPO}/releases?per_page=30" |
+		node -e '
+let d = "";
+process.stdin.on("data", (c) => (d += c)).on("end", () => {
+	const tags = JSON.parse(d)
+		.map((r) => r.tag_name)
+		.filter((t) => typeof t === "string" && t.startsWith("cli-v"));
+	if (tags.length === 0) process.exit(1);
+	const key = (t) => t.slice(5).split("-")[0].split(".").map(Number);
+	tags.sort((a, b) => {
+		const [am, an, ap] = key(a), [bm, bn, bp] = key(b);
+		return bm - am || bn - an || bp - ap;
+	});
+	console.log(tags[0]);
+});')" ||
+		die "Could not resolve the latest CLI release from GitHub"
 fi
 case "${TAG}" in
 	cli-v*) ;;
@@ -95,24 +110,34 @@ case ":${PATH}:" in
 		say "ready — run: adrive login <your-drive-url>"
 		;;
 	*)
+		SHELL_NAME="$(basename "${SHELL:-}")"
 		PROFILE=""
-		case "$(basename "${SHELL:-}")" in
+		case "${SHELL_NAME}" in
 			zsh) PROFILE="${HOME}/.zshrc" ;;
 			bash) PROFILE="${HOME}/.bashrc" ;;
-			fish) PROFILE="" ;; # fish uses fish_add_path below
 		esac
 		EXPORT_LINE="export PATH=\"${INSTALL_DIR}:\$PATH\""
-		if [[ "${MODIFY_PATH}" == "1" && -n "${PROFILE}" ]]; then
+		if [[ "${MODIFY_PATH}" == "1" && "${SHELL_NAME}" == "fish" ]] &&
+			command -v fish >/dev/null; then
+			fish -c "fish_add_path '${INSTALL_DIR}'"
+			say "added ${INSTALL_DIR} to fish's PATH — restart your shell"
+		elif [[ "${MODIFY_PATH}" == "1" && -n "${PROFILE}" ]]; then
 			printf '\n%s\n' "${EXPORT_LINE}" >>"${PROFILE}"
 			say "added ${INSTALL_DIR} to PATH in ${PROFILE} — restart your shell"
 		else
-			say "add adrive to your PATH:"
-			if [[ "$(basename "${SHELL:-}")" == "fish" ]]; then
+			if [[ "${MODIFY_PATH}" == "1" ]]; then
+				say "could not determine your shell profile; add adrive to your PATH:"
+			else
+				say "add adrive to your PATH:"
+			fi
+			if [[ "${SHELL_NAME}" == "fish" ]]; then
 				printf '\n  fish_add_path %s\n\n' "${INSTALL_DIR}"
 			else
 				printf '\n  %s\n\n' "${EXPORT_LINE}"
 			fi
-			say "(or re-run with --modify-path to do it automatically)"
+			if [[ "${MODIFY_PATH}" != "1" ]]; then
+				say "(or re-run with --modify-path to do it automatically)"
+			fi
 		fi
 		;;
 esac

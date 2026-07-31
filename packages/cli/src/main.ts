@@ -1252,15 +1252,45 @@ const upgrade = Command.make(
 			}
 			// Reuse the blessed installer so upgrade and fresh install can
 			// never drift; it verifies checksums and replaces ~/.adrive/bin.
+			// Verify the installer against the same release's checksums.txt
+			// before executing it — the script runs with the user's shell, so
+			// it deserves the same integrity bar it applies to the bundle.
 			const script = yield* Effect.tryPromise({
 				try: async () => {
-					const response = await fetch(
-						`https://github.com/${RELEASES_REPO}/releases/download/${release.tag}/install-cli.sh`
-					);
-					if (!response.ok) {
-						throw new Error(`installer download returned ${response.status}`);
+					const base = `https://github.com/${RELEASES_REPO}/releases/download/${release.tag}`;
+					const [scriptResponse, checksumResponse] = await Promise.all([
+						fetch(`${base}/install-cli.sh`),
+						fetch(`${base}/checksums.txt`)
+					]);
+					if (!scriptResponse.ok) {
+						throw new Error(
+							`installer download returned ${scriptResponse.status}`
+						);
 					}
-					return response.text();
+					if (!checksumResponse.ok) {
+						throw new Error(
+							`checksums download returned ${checksumResponse.status}`
+						);
+					}
+					const scriptBytes = new Uint8Array(
+						await scriptResponse.arrayBuffer()
+					);
+					const checksums = await checksumResponse.text();
+					const expected = checksums
+						.split('\n')
+						.map((line) => line.trim().split(/\s+/))
+						.find((parts) => parts[1] === 'install-cli.sh')?.[0];
+					if (!expected) {
+						throw new Error('checksums.txt has no entry for install-cli.sh');
+					}
+					const digest = await crypto.subtle.digest('SHA-256', scriptBytes);
+					const actual = Array.from(new Uint8Array(digest), (byte) =>
+						byte.toString(16).padStart(2, '0')
+					).join('');
+					if (actual !== expected) {
+						throw new Error('installer checksum mismatch; aborting');
+					}
+					return new TextDecoder().decode(scriptBytes);
 				},
 				catch: (cause) =>
 					new CliFailure({
