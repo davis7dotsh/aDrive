@@ -73,6 +73,9 @@
 				border-radius: 4px;
 				padding: 0.1em 0.35em;
 			}
+			.snippet {
+				position: relative;
+			}
 			pre {
 				border: 1px solid var(--rule);
 				border-radius: 6px;
@@ -82,6 +85,29 @@
 			pre code {
 				border: 0;
 				padding: 0;
+			}
+			.copy {
+				position: absolute;
+				top: 0.55rem;
+				right: 0.55rem;
+				display: inline-flex;
+				align-items: center;
+				justify-content: center;
+				width: 2rem;
+				height: 2rem;
+				border: 1px solid var(--rule);
+				border-radius: 6px;
+				background: var(--bg);
+				color: var(--muted);
+				cursor: pointer;
+			}
+			.copy:hover {
+				color: var(--fg);
+				border-color: var(--fg);
+			}
+			.copy svg {
+				width: 1rem;
+				height: 1rem;
 			}
 			.links {
 				display: flex;
@@ -140,11 +166,58 @@
 		</p>
 
 		<h2>Getting started</h2>
-		<pre><code>git clone https://github.com/davis7dotsh/aDrive
+		<div class="snippet">
+			<pre><code id="setup">git clone https://github.com/davis7dotsh/aDrive
 cd aDrive
 pnpm install
 pnpm db:migrate:local
 pnpm --filter @adrive/web dev</code></pre>
+			<button class="copy" type="button" aria-label="Copy commands">
+				<svg
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					aria-hidden="true"
+				>
+					<rect x="9" y="9" width="13" height="13" rx="2" />
+					<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+				</svg>
+				<svg
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					aria-hidden="true"
+					hidden
+				>
+					<path d="M20 6 9 17l-5-5" />
+				</svg>
+			</button>
+		</div>
+		<script>
+			const copy = document.querySelector('.copy');
+			const [copyIcon, checkIcon] = copy.querySelectorAll('svg');
+			let timer;
+			copy.addEventListener('click', async () => {
+				await navigator.clipboard.writeText(
+					document.getElementById('setup').innerText
+				);
+				copyIcon.hidden = true;
+				checkIcon.hidden = false;
+				copy.setAttribute('aria-label', 'Copied');
+				clearTimeout(timer);
+				timer = setTimeout(() => {
+					copyIcon.hidden = false;
+					checkIcon.hidden = true;
+					copy.setAttribute('aria-label', 'Copy commands');
+				}, 1500);
+			});
+		</script>
 		<p>
 			The
 			<a href="https://github.com/davis7dotsh/aDrive#local-setup"
