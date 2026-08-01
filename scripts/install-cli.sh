@@ -40,7 +40,7 @@ fi
 TAG="${ADRIVE_CLI_VERSION:-}"
 if [[ -z "${TAG}" ]]; then
 	TAG="$(curl -fsSL -H 'accept: application/vnd.github+json' \
-		"https://api.github.com/repos/${REPO}/releases?per_page=30" |
+		"https://api.github.com/repos/${REPO}/releases?per_page=100" |
 		node -e '
 let d = "";
 process.stdin.on("data", (c) => (d += c)).on("end", () => {

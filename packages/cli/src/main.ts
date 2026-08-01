@@ -36,6 +36,7 @@ import {
 } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join, relative, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { pipeline } from 'node:stream/promises';
 import {
@@ -1183,7 +1184,7 @@ const upgrade = Command.make(
 			const release = yield* Effect.tryPromise({
 				try: async () => {
 					const response = await fetch(
-						`https://api.github.com/repos/${RELEASES_REPO}/releases?per_page=30`,
+						`https://api.github.com/repos/${RELEASES_REPO}/releases?per_page=100`,
 						{ headers: { accept: 'application/vnd.github+json' } }
 					);
 					if (!response.ok) {
@@ -1251,10 +1252,9 @@ const upgrade = Command.make(
 				yield* Console.log(`Upgrading adrive v${CLI_VERSION} -> v${latest}…`);
 			}
 			// Reuse the blessed installer so upgrade and fresh install can
-			// never drift; it verifies checksums and replaces ~/.adrive/bin.
-			// Verify the installer against the same release's checksums.txt
-			// before executing it — the script runs with the user's shell, so
-			// it deserves the same integrity bar it applies to the bundle.
+			// never drift. The installer is verified against the release's
+			// checksums.txt before executing — it runs with the user's shell,
+			// so it gets the same integrity bar it applies to the bundle.
 			const script = yield* Effect.tryPromise({
 				try: async () => {
 					const base = `https://github.com/${RELEASES_REPO}/releases/download/${release.tag}`;
@@ -1312,7 +1312,11 @@ const upgrade = Command.make(
 								: ['pipe', 'inherit', 'inherit'],
 							env: {
 								...process.env,
-								ADRIVE_CLI_VERSION: release.tag
+								ADRIVE_CLI_VERSION: release.tag,
+								// Upgrade in place: the running bundle's directory is
+								// where the installer must write, not the default,
+								// so custom install locations self-update correctly.
+								ADRIVE_INSTALL_DIR: dirname(fileURLToPath(import.meta.url))
 							}
 						});
 						child.once('error', reject);
