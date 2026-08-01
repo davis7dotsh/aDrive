@@ -104,7 +104,17 @@ mkdir -p "${INSTALL_DIR}"
 install -m 0755 "${WORK_DIR}/adrive.mjs" "${INSTALL_DIR}/.staged-adrive.mjs"
 cat >"${INSTALL_DIR}/.staged-adrive" <<'LAUNCHER'
 #!/usr/bin/env bash
-exec node "$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")/adrive.mjs" "$@"
+# Resolve symlinks portably: BSD readlink (macOS < 12.3) has no -f, so
+# walk the link chain by hand before locating the sibling bundle.
+source_path="$0"
+while [ -L "$source_path" ]; do
+	link_target="$(readlink "$source_path")"
+	case "$link_target" in
+		/*) source_path="$link_target" ;;
+		*) source_path="$(dirname "$source_path")/$link_target" ;;
+	esac
+done
+exec node "$(cd "$(dirname "$source_path")" && pwd)/adrive.mjs" "$@"
 LAUNCHER
 chmod 0755 "${INSTALL_DIR}/.staged-adrive"
 
