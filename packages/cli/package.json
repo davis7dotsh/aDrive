@@ -4,13 +4,14 @@
 	"private": true,
 	"type": "module",
 	"engines": {
-		"node": ">=26"
+		"node": ">=20"
 	},
 	"bin": {
-		"adrive": "./src/main.ts"
+		"adrive": "./dist/adrive.mjs"
 	},
 	"scripts": {
 		"adrive": "node --experimental-strip-types src/main.ts",
+		"build": "node scripts/build.mjs",
 		"check": "pnpm check:types && pnpm check:effect",
 		"check:effect": "effect-tsgo diagnostics --project tsconfig.json --format pretty",
 		"check:types": "tsc --noEmit",
@@ -27,6 +28,7 @@
 		"@effect/tsgo": "0.24.3",
 		"@types/node": "^26.1.1",
 		"@typescript/native": "npm:typescript@^7.0.2",
+		"esbuild": "0.28.1",
 		"typescript": "~6.0.3"
 	}
 }

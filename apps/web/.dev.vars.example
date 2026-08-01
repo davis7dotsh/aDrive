@@ -1,2 +1,10 @@
 # Copy to apps/web/.dev.vars and replace this with a long local-only passcode.
 PASSCODE="replace-with-at-least-12-characters"
+
+# Optional: develop from other devices (e.g. over Tailscale). The dev
+# server binds 0.0.0.0, so any hostname that reaches this machine works —
+# set both origins to how the BROWSER will address it. With Tailscale
+# MagicDNS that's your machine name plus your tailnet domain, e.g.:
+#   DASHBOARD_ORIGIN="http://<machine>.<tailnet>.ts.net:5173"
+#   CONTENT_ORIGIN="http://<machine>.<tailnet>.ts.net:5174"
+# (find yours with `tailscale status`; omit these lines for localhost-only)

@@ -216,23 +216,24 @@ afterAll(async () => {
 	await rm(configHome, { recursive: true, force: true });
 });
 
+// ADRIVE_TEST_BUNDLE points the whole suite at a built dist/adrive.mjs
+// instead of the TS source — the release workflow runs both, so
+// bundle-only breakage (CJS interop, tree-shaking, define wiring) is
+// caught by the same contract tests.
+const bundlePath = process.env.ADRIVE_TEST_BUNDLE;
+const entrypoint = bundlePath
+	? [bundlePath]
+	: ['--experimental-strip-types', join(import.meta.dirname, 'main.ts')];
+
 const run = (args: ReadonlyArray<string>, input?: Buffer) =>
 	new Promise<{
 		readonly status: number | null;
 		readonly stdout: Buffer;
 		readonly stderr: Buffer;
 	}>((resolve, reject) => {
-		const child = spawn(
-			process.execPath,
-			[
-				'--experimental-strip-types',
-				join(import.meta.dirname, 'main.ts'),
-				...args
-			],
-			{
-				env: { ...process.env, XDG_CONFIG_HOME: configHome }
-			}
-		);
+		const child = spawn(process.execPath, [...entrypoint, ...args], {
+			env: { ...process.env, XDG_CONFIG_HOME: configHome }
+		});
 		const stdout: Array<Buffer> = [];
 		const stderr: Array<Buffer> = [];
 		child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));

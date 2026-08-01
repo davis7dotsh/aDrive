@@ -9,10 +9,21 @@ const forbidden = [
 ];
 const violations = [];
 
+// Only first-party sources: build output bundles third-party code whose
+// internals legitimately match these patterns.
+const skippedDirectories = new Set([
+	'node_modules',
+	'dist',
+	'build',
+	'.svelte-kit',
+	'.wrangler'
+]);
+
 const visit = async (directory) => {
 	for (const entry of await readdir(directory, { withFileTypes: true })) {
 		const path = join(directory, entry.name);
 		if (entry.isDirectory()) {
+			if (skippedDirectories.has(entry.name)) continue;
 			await visit(path);
 		} else if (
 			['.mjs', '.sql', '.svelte', '.ts'].includes(extname(entry.name))

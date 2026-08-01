@@ -32,8 +32,8 @@ installer run from the repository root.
    Cloudflare zone for davis7.space; the custom-domain routes in
    `wrangler.jsonc` attach them on first deploy.
 7. From the repo root: `pnpm release`
-8. From the repo root: set up backups on nexus
-   (`scripts/backup/install-on-nexus.sh`) and complete the restore drill
+8. From the repo root: set up backups on your backup host
+   (`scripts/backup/install-backup-host.sh`) and complete the restore drill
    in `docs/backup-restore.md`.
 
 Semantic search notes for the first deploy:

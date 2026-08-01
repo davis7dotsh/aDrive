@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-time setup on nexus. Copies the backup scripts into place, checks
+# One-time setup on the backup host (an always-on machine on your own network). Copies the backup scripts into place, checks
 # prerequisites, and installs the nightly cron entry (02:17 local — an
 # off-minute on purpose). Run from a checkout or after scp'ing scripts/backup.
 set -euo pipefail

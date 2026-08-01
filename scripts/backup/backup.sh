@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # a-drive nightly backup: R2 sync + D1 export + retention + manifest.
-# Runs on nexus from cron. Configuration comes from backup.env next to
+# Runs on the backup host from cron. Configuration comes from backup.env next to
 # this script (see backup.env.example). Never prints secrets.
 set -euo pipefail
 # Backup artifacts contain the full drive contents; never let group/world

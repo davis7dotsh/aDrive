@@ -166,12 +166,9 @@
 		</p>
 
 		<h2>Getting started</h2>
+		<p>Install the CLI (needs Node 20+):</p>
 		<div class="snippet">
-			<pre><code id="setup">git clone https://github.com/davis7dotsh/aDrive
-cd aDrive
-pnpm install
-pnpm db:migrate:local
-pnpm --filter @adrive/web dev</code></pre>
+			<pre><code id="setup">curl -fsSL https://raw.githubusercontent.com/davis7dotsh/aDrive/main/scripts/install-cli.sh | bash</code></pre>
 			<button class="copy" type="button" aria-label="Copy commands">
 				<svg
 					viewBox="0 0 24 24"
@@ -219,11 +216,12 @@ pnpm --filter @adrive/web dev</code></pre>
 			});
 		</script>
 		<p>
-			The
+			Then point it at a deployment with
+			<code>adrive login &lt;your-drive-url&gt;</code>. The
 			<a href="https://github.com/davis7dotsh/aDrive#local-setup"
 				>README walks through local setup</a
-			>, and <code>docs/release.md</code> in the repo covers deploying to your
-			own Cloudflare account with two custom domains.
+			>, and <code>docs/release.md</code> in the repo covers deploying your own
+			instance to Cloudflare with two custom domains.
 		</p>
 
 		<div class="links">
