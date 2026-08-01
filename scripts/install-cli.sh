@@ -17,6 +17,15 @@ set -euo pipefail
 
 REPO="davis7dotsh/aDrive"
 INSTALL_DIR="${ADRIVE_INSTALL_DIR:-${HOME}/.adrive/bin}"
+# INSTALL_DIR is interpolated into shell profile lines and a fish -c
+# call; rather than escaping for three shell dialects, refuse the
+# characters that would let a hostile value corrupt or hijack them.
+case "${INSTALL_DIR}" in
+	*[\"\'\`\$\\]* | *' '*)
+		printf 'adrive install: ADRIVE_INSTALL_DIR must not contain quotes, backslashes, $, backticks, or spaces\n' >&2
+		exit 1
+		;;
+esac
 MODIFY_PATH=0
 [[ "${1:-}" == "--modify-path" ]] && MODIFY_PATH=1
 
