@@ -3,9 +3,16 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/davis7dotsh/aDrive/main/scripts/install-cli.sh | bash
 #
-# Installs the latest release (or $ADRIVE_CLI_VERSION, e.g. cli-v0.1.0)
-# into ~/.adrive/bin with SHA-256 verification. No sudo, no PATH edits
-# unless invoked with --modify-path.
+# Installs the latest stable release (or $ADRIVE_CLI_VERSION, e.g.
+# cli-v0.1.0) into ~/.adrive/bin with SHA-256 verification. No sudo, no
+# PATH edits unless invoked with --modify-path.
+#
+# Trust model: this script and the checksums it verifies both come from
+# the GitHub repo over TLS — the checksums defend against corruption and
+# single-asset tampering, not a full repo compromise. Auditors: the
+# script is short; read it before piping to bash if that's your policy.
+# A release-pinned copy is published (and checksummed) with every
+# release: https://github.com/davis7dotsh/aDrive/releases
 set -euo pipefail
 
 REPO="davis7dotsh/aDrive"
@@ -44,11 +51,16 @@ if [[ -z "${TAG}" ]]; then
 		node -e '
 let d = "";
 process.stdin.on("data", (c) => (d += c)).on("end", () => {
+	// Stable versions only: pre-release builds (cli-v1.2.3-rc.1) must
+	// never win the default install; pin one via ADRIVE_CLI_VERSION.
 	const tags = JSON.parse(d)
 		.map((r) => r.tag_name)
-		.filter((t) => typeof t === "string" && t.startsWith("cli-v"));
+		.filter(
+			(t) =>
+				typeof t === "string" && /^cli-v\d+\.\d+\.\d+$/.test(t)
+		);
 	if (tags.length === 0) process.exit(1);
-	const key = (t) => t.slice(5).split("-")[0].split(".").map(Number);
+	const key = (t) => t.slice(5).split(".").map(Number);
 	tags.sort((a, b) => {
 		const [am, an, ap] = key(a), [bm, bn, bp] = key(b);
 		return bm - am || bn - an || bp - ap;

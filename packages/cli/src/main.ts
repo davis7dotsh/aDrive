@@ -1205,7 +1205,12 @@ const upgrade = Command.make(
 						)
 						.filter(
 							(tag): tag is string =>
-								tag !== null && tag.startsWith(CLI_TAG_PREFIX)
+								tag !== null &&
+								// Stable releases only, unless this build is itself a
+								// prerelease (then its own line may offer newer rcs).
+								(CLI_VERSION.includes('-')
+									? tag.startsWith(CLI_TAG_PREFIX)
+									: /^cli-v\d+\.\d+\.\d+$/.test(tag))
 						);
 					if (tags.length === 0) {
 						throw new Error('No CLI releases found');
