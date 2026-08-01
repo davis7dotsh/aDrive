@@ -21,8 +21,8 @@ INSTALL_DIR="${ADRIVE_INSTALL_DIR:-${HOME}/.adrive/bin}"
 # call; rather than escaping for three shell dialects, refuse the
 # characters that would let a hostile value corrupt or hijack them.
 case "${INSTALL_DIR}" in
-	*[\"\'\`\$\\]* | *' '*)
-		printf 'adrive install: ADRIVE_INSTALL_DIR must not contain quotes, backslashes, $, backticks, or spaces\n' >&2
+	*[\"\'\`\$\\:]* | *' '*)
+		printf 'adrive install: ADRIVE_INSTALL_DIR must not contain quotes, backslashes, $, backticks, colons, or spaces\n' >&2
 		exit 1
 		;;
 esac
