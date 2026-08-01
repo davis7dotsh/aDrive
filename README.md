@@ -25,7 +25,7 @@ then connect with `adrive login <your-drive-url>`.
 
 ## Local setup
 
-Requirements: Node 26+, pnpm 11+, and access to this machine over Tailscale.
+Requirements: Node 26+ and pnpm 11+.
 
 ```bash
 pnpm install
@@ -41,17 +41,34 @@ printed by the final command, then start both local origins:
 pnpm --filter @adrive/web dev
 ```
 
-The dashboard/API is at
-`http://siva.otter-hawksbill.ts.net:5173/`. Public file bytes are served from
-`http://siva.otter-hawksbill.ts.net:5174/`. The second port is a small streaming
-proxy into the same SvelteKit process so both origins share one local D1/R2 state
-while the Worker still sees and enforces the content host.
+The dashboard/API is at `http://localhost:5173/`. Public file bytes are
+served from `http://localhost:5174/`. The second port is a small streaming
+proxy into the same SvelteKit process so both origins share one local D1/R2
+state while the Worker still sees and enforces the content host.
+
+### Developing over Tailscale (or another network hostname)
+
+The dev server binds `0.0.0.0`, so other devices can use it — phones,
+tablets, or a laptop pointed at a beefier dev box. Set both origins in
+`apps/web/.dev.vars` to the hostname the _browser_ will use. With
+Tailscale MagicDNS that's your machine name plus tailnet domain (see
+`tailscale status`):
+
+```bash
+DASHBOARD_ORIGIN="http://<machine>.<tailnet>.ts.net:5173"
+CONTENT_ORIGIN="http://<machine>.<tailnet>.ts.net:5174"
+```
+
+Any LAN hostname or IP works the same way; the origins just have to match
+how the browser addresses the machine, since the Worker enforces its
+host-routing rules even in dev.
 
 Production passcode login creates a seven-day, host-only
 `__Host-adrive-session` cookie. That cookie is always `Secure`, `HttpOnly`, and
-`SameSite=Strict`, so browsers correctly refuse it on the plain-HTTP local
-Tailscale URL. Use the generated API key in the dashboard's “Local HTTP
-fallback” there. Passcode login works when the dashboard origin is HTTPS.
+`SameSite=Strict`, so browsers correctly refuse it on plain-HTTP non-localhost
+dev URLs (like a Tailscale hostname). Use the generated API key in the
+dashboard's “Local HTTP fallback” there. Passcode login works on
+`http://localhost` and on any HTTPS dashboard origin.
 
 Authentication bootstrap endpoints are protected by the `AUTH_GUARD` Workers
 KV namespace. Login is limited to ten attempts per client every five minutes,
@@ -66,7 +83,7 @@ atomic global security boundary.
 In another shell, configure and exercise the CLI:
 
 ```bash
-pnpm adrive login http://siva.otter-hawksbill.ts.net:5173 --headless
+pnpm adrive login http://localhost:5173 --headless
 pnpm adrive list
 pnpm adrive put ./path/to/file.pdf
 pnpm adrive put ./path/to/private.bin --private

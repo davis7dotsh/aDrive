@@ -1,14 +1,15 @@
 # Backup and restore
 
 Application version history is not a backup. This document covers the
-independent backup that runs on **nexus** (`nexus.otter-hawksbill.ts.net`)
-and how to restore from it. Until the restore drill below has been
-performed at least once, a-drive must not be the only copy of anything
-important.
+independent backup that runs on a machine outside Cloudflare (an
+always-on box on your own network — referred to as the backup host
+below) and how to restore from it. Until the restore drill below has
+been performed at least once, a-drive must not be the only copy of
+anything important.
 
 ## What is backed up, where
 
-Nightly cron on nexus (02:17 local, `scripts/backup/backup.sh`) writes to
+Nightly cron on the backup host (02:17 local, `scripts/backup/backup.sh`) writes to
 `~/Backups/a-drive`:
 
 | Path                     | Contents                                      | Retention   |
@@ -34,12 +35,12 @@ Failures and suspicious shrinkage post to `ALERT_WEBHOOK_URL` from
   bucket — it cannot delete or overwrite anything upstream.
 - The D1 export uses a Cloudflare API token with **D1:Read only**.
 - Neither the PASSCODE, session secrets, nor deploy-capable tokens exist
-  on nexus. `backup.env` is `chmod 600` and gitignored.
+  on the backup host. `backup.env` is `chmod 600` and gitignored.
 
 ## Restore procedures
 
 Restores need a machine with rclone/wrangler and a Cloudflare token with
-write access (deliberately _not_ stored on nexus).
+write access (deliberately _not_ stored on the backup host).
 
 ### One file
 

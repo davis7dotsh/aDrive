@@ -8,9 +8,11 @@
 	},
 	"compatibility_date": "2026-07-27",
 	"compatibility_flags": ["nodejs_compat"],
+	// Local dev defaults. To develop over Tailscale (or any LAN hostname),
+	// override both origins in apps/web/.dev.vars — see README "Local setup".
 	"vars": {
-		"DASHBOARD_ORIGIN": "http://siva.otter-hawksbill.ts.net:5173",
-		"CONTENT_ORIGIN": "http://siva.otter-hawksbill.ts.net:5174",
+		"DASHBOARD_ORIGIN": "http://localhost:5173",
+		"CONTENT_ORIGIN": "http://localhost:5174",
 		"MAX_UPLOAD_BYTES": "99614720",
 		"MAX_TOTAL_BYTES": "107374182400",
 		"SEMANTIC_SEARCH": "auto",

@@ -382,7 +382,7 @@ extraction, reranking via `bge-reranker-base`, MCP server.
 - **Backup:** per-table export succeeds with FTS tables present; `rebuild-index`
   reconstructs search from the real tables.
 - **Manual:** dev servers bound `0.0.0.0`, reachable at
-  `http://siva.otter-hawksbill.ts.net:5173/` (dashboard) and `:5174` (content).
+  `http://<dev-host>:5173/` (dashboard) and `:5174` (content).
 
 ## Open risks
 

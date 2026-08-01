@@ -194,7 +194,7 @@ Compare header **values**, not just presence, against
 
 - **[M]** The scheduled cron is configured (wrangler dry-run output
   shows the trigger, or Cloudflare dashboard).
-- If backups are installed on nexus: `~/Backups/a-drive/last-run.json`
+- If backups are installed on the backup host: `~/Backups/a-drive/last-run.json`
   reports `"status":"ok"` within the last ~26 hours. Otherwise SKIPPED.
 - D1/R2 agreement for the disposable corpus: with wrangler/D1 access,
   confirm each live prefixed file id has a matching `v/<id>/...` object
