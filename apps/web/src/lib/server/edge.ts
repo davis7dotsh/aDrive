@@ -79,9 +79,12 @@ const throwAppError = (
 };
 
 const throwCauseAsHttp = (cause: Cause.Cause<unknown>): never => {
-	for (const reason of cause.reasons) {
-		if (reason._tag !== 'Die') continue;
-		const defect = reason.defect;
+	const dieDefects = cause.reasons
+		.filter((reason) => reason._tag === 'Die')
+		.map((reason) => reason.defect);
+
+	// SvelteKit's own control-flow objects always take precedence.
+	for (const defect of dieDefects) {
 		if (
 			isHttpError(defect) ||
 			isRedirect(defect) ||
@@ -89,23 +92,12 @@ const throwCauseAsHttp = (cause: Cause.Cause<unknown>): never => {
 		) {
 			throw defect;
 		}
-		// An app error thrown synchronously inside a generator arrives here
-		// as a defect instead of a typed failure. That's a bug at the call
-		// site (it should be yielded), but the client still deserves the
-		// intended status, not a blanket 500 — map it, and log it as a bug.
-		if (isAppError(defect)) {
-			console.error(
-				JSON.stringify({
-					message: 'app error thrown as defect (should be yielded)',
-					tag: defect._tag,
-					cause: Cause.pretty(cause)
-				})
-			);
-			return throwAppError(defect, cause);
-		}
 	}
 
-	if (cause.reasons.some((reason) => reason._tag === 'Die')) {
+	// A genuine unexpected defect (a real bug) must win a 500 over an
+	// app-error that merely escaped as a defect — otherwise a concurrent
+	// bug could be masked by another fiber's misplaced 4xx.
+	if (dieDefects.some((defect) => !isAppError(defect))) {
 		console.error(
 			JSON.stringify({
 				message: 'unhandled Effect defect',
@@ -113,6 +105,21 @@ const throwCauseAsHttp = (cause: Cause.Cause<unknown>): never => {
 			})
 		);
 		error(500, 'Internal error');
+	}
+
+	// Every die is an app error thrown synchronously inside a generator
+	// (a call-site bug — it should be yielded). Map the first to its
+	// intended status so the client isn't handed a blanket 500, and log it.
+	const appDefect = dieDefects.find(isAppError);
+	if (appDefect) {
+		console.error(
+			JSON.stringify({
+				message: 'app error thrown as defect (should be yielded)',
+				tag: appDefect._tag,
+				cause: Cause.pretty(cause)
+			})
+		);
+		return throwAppError(appDefect, cause);
 	}
 
 	for (const reason of cause.reasons) {

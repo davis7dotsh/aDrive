@@ -21,7 +21,7 @@ import {
 import * as NodeHttpClient from '@effect/platform-node/NodeHttpClient';
 import * as NodeRuntime from '@effect/platform-node/NodeRuntime';
 import * as NodeServices from '@effect/platform-node/NodeServices';
-import { createWriteStream } from 'node:fs';
+import { createWriteStream, writeSync } from 'node:fs';
 import {
 	chmod,
 	lstat,
@@ -344,6 +344,17 @@ const messageFromBody = (body: string): string | undefined => {
 // and fail with a CliFailure carrying that hint plus a dimmed
 // "METHOD url → status" detail line. The response carries its own
 // originating request, so every call site keeps its existing shape.
+// The query string is dropped from the detail — private download URLs
+// carry a signed access grant there that must never reach the terminal.
+const redactUrl = (raw: string) => {
+	try {
+		const url = new URL(raw);
+		return `${url.origin}${url.pathname}`;
+	} catch {
+		return raw.split('?')[0] ?? raw;
+	}
+};
+
 const ensureOk = (response: HttpClientResponse.HttpClientResponse) =>
 	response.status >= 200 && response.status < 300
 		? Effect.succeed(response)
@@ -353,7 +364,7 @@ const ensureOk = (response: HttpClientResponse.HttpClientResponse) =>
 					Effect.fail(
 						new CliFailure({
 							message: messageFromBody(body) ?? statusHint(response.status),
-							detail: `${response.request.method} ${response.request.url} → ${response.status}`,
+							detail: `${response.request.method} ${redactUrl(response.request.url)} → ${response.status}`,
 							status: response.status
 						})
 					)
@@ -1417,8 +1428,11 @@ const root = Command.make('adrive', {
 // usage/help output, genuine defects — is left to the framework's own
 // reporting untouched.
 const renderCliFailure = (failure: CliFailure) => {
+	// writeSync so the message can't be truncated by process.exit before an
+	// async pipe drains. stdout is fd 1, stderr fd 2.
 	if (wantsJson()) {
-		process.stdout.write(
+		writeSync(
+			1,
 			`${JSON.stringify({
 				error: failure.message,
 				...(failure.status !== undefined ? { status: failure.status } : {}),
@@ -1429,11 +1443,12 @@ const renderCliFailure = (failure: CliFailure) => {
 	}
 	const tty = process.stderr.isTTY;
 	const mark = tty ? '\x1b[31m✗\x1b[0m' : '✗';
-	process.stderr.write(`${mark} ${failure.message}\n`);
+	let out = `${mark} ${failure.message}\n`;
 	if (failure.detail) {
 		const detail = tty ? `\x1b[2m${failure.detail}\x1b[0m` : failure.detail;
-		process.stderr.write(`  ${detail}\n`);
+		out += `  ${detail}\n`;
 	}
+	writeSync(2, out);
 };
 
 const findCliFailure = (cause: unknown): CliFailure | undefined => {

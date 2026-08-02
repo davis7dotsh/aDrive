@@ -42,6 +42,13 @@ const file = {
 
 beforeAll(async () => {
 	contentServer = createServer((request, response) => {
+		// A grant-bearing download that fails — used to prove the CLI never
+		// prints the signed query string in its error detail.
+		if (request.url?.startsWith('/f/leaky')) {
+			response.statusCode = 500;
+			response.end('boom');
+			return;
+		}
 		if (
 			request.method === 'GET' &&
 			request.url?.startsWith(`/f/${file.id}?v=1&e=`)
@@ -339,6 +346,22 @@ describe('CLI stream and JSON contracts', () => {
 			error: 'Tag color must be a six-digit hex color',
 			status: 400
 		});
+	});
+
+	it('never prints a signed download grant in error detail', async () => {
+		linkUrlOverride = `${contentEndpoint}/f/leaky?v=1&e=1785154500&g=SECRETGRANT`;
+		try {
+			const result = await run(['get', file.id, '--output', '/tmp/adrive-x']);
+			expect(result.status).not.toBe(0);
+			const combined = result.stdout.toString() + result.stderr.toString();
+			expect(combined).not.toContain('SECRETGRANT');
+			expect(combined).not.toContain('g=');
+			expect(combined).not.toContain('e=1785154500');
+			// The path is still shown for context.
+			expect(combined).toContain('/f/leaky');
+		} finally {
+			linkUrlOverride = undefined;
+		}
 	});
 
 	it('falls back to a status hint when the error body is not JSON', async () => {
