@@ -21,7 +21,7 @@ import {
 import * as NodeHttpClient from '@effect/platform-node/NodeHttpClient';
 import * as NodeRuntime from '@effect/platform-node/NodeRuntime';
 import * as NodeServices from '@effect/platform-node/NodeServices';
-import { createWriteStream } from 'node:fs';
+import { createWriteStream, writeSync } from 'node:fs';
 import {
 	chmod,
 	lstat,
@@ -75,8 +75,13 @@ const CliConfigSchema = Schema.Struct({
 	allowHttp: Schema.optional(Schema.Boolean)
 });
 
+// message  — the human-readable hint shown on the top line
+// detail   — dimmed context below it (e.g. "POST <url> → 404")
+// status   — HTTP status when the failure came from a response
 class CliFailure extends Data.TaggedError('CliFailure')<{
 	readonly message: string;
+	readonly detail?: string;
+	readonly status?: number;
 	readonly cause?: unknown;
 }> {}
 
@@ -298,29 +303,99 @@ const apiRequest = (
 		}
 	});
 
-const ensureOk = (response: HttpClientResponse.HttpClientResponse) =>
-	HttpClientResponse.filterStatusOk(response);
-
 const wantsJson = () => JSON_MODE;
 
 const emit = (value: unknown) =>
 	Console.log(wantsJson() ? JSON.stringify(value) : String(value));
 
-const responseError = async (response: Response) => {
+// A friendly fallback when the server sends no {message} of its own.
+const statusHint = (status: number) => {
+	if (status === 401)
+		return 'Not signed in or the credential was rejected. Run `adrive login <server-url>`.';
+	if (status === 403) return 'This credential is not allowed to do that.';
+	if (status === 404) return 'Not found.';
+	if (status === 413) return 'That is too large for this drive.';
+	if (status === 429) return 'Too many requests — wait a moment and retry.';
+	if (status >= 500)
+		return 'The server hit an unexpected error. Try again shortly.';
+	if (status >= 400) return 'The request was rejected.';
+	return `Unexpected response (${status}).`;
+};
+
+const messageFromBody = (body: string): string | undefined => {
 	try {
-		const value: unknown = await response.json();
+		const value: unknown = JSON.parse(body);
 		if (
 			typeof value === 'object' &&
 			value !== null &&
 			'message' in value &&
-			typeof value.message === 'string'
+			typeof value.message === 'string' &&
+			value.message.trim() !== ''
 		) {
 			return value.message;
 		}
 	} catch {
-		// Fall through to the status.
+		// Non-JSON body (e.g. an HTML error page); ignore.
 	}
-	return `Request failed (${response.status})`;
+	return undefined;
+};
+
+// Replaces filterStatusOk: on any non-2xx, read the server's {message}
+// and fail with a CliFailure carrying that hint plus a dimmed
+// "METHOD url → status" detail line. The response carries its own
+// originating request, so every call site keeps its existing shape.
+// The query string is dropped from the detail — private download URLs
+// carry a signed access grant there that must never reach the terminal.
+const redactUrl = (raw: string) => {
+	try {
+		const url = new URL(raw);
+		return `${url.origin}${url.pathname}`;
+	} catch {
+		return raw.split('?')[0] ?? raw;
+	}
+};
+
+const ensureOk = (response: HttpClientResponse.HttpClientResponse) =>
+	response.status >= 200 && response.status < 300
+		? Effect.succeed(response)
+		: response.text.pipe(
+				Effect.orElseSucceed(() => ''),
+				Effect.flatMap((body) =>
+					Effect.fail(
+						new CliFailure({
+							message: messageFromBody(body) ?? statusHint(response.status),
+							detail: `${response.request.method} ${redactUrl(response.request.url)} → ${response.status}`,
+							status: response.status
+						})
+					)
+				)
+			);
+
+// Decode a response body against a schema, turning a shape mismatch into a
+// clean CliFailure instead of a raw ParseError.
+const decodeBody = <A, I>(
+	schema: Schema.Codec<A, I, never>,
+	response: HttpClientResponse.HttpClientResponse
+) =>
+	HttpClientResponse.schemaBodyJson(schema)(response).pipe(
+		Effect.mapError(
+			(cause) =>
+				new CliFailure({
+					message: 'The server returned an unexpected response.',
+					detail: 'The response did not match the expected format.',
+					cause
+				})
+		)
+	);
+
+const responseError = async (response: Response) => {
+	try {
+		return (
+			messageFromBody(await response.text()) ?? statusHint(response.status)
+		);
+	} catch {
+		return statusHint(response.status);
+	}
 };
 
 const openBrowser = (url: string) =>
@@ -583,10 +658,7 @@ const put = Command.make(
 						})
 					)
 					.pipe(Effect.flatMap(ensureOk));
-				const result =
-					yield* HttpClientResponse.schemaBodyJson(UploadResponseSchema)(
-						response
-					);
+				const result = yield* decodeBody(UploadResponseSchema, response);
 				if (wantsJson()) {
 					yield* emit(result);
 				} else {
@@ -642,8 +714,8 @@ const list = Command.make('list', {}, () =>
 				)
 				.pipe(
 					Effect.flatMap(ensureOk),
-					Effect.flatMap(
-						HttpClientResponse.schemaBodyJson(FileListResponseSchema)
+					Effect.flatMap((response) =>
+						decodeBody(FileListResponseSchema, response)
 					)
 				);
 			lastPage = result;
@@ -733,9 +805,10 @@ const get = Command.make(
 					)
 				)
 				.pipe(Effect.flatMap(ensureOk));
-			const link = yield* HttpClientResponse.schemaBodyJson(
-				FileContentLinkResponseSchema
-			)(linkResponse);
+			const link = yield* decodeBody(
+				FileContentLinkResponseSchema,
+				linkResponse
+			);
 			const downloadUrl = yield* trustedServerUrl(
 				link.url,
 				config,
@@ -787,9 +860,7 @@ const rename = Command.make(
 					)
 				)
 				.pipe(Effect.flatMap(ensureOk));
-			const result = yield* HttpClientResponse.schemaBodyJson(
-				FileMutationResponseSchema
-			)(response);
+			const result = yield* decodeBody(FileMutationResponseSchema, response);
 			yield* emit(
 				wantsJson()
 					? result
@@ -884,7 +955,7 @@ const uploadSiteAsset = (
 				)
 			)
 			.pipe(Effect.flatMap(ensureOk));
-		yield* HttpClientResponse.schemaBodyJson(SiteAssetResponseSchema)(response);
+		yield* decodeBody(SiteAssetResponseSchema, response);
 	});
 
 const sitePut = Command.make(
@@ -925,9 +996,10 @@ const sitePut = Command.make(
 					)
 				)
 				.pipe(Effect.flatMap(ensureOk));
-			const session = yield* HttpClientResponse.schemaBodyJson(
-				SiteSessionResponseSchema
-			)(createResponse);
+			const session = yield* decodeBody(
+				SiteSessionResponseSchema,
+				createResponse
+			);
 			const uploadAssets = Effect.forEach(
 				walked.assets,
 				(asset) => uploadSiteAsset(client, config, session.sessionId, asset),
@@ -959,9 +1031,10 @@ const sitePut = Command.make(
 					)
 				)
 				.pipe(Effect.flatMap(ensureOk));
-			const result = yield* HttpClientResponse.schemaBodyJson(
-				SiteCommitResponseSchema
-			)(commitResponse);
+			const result = yield* decodeBody(
+				SiteCommitResponseSchema,
+				commitResponse
+			);
 			if (wantsJson()) {
 				yield* emit(result);
 			} else {
@@ -990,9 +1063,7 @@ const tagList = Command.make('list', {}, () =>
 		const response = yield* client
 			.execute(apiRequest('GET', `${config.endpoint}/api/tags`, config.apiKey))
 			.pipe(Effect.flatMap(ensureOk));
-		const result = yield* HttpClientResponse.schemaBodyJson(
-			TagListResponseSchema
-		)(response);
+		const result = yield* decodeBody(TagListResponseSchema, response);
 		if (wantsJson()) {
 			yield* emit(result);
 		} else {
@@ -1023,8 +1094,7 @@ const tagCreate = Command.make(
 					})
 				)
 				.pipe(Effect.flatMap(ensureOk));
-			const result =
-				yield* HttpClientResponse.schemaBodyJson(TagResponseSchema)(response);
+			const result = yield* decodeBody(TagResponseSchema, response);
 			yield* emit(wantsJson() ? result : result.tag.name);
 		})
 ).pipe(Command.withDescription('Create a tag'));
@@ -1060,8 +1130,7 @@ const tagUpdate = Command.make(
 					)
 				)
 				.pipe(Effect.flatMap(ensureOk));
-			const result =
-				yield* HttpClientResponse.schemaBodyJson(TagResponseSchema)(response);
+			const result = yield* decodeBody(TagResponseSchema, response);
 			yield* emit(wantsJson() ? result : result.tag.name);
 		})
 ).pipe(Command.withDescription('Update a tag'));
@@ -1108,9 +1177,7 @@ const tagSet = Command.make(
 					)
 				)
 				.pipe(Effect.flatMap(ensureOk));
-			const result = yield* HttpClientResponse.schemaBodyJson(
-				FileTagsResponseSchema
-			)(response);
+			const result = yield* decodeBody(FileTagsResponseSchema, response);
 			yield* emit(
 				wantsJson()
 					? result
@@ -1356,7 +1423,67 @@ const root = Command.make('adrive', {
 	Command.withSubcommands([login, list, put, get, rename, site, tag, upgrade])
 );
 
+// Render our own CliFailures as "hint on top, dimmed detail below" (or a
+// single JSON error line in --json mode) and exit 1. Anything else — CLI
+// usage/help output, genuine defects — is left to the framework's own
+// reporting untouched.
+const renderCliFailure = (failure: CliFailure) => {
+	// writeSync so the message can't be truncated by process.exit before an
+	// async pipe drains. stdout is fd 1, stderr fd 2.
+	if (wantsJson()) {
+		writeSync(
+			1,
+			`${JSON.stringify({
+				error: failure.message,
+				...(failure.status !== undefined ? { status: failure.status } : {}),
+				...(failure.detail !== undefined ? { detail: failure.detail } : {})
+			})}\n`
+		);
+		return;
+	}
+	const tty = process.stderr.isTTY;
+	const mark = tty ? '\x1b[31m✗\x1b[0m' : '✗';
+	let out = `${mark} ${failure.message}\n`;
+	if (failure.detail) {
+		const detail = tty ? `\x1b[2m${failure.detail}\x1b[0m` : failure.detail;
+		out += `  ${detail}\n`;
+	}
+	writeSync(2, out);
+};
+
+const findCliFailure = (cause: unknown): CliFailure | undefined => {
+	if (cause instanceof CliFailure) return cause;
+	if (
+		cause !== null &&
+		typeof cause === 'object' &&
+		'reasons' in cause &&
+		Array.isArray((cause as { reasons: unknown }).reasons)
+	) {
+		for (const reason of (cause as { reasons: Array<unknown> }).reasons) {
+			if (
+				reason !== null &&
+				typeof reason === 'object' &&
+				'error' in reason &&
+				reason.error instanceof CliFailure
+			) {
+				return reason.error;
+			}
+		}
+	}
+	return undefined;
+};
+
 Command.run(root, { version: CLI_VERSION }).pipe(
+	Effect.catchCause((cause) => {
+		const failure = findCliFailure(cause);
+		if (failure) {
+			return Effect.sync(() => {
+				renderCliFailure(failure);
+				process.exit(1);
+			});
+		}
+		return Effect.failCause(cause);
+	}),
 	Effect.provide([NodeServices.layer, NodeHttpClient.layerNodeHttp]),
 	NodeRuntime.runMain
 );

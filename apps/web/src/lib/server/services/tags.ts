@@ -1,7 +1,7 @@
 import type { Tag, TagCreate, TagUpdate } from '@adrive/shared';
 import { Context, Effect, Layer, Schema } from 'effect';
 import { SqlClient } from 'effect/unstable/sql';
-import { InvalidRequest, NotFound, StorageError } from '../errors';
+import { InvalidRequest, NotFound, StorageError, validate } from '../errors';
 import {
 	fileIndexStatements,
 	refreshAllIndexedTagsStatement
@@ -132,15 +132,14 @@ const makeTags = Effect.gen(function* () {
 		inputNames: ReadonlyArray<string>
 	) {
 		const names = uniqueTagNames(inputNames);
-		const normalized = names.map(
-			(name) => normalizeTagName(name).normalizedName
-		);
+		const normalizedNames = yield* validate(() => names.map(normalizeTagName));
+		const normalized = normalizedNames.map((tag) => tag.normalizedName);
 		const existing = yield* findByNormalized(normalized);
 		const existingNames = new Set(existing.map((tag) => tag.normalizedName));
 		const createdAt = new Date().toISOString();
-		const missing = names
-			.map(normalizeTagName)
-			.filter((tag) => !existingNames.has(tag.normalizedName));
+		const missing = normalizedNames.filter(
+			(tag) => !existingNames.has(tag.normalizedName)
+		);
 		if (missing.length > 0) {
 			yield* Effect.tryPromise({
 				try: () =>
@@ -179,8 +178,8 @@ const makeTags = Effect.gen(function* () {
 		list,
 		resolveNames,
 		create: Effect.fn('Tags.create')(function* (input) {
-			const tag = normalizeTagName(input.name);
-			const color = normalizeTagColor(input.color);
+			const tag = yield* validate(() => normalizeTagName(input.name));
+			const color = yield* validate(() => normalizeTagColor(input.color));
 			const createdAt = new Date().toISOString();
 			yield* Effect.tryPromise({
 				try: () =>
@@ -212,17 +211,19 @@ const makeTags = Effect.gen(function* () {
 		}),
 		update: Effect.fn('Tags.update')(function* (id, input) {
 			const current = yield* find(id);
+			const nextName = input.name;
 			const name =
-				input.name === undefined
+				nextName === undefined
 					? {
 							name: current.name,
 							normalizedName: current.normalizedName
 						}
-					: normalizeTagName(input.name);
+					: yield* validate(() => normalizeTagName(nextName));
+			const nextColor = input.color;
 			const color =
-				input.color === undefined
+				nextColor === undefined
 					? current.color
-					: normalizeTagColor(input.color);
+					: yield* validate(() => normalizeTagColor(nextColor));
 			const collision = (yield* findByNormalized([name.normalizedName])).find(
 				(tag) => tag.id !== id
 			);

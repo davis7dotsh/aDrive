@@ -53,10 +53,38 @@ export const isAppError = (failure: unknown): failure is AppError =>
 	failure instanceof NotFound ||
 	failure instanceof StorageError;
 
+const throwAppError = (
+	failure: AppError,
+	cause: Cause.Cause<unknown>
+): never => {
+	switch (failure._tag) {
+		case 'InvalidRequest':
+			error(failure.status, failure.message);
+		case 'MisdirectedRequest':
+			error(421, failure.message);
+		case 'Unauthorized':
+			error(401, failure.message);
+		case 'NotFound':
+			error(404, 'Not found');
+		case 'StorageError':
+			console.error(
+				JSON.stringify({
+					message: 'storage operation failed',
+					operation: failure.operation,
+					cause: Cause.pretty(cause)
+				})
+			);
+			error(502, 'Storage unavailable');
+	}
+};
+
 const throwCauseAsHttp = (cause: Cause.Cause<unknown>): never => {
-	for (const reason of cause.reasons) {
-		if (reason._tag !== 'Die') continue;
-		const defect = reason.defect;
+	const dieDefects = cause.reasons
+		.filter((reason) => reason._tag === 'Die')
+		.map((reason) => reason.defect);
+
+	// SvelteKit's own control-flow objects always take precedence.
+	for (const defect of dieDefects) {
 		if (
 			isHttpError(defect) ||
 			isRedirect(defect) ||
@@ -66,7 +94,10 @@ const throwCauseAsHttp = (cause: Cause.Cause<unknown>): never => {
 		}
 	}
 
-	if (cause.reasons.some((reason) => reason._tag === 'Die')) {
+	// A genuine unexpected defect (a real bug) must win a 500 over an
+	// app-error that merely escaped as a defect — otherwise a concurrent
+	// bug could be masked by another fiber's misplaced 4xx.
+	if (dieDefects.some((defect) => !isAppError(defect))) {
 		console.error(
 			JSON.stringify({
 				message: 'unhandled Effect defect',
@@ -76,29 +107,26 @@ const throwCauseAsHttp = (cause: Cause.Cause<unknown>): never => {
 		error(500, 'Internal error');
 	}
 
+	// Every die is an app error thrown synchronously inside a generator
+	// (a call-site bug — it should be yielded). Map the first to its
+	// intended status so the client isn't handed a blanket 500, and log it.
+	const appDefect = dieDefects.find(isAppError);
+	if (appDefect) {
+		console.error(
+			JSON.stringify({
+				message: 'app error thrown as defect (should be yielded)',
+				tag: appDefect._tag,
+				cause: Cause.pretty(cause)
+			})
+		);
+		return throwAppError(appDefect, cause);
+	}
+
 	for (const reason of cause.reasons) {
 		if (reason._tag !== 'Fail') continue;
 		const failure = reason.error;
 		if (!isAppError(failure)) continue;
-		switch (failure._tag) {
-			case 'InvalidRequest':
-				error(failure.status, failure.message);
-			case 'MisdirectedRequest':
-				error(421, failure.message);
-			case 'Unauthorized':
-				error(401, failure.message);
-			case 'NotFound':
-				error(404, 'Not found');
-			case 'StorageError':
-				console.error(
-					JSON.stringify({
-						message: 'storage operation failed',
-						operation: failure.operation,
-						cause: Cause.pretty(cause)
-					})
-				);
-				error(502, 'Storage unavailable');
-		}
+		return throwAppError(failure, cause);
 	}
 
 	console.error(

@@ -42,6 +42,13 @@ const file = {
 
 beforeAll(async () => {
 	contentServer = createServer((request, response) => {
+		// A grant-bearing download that fails — used to prove the CLI never
+		// prints the signed query string in its error detail.
+		if (request.url?.startsWith('/f/leaky')) {
+			response.statusCode = 500;
+			response.end('boom');
+			return;
+		}
 		if (
 			request.method === 'GET' &&
 			request.url?.startsWith(`/f/${file.id}?v=1&e=`)
@@ -182,6 +189,21 @@ beforeAll(async () => {
 			response.end(JSON.stringify({ tags: [] }));
 			return;
 		}
+		if (request.method === 'POST' && request.url === '/api/tags') {
+			// A 400 carrying a server {message} — the CLI must surface it.
+			response.statusCode = 400;
+			response.setHeader('Content-Type', 'application/json');
+			response.end(
+				JSON.stringify({ message: 'Tag color must be a six-digit hex color' })
+			);
+			return;
+		}
+		if (request.method === 'PUT' && request.url === '/api/files/boom/tags') {
+			// A 500 with a non-JSON body — the CLI falls back to a status hint.
+			response.statusCode = 500;
+			response.end('internal boom');
+			return;
+		}
 		response.statusCode = 404;
 		response.end();
 	});
@@ -294,6 +316,61 @@ describe('CLI stream and JSON contracts', () => {
 		expect(result.status).toBe(0);
 		expect(result.stderr.toString()).toBe('');
 		expect(JSON.parse(result.stdout.toString())).toEqual({ tags: [] });
+	});
+
+	it('renders a server error message as a hint with dimmed detail', async () => {
+		const result = await run(['tag', 'create', 'x', '--color', 'blue']);
+		expect(result.status).not.toBe(0);
+		const err = result.stderr.toString();
+		expect(err).toContain('Tag color must be a six-digit hex color');
+		expect(err).toContain('POST');
+		expect(err).toContain('/api/tags');
+		expect(err).toContain('400');
+		// No raw HttpClientError / stack noise leaks through.
+		expect(err).not.toContain('HttpClientError');
+		expect(err).not.toContain('filterStatusOk');
+	});
+
+	it('emits a single JSON error line in --json mode', async () => {
+		const result = await run([
+			'--json',
+			'tag',
+			'create',
+			'x',
+			'--color',
+			'blue'
+		]);
+		expect(result.status).not.toBe(0);
+		const parsed = JSON.parse(result.stdout.toString().trim());
+		expect(parsed).toMatchObject({
+			error: 'Tag color must be a six-digit hex color',
+			status: 400
+		});
+	});
+
+	it('never prints a signed download grant in error detail', async () => {
+		linkUrlOverride = `${contentEndpoint}/f/leaky?v=1&e=1785154500&g=SECRETGRANT`;
+		try {
+			const result = await run(['get', file.id, '--output', '/tmp/adrive-x']);
+			expect(result.status).not.toBe(0);
+			const combined = result.stdout.toString() + result.stderr.toString();
+			expect(combined).not.toContain('SECRETGRANT');
+			expect(combined).not.toContain('g=');
+			expect(combined).not.toContain('e=1785154500');
+			// The path is still shown for context.
+			expect(combined).toContain('/f/leaky');
+		} finally {
+			linkUrlOverride = undefined;
+		}
+	});
+
+	it('falls back to a status hint when the error body is not JSON', async () => {
+		const result = await run(['tag', 'set', 'boom', 'anything']);
+		expect(result.status).not.toBe(0);
+		const err = result.stderr.toString();
+		expect(err).toContain('The server hit an unexpected error');
+		expect(err).toContain('500');
+		expect(err).not.toContain('internal boom');
 	});
 
 	it('continues headless login through pending and slow-down responses', async () => {
