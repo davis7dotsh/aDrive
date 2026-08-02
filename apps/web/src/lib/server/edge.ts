@@ -53,6 +53,31 @@ export const isAppError = (failure: unknown): failure is AppError =>
 	failure instanceof NotFound ||
 	failure instanceof StorageError;
 
+const throwAppError = (
+	failure: AppError,
+	cause: Cause.Cause<unknown>
+): never => {
+	switch (failure._tag) {
+		case 'InvalidRequest':
+			error(failure.status, failure.message);
+		case 'MisdirectedRequest':
+			error(421, failure.message);
+		case 'Unauthorized':
+			error(401, failure.message);
+		case 'NotFound':
+			error(404, 'Not found');
+		case 'StorageError':
+			console.error(
+				JSON.stringify({
+					message: 'storage operation failed',
+					operation: failure.operation,
+					cause: Cause.pretty(cause)
+				})
+			);
+			error(502, 'Storage unavailable');
+	}
+};
+
 const throwCauseAsHttp = (cause: Cause.Cause<unknown>): never => {
 	for (const reason of cause.reasons) {
 		if (reason._tag !== 'Die') continue;
@@ -63,6 +88,20 @@ const throwCauseAsHttp = (cause: Cause.Cause<unknown>): never => {
 			isValidationError(defect)
 		) {
 			throw defect;
+		}
+		// An app error thrown synchronously inside a generator arrives here
+		// as a defect instead of a typed failure. That's a bug at the call
+		// site (it should be yielded), but the client still deserves the
+		// intended status, not a blanket 500 — map it, and log it as a bug.
+		if (isAppError(defect)) {
+			console.error(
+				JSON.stringify({
+					message: 'app error thrown as defect (should be yielded)',
+					tag: defect._tag,
+					cause: Cause.pretty(cause)
+				})
+			);
+			return throwAppError(defect, cause);
 		}
 	}
 
@@ -80,25 +119,7 @@ const throwCauseAsHttp = (cause: Cause.Cause<unknown>): never => {
 		if (reason._tag !== 'Fail') continue;
 		const failure = reason.error;
 		if (!isAppError(failure)) continue;
-		switch (failure._tag) {
-			case 'InvalidRequest':
-				error(failure.status, failure.message);
-			case 'MisdirectedRequest':
-				error(421, failure.message);
-			case 'Unauthorized':
-				error(401, failure.message);
-			case 'NotFound':
-				error(404, 'Not found');
-			case 'StorageError':
-				console.error(
-					JSON.stringify({
-						message: 'storage operation failed',
-						operation: failure.operation,
-						cause: Cause.pretty(cause)
-					})
-				);
-				error(502, 'Storage unavailable');
-		}
+		return throwAppError(failure, cause);
 	}
 
 	console.error(

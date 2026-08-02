@@ -17,7 +17,8 @@ import {
 	InvalidRequest,
 	MisdirectedRequest,
 	StorageError,
-	Unauthorized
+	Unauthorized,
+	validate
 } from '../errors';
 import { Db } from './bindings';
 
@@ -251,7 +252,7 @@ const makeAuth = Effect.gen(function* () {
 	const config = yield* AppConfig;
 
 	const makeApiKey = Effect.fn('Auth.makeApiKey')(function* (name: string) {
-		const normalizedName = normalizeApiKeyName(name);
+		const normalizedName = yield* validate(() => normalizeApiKeyName(name));
 		const prefix = randomHex(4);
 		const token = `adr_${prefix}_${randomToken()}`;
 		const secretHash = yield* hashToken(token);
@@ -492,7 +493,7 @@ const makeAuth = Effect.gen(function* () {
 		}),
 		createDeviceAuthorization: Effect.fn('Auth.createDeviceAuthorization')(
 			function* (name) {
-				const normalizedName = normalizeApiKeyName(name);
+				const normalizedName = yield* validate(() => normalizeApiKeyName(name));
 				const deviceCode = randomToken(32);
 				const deviceCodeHash = yield* hashToken(deviceCode);
 				const createdAt = new Date();
