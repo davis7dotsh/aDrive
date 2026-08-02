@@ -673,13 +673,19 @@ const status = Command.make('status', {}, () =>
 						sites += 1;
 					} else {
 						files += 1;
+						if (item.public) publicCount += 1;
 					}
-					if (item.public) publicCount += 1;
 					totalBytes += item.sizeBytes;
 				}
 				cursor = page.nextCursor;
 				pages += 1;
 			} while (cursor !== null && pages < 500);
+			if (cursor !== null) {
+				return yield* new CliFailure({
+					message:
+						'Listing stopped after 500 pages with more remaining; the server may be misbehaving'
+				});
+			}
 			if (firstPage === null) {
 				return yield* new CliFailure({
 					message: 'The server returned no listing pages'
@@ -699,7 +705,7 @@ const status = Command.make('status', {}, () =>
 			)
 		);
 		const { firstPage, files, sites, publicCount, totalBytes } = result;
-		const privateCount = files + sites - publicCount;
+		const privateCount = files - publicCount;
 		if (wantsJson()) {
 			yield* emit({
 				endpoint: config.endpoint,
