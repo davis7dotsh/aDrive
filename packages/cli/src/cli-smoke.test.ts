@@ -208,6 +208,19 @@ beforeAll(async () => {
 			}
 			return;
 		}
+		if (request.method === 'GET' && request.url === '/api/auth/check') {
+			if (request.headers.authorization?.startsWith('Bearer adr_')) {
+				response.setHeader('Content-Type', 'application/json');
+				response.end(JSON.stringify({ ok: true }));
+			} else {
+				response.statusCode = 401;
+				response.setHeader('Content-Type', 'application/json');
+				response.end(
+					JSON.stringify({ message: 'A valid credential is required' })
+				);
+			}
+			return;
+		}
 		if (request.method === 'PUT' && request.url === '/api/files/boom/tags') {
 			// A 500 with a non-JSON body — the CLI falls back to a status hint.
 			response.statusCode = 500;
@@ -381,6 +394,49 @@ describe('CLI stream and JSON contracts', () => {
 		expect(err).toContain('The server hit an unexpected error');
 		expect(err).toContain('500');
 		expect(err).not.toContain('internal boom');
+	});
+
+	it('reports the server and credential state through whoami', async () => {
+		const result = await run(['whoami']);
+		expect(result.status).toBe(0);
+		expect(result.stderr.toString()).toBe('');
+		const out = result.stdout.toString();
+		expect(out).toContain(endpoint);
+		expect(out).toContain('Credential  accepted');
+	});
+
+	it('emits a machine-parseable whoami in --json mode', async () => {
+		const result = await run(['--json', 'whoami']);
+		expect(result.status).toBe(0);
+		expect(JSON.parse(result.stdout.toString())).toMatchObject({
+			endpoint,
+			authenticated: true
+		});
+	});
+
+	it('summarizes the drive through status', async () => {
+		const result = await run(['status']);
+		expect(result.status).toBe(0);
+		expect(result.stderr.toString()).toBe('');
+		const out = result.stdout.toString();
+		expect(out).toContain('Connected   yes');
+		expect(out).toContain('Files       1 (1 public · 0 private)');
+		expect(out).toContain(`Storage     ${downloaded.length} B`);
+		expect(out).toContain('Semantic    disabled');
+	});
+
+	it('keeps JSON status output machine-parseable', async () => {
+		const result = await run(['--json', 'status']);
+		expect(result.status).toBe(0);
+		expect(JSON.parse(result.stdout.toString())).toMatchObject({
+			endpoint,
+			connected: true,
+			files: 1,
+			sites: 0,
+			publicFiles: 1,
+			totalBytes: downloaded.length,
+			maxUploadBytes: 100_000_000
+		});
 	});
 
 	it('continues headless login through pending and slow-down responses', async () => {

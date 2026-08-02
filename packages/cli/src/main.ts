@@ -596,6 +596,144 @@ const login = Command.make(
 		})
 ).pipe(Command.withDescription('Authorize this CLI through the dashboard'));
 
+const whoami = Command.make('whoami', {}, () =>
+	Effect.gen(function* () {
+		const config = yield* loadConfig;
+		const client = yield* HttpClient.HttpClient;
+		yield* client
+			.execute(
+				apiRequest('GET', `${config.endpoint}/api/auth/check`, config.apiKey)
+			)
+			.pipe(Effect.flatMap(ensureOk));
+		if (wantsJson()) {
+			yield* emit({
+				endpoint: config.endpoint,
+				...(config.contentOrigin !== undefined
+					? { contentOrigin: config.contentOrigin }
+					: {}),
+				authenticated: true,
+				config: configPath()
+			});
+		} else {
+			yield* Console.log(`Server      ${config.endpoint}`);
+			yield* Console.log('Credential  accepted');
+			yield* Console.log(`Config      ${configPath()}`);
+		}
+	})
+).pipe(
+	Command.withDescription('Show the configured server and credential state')
+);
+
+const formatBytes = (bytes: number) => {
+	if (bytes < 1024) return `${bytes} B`;
+	let value = bytes;
+	let unit = 'B';
+	for (const next of ['KB', 'MB', 'GB', 'TB']) {
+		if (value < 1024) break;
+		value /= 1024;
+		unit = next;
+	}
+	return `${value >= 100 ? Math.round(value).toString() : value.toFixed(1)} ${unit}`;
+};
+
+const status = Command.make('status', {}, () =>
+	Effect.gen(function* () {
+		const config = yield* loadConfig;
+		const client = yield* HttpClient.HttpClient;
+		// Page through the listing so counts cover the whole drive, keeping
+		// the first page for its deployment metadata (tags, semantic, limits).
+		const gather = Effect.gen(function* () {
+			let firstPage: typeof FileListResponseSchema.Type | null = null;
+			let files = 0;
+			let sites = 0;
+			let publicCount = 0;
+			let totalBytes = 0;
+			let cursor: string | null = null;
+			let pages = 0;
+			do {
+				const params = new URLSearchParams();
+				if (cursor) params.set('cursor', cursor);
+				const page = yield* client
+					.execute(
+						apiRequest(
+							'GET',
+							`${config.endpoint}/api/files${params.size > 0 ? `?${params}` : ''}`,
+							config.apiKey
+						)
+					)
+					.pipe(
+						Effect.flatMap(ensureOk),
+						Effect.flatMap((response) =>
+							decodeBody(FileListResponseSchema, response)
+						)
+					);
+				firstPage ??= page;
+				for (const item of page.files) {
+					if (item.kind === 'site') {
+						sites += 1;
+					} else {
+						files += 1;
+					}
+					if (item.public) publicCount += 1;
+					totalBytes += item.sizeBytes;
+				}
+				cursor = page.nextCursor;
+				pages += 1;
+			} while (cursor !== null && pages < 500);
+			if (firstPage === null) {
+				return yield* new CliFailure({
+					message: 'The server returned no listing pages'
+				});
+			}
+			return { firstPage, files, sites, publicCount, totalBytes };
+		});
+		const result = yield* gather.pipe(
+			Effect.catch((failure) =>
+				Effect.gen(function* () {
+					if (!wantsJson()) {
+						yield* Console.log(`Server      ${config.endpoint}`);
+						yield* Console.log('Connected   no');
+					}
+					return yield* failure;
+				})
+			)
+		);
+		const { firstPage, files, sites, publicCount, totalBytes } = result;
+		const privateCount = files + sites - publicCount;
+		if (wantsJson()) {
+			yield* emit({
+				endpoint: config.endpoint,
+				contentOrigin: firstPage.contentOrigin,
+				connected: true,
+				files,
+				sites,
+				publicFiles: publicCount,
+				privateFiles: privateCount,
+				totalBytes,
+				tags: firstPage.tags.length,
+				maxUploadBytes: firstPage.maxUploadBytes,
+				semantic: firstPage.semantic
+			});
+		} else {
+			const semantic = firstPage.semantic.enabled
+				? `enabled · ${firstPage.semantic.indexedChunks} chunks indexed`
+				: 'disabled';
+			yield* Console.log(`Server      ${config.endpoint}`);
+			yield* Console.log('Connected   yes');
+			yield* Console.log(
+				`Files       ${files} (${publicCount} public · ${privateCount} private)`
+			);
+			yield* Console.log(`Sites       ${sites}`);
+			yield* Console.log(`Storage     ${formatBytes(totalBytes)}`);
+			yield* Console.log(`Tags        ${firstPage.tags.length}`);
+			yield* Console.log(
+				`Max upload  ${formatBytes(firstPage.maxUploadBytes)}`
+			);
+			yield* Console.log(`Semantic    ${semantic}`);
+		}
+	})
+).pipe(Command.withDescription('Show connection and drive usage at a glance'));
+
 const prepareUpload = (file: string, suppliedName: Option.Option<string>) =>
 	Effect.tryPromise({
 		try: async () => {
@@ -1423,7 +1561,18 @@ const root = Command.make('adrive', {
 	)
 }).pipe(
 	Command.withDescription('A small CLI for an adrive deployment'),
-	Command.withSubcommands([login, list, put, get, rename, site, tag, upgrade])
+	Command.withSubcommands([
+		login,
+		whoami,
+		status,
+		list,
+		put,
+		get,
+		rename,
+		site,
+		tag,
+		upgrade
+	])
 );
 
 // Render our own CliFailures as "hint on top, dimmed detail below" (or a
