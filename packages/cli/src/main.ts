@@ -298,6 +298,9 @@ const apiRequest = (
 					: HttpClientRequest.put)(url, {
 		body: options.body,
 		headers: {
+			// Without an explicit accept, SvelteKit negotiates API errors
+			// into HTML pages and their {message} never reaches the user.
+			accept: 'application/json',
 			authorization: `Bearer ${apiKey}`,
 			...options.headers
 		}

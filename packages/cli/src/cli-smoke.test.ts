@@ -191,11 +191,21 @@ beforeAll(async () => {
 		}
 		if (request.method === 'POST' && request.url === '/api/tags') {
 			// A 400 carrying a server {message} — the CLI must surface it.
+			// Mirror SvelteKit's content negotiation: without an explicit
+			// application/json accept header the error arrives as an HTML
+			// page, which is exactly the bug that hid these messages.
 			response.statusCode = 400;
-			response.setHeader('Content-Type', 'application/json');
-			response.end(
-				JSON.stringify({ message: 'Tag color must be a six-digit hex color' })
-			);
+			if (request.headers.accept?.includes('application/json')) {
+				response.setHeader('Content-Type', 'application/json');
+				response.end(
+					JSON.stringify({ message: 'Tag color must be a six-digit hex color' })
+				);
+			} else {
+				response.setHeader('Content-Type', 'text/html');
+				response.end(
+					'<!doctype html><html><head><title>Tag color must be a six-digit hex color</title></head><body>400</body></html>'
+				);
+			}
 			return;
 		}
 		if (request.method === 'PUT' && request.url === '/api/files/boom/tags') {
