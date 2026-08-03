@@ -63,7 +63,7 @@ echo "Recorded in ${RECORD_FILE}"
 step "Next"
 cat <<'EOF'
 Deployment is live but NOT verified. Now run the production verification
-skill against the deployment (see .claude/skills/verify-deployment):
+skill against the deployment (see .agents/skills/verify-deployment):
 ask an agent to "verify the a-drive deployment". A release is complete
 only when the verification report passes.
 

@@ -140,7 +140,7 @@ backfill; this matters when seeding a pre-existing corpus.
 
 ## 8. Then
 
-- Run the **verify-deployment** skill (`.claude/skills/verify-deployment`)
+- Run the **verify-deployment** skill (`.agents/skills/verify-deployment`)
   as the acceptance gate — the release is not complete until it reports
   PASS against the live deployment.
 - Set up **independent backups** on a machine outside Cloudflare and
