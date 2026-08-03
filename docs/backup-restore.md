@@ -90,7 +90,7 @@ production database, so it stays untouched for rollback.
 5. Deploy: `pnpm release` (or `wrangler deploy --env production`).
 6. DNS: point `drive.davis7.space` and `files.davis7.space` at the new
    Worker (custom domains attach from the routes in wrangler.jsonc).
-7. Run the verification skill (`.claude/skills/verify-deployment`).
+7. Run the verification skill (`.agents/skills/verify-deployment`).
 
 Note: KV only holds rate-limit counters and needs no restore. Sessions
 are revoked by the passcode-rotation detector on the first maintenance

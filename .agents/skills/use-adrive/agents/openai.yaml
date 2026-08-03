@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Use a-drive'
+  short_description: 'Operate the a-drive CLI safely day to day'
+  default_prompt: 'Use $use-adrive to inspect, upload, download, organize, or publish with the a-drive CLI.'
