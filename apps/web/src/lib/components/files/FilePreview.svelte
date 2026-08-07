@@ -303,7 +303,7 @@
 			sandbox={file.contentType === 'application/pdf'
 				? undefined
 				: 'allow-scripts allow-same-origin allow-forms allow-popups allow-downloads'}
-			class="h-[70vh] w-full border-0"
+			class="h-[calc(100dvh-11rem)] min-h-[28rem] w-full border-0"
 		></iframe>
 	{:else}
 		<div
