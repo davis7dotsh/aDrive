@@ -38,6 +38,6 @@ export const contentSecurityPolicy = (
 	contentType: string,
 	frameAncestor = "'none'"
 ) =>
-	contentType === 'text/html'
+	contentType.split(';', 1)[0]?.trim().toLowerCase() === 'text/html'
 		? `default-src 'self' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors ${frameAncestor}`
 		: `default-src 'none'; frame-ancestors ${frameAncestor}; sandbox`;

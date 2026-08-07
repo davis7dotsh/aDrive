@@ -32,7 +32,8 @@ export const GET: RequestHandler = ({ params, request, url }) =>
 			const content = yield* files.findContent(params.id, version, hasGrant);
 			const privateResponse = hasGrant || !content.file.public;
 			const dashboardPreview =
-				content.file.contentType === 'application/pdf' &&
+				(content.file.contentType === 'application/pdf' ||
+					content.file.contentType.startsWith('text/html')) &&
 				url.searchParams.get('preview') === 'dashboard';
 			if (!content.file.public || hasGrant) {
 				const expiresAtSeconds = Number(url.searchParams.get('e'));
