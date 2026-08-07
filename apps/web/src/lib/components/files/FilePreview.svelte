@@ -20,12 +20,16 @@
 		ondownload: () => void;
 	} = $props();
 
+	const html = $derived(
+		file.kind === 'site' || file.contentType.startsWith('text/html')
+	);
 	const textLike = $derived(
-		file.contentType.startsWith('text/') ||
-			/(json|javascript|typescript|xml|yaml|csv)/i.test(file.contentType)
+		!html &&
+			(file.contentType.startsWith('text/') ||
+				/(json|javascript|typescript|xml|yaml|csv)/i.test(file.contentType))
 	);
 	const media = $derived(
-		file.kind === 'site' ||
+		html ||
 			file.contentType.startsWith('image/') ||
 			file.contentType.startsWith('video/') ||
 			file.contentType.startsWith('audio/') ||
@@ -176,7 +180,11 @@
 				}
 
 				const resolvedUrl = new URL(result.url);
-				if (file.contentType === 'application/pdf') {
+				if (
+					file.kind !== 'site' &&
+					(file.contentType === 'application/pdf' ||
+						file.contentType.startsWith('text/html'))
+				) {
 					resolvedUrl.searchParams.set('preview', 'dashboard');
 				}
 				linkUrl = resolvedUrl.href;
@@ -286,7 +294,7 @@
 		<div class="flex min-h-[28rem] items-center justify-center p-8">
 			<audio controls src={linkUrl} class="w-full"></audio>
 		</div>
-	{:else if (file.contentType === 'application/pdf' || file.kind === 'site') && linkUrl}
+	{:else if (file.contentType === 'application/pdf' || html) && linkUrl}
 		<iframe
 			src={linkUrl}
 			title={`Preview of ${file.displayName}`}

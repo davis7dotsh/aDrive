@@ -25,9 +25,13 @@
 		};
 	};
 	const image = $derived(file.contentType.startsWith('image/'));
+	const frame = $derived(
+		file.kind === 'site' || file.contentType.startsWith('text/html')
+	);
 	const textLike = $derived(
-		file.contentType.startsWith('text/') ||
-			/(json|javascript|typescript|xml|yaml|csv)/i.test(file.contentType)
+		!frame &&
+			(file.contentType.startsWith('text/') ||
+				/(json|javascript|typescript|xml|yaml|csv)/i.test(file.contentType))
 	);
 	let visible = $state(false);
 	let loadedSource = $state('');
@@ -48,8 +52,10 @@
 				token,
 				file.id,
 				file.version,
+				file.kind,
 				file.public,
 				image,
+				frame,
 				textLike,
 				unavailable,
 				contentOrigin
@@ -60,8 +66,10 @@
 				auth,
 				id,
 				version,
+				kind,
 				isPublic,
 				isImage,
+				isFrame,
 				isText,
 				isUnavailable,
 				origin
@@ -79,6 +87,26 @@
 				signal.throwIfAborted();
 				return { source, text: '' };
 			}
+			if (isFrame) {
+				if (kind === 'site') {
+					const source =
+						isPublic && !isUnavailable
+							? `${origin}/s/${id}/`
+							: (await getContentLink(auth, id, version, signal, isUnavailable))
+									.url;
+					signal.throwIfAborted();
+					return { source, text: '' };
+				}
+				const url = new URL(
+					isPublic && !isUnavailable
+						? `${origin}/f/${id}?v=${version}`
+						: (await getContentLink(auth, id, version, signal, isUnavailable))
+								.url
+				);
+				signal.throwIfAborted();
+				url.searchParams.set('preview', 'dashboard');
+				return { source: url.href, text: '' };
+			}
 			if (isText) {
 				const preview = await getFilePreview(auth, id, signal);
 				signal.throwIfAborted();
@@ -91,7 +119,7 @@
 	const source = $derived(thumbnail.current.source);
 	const text = $derived(thumbnail.current.text);
 	const previewLoading = $derived(
-		(image || textLike) &&
+		(image || frame || textLike) &&
 			(!visible ||
 				thumbnail.loading ||
 				(Boolean(source) && loadedSource !== source && failedSource !== source))
@@ -102,7 +130,22 @@
 	{@attach attachElement}
 	class="relative flex aspect-[4/3] overflow-hidden rounded-xl bg-zinc-100 transition group-hover:bg-zinc-200/70"
 >
-	{#if source && failedSource !== source}
+	{#if frame && source && failedSource !== source}
+		<!-- A scaled-down live render: pointer-events stay on the card link. -->
+		<div class="pointer-events-none absolute inset-0" aria-hidden="true">
+			<iframe
+				src={source}
+				title={file.displayName}
+				tabindex="-1"
+				loading="lazy"
+				sandbox="allow-scripts"
+				class="h-[400%] w-[400%] origin-top-left scale-[0.25] border-0 bg-white transition-opacity duration-200 {previewLoading
+					? 'opacity-0'
+					: 'opacity-100'}"
+				onload={() => (loadedSource = source)}
+			></iframe>
+		</div>
+	{:else if source && failedSource !== source}
 		<img
 			src={source}
 			alt=""
