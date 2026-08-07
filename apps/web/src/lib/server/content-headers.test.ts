@@ -26,6 +26,12 @@ describe('content response headers', () => {
 		expect(policy).toContain("frame-ancestors 'none'");
 	});
 
+	it('treats parameterized HTML content types as HTML', () => {
+		const policy = contentSecurityPolicy('text/html; charset=utf-8');
+		expect(policy).toContain("default-src 'self'");
+		expect(policy).not.toContain('sandbox');
+	});
+
 	it('allows a site preview to be framed only by the dashboard origin', () => {
 		const policy = contentSecurityPolicy(
 			'text/html',

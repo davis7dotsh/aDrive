@@ -138,7 +138,7 @@
 				title={file.displayName}
 				tabindex="-1"
 				loading="lazy"
-				sandbox="allow-scripts"
+				sandbox="allow-scripts allow-same-origin"
 				class="h-[400%] w-[400%] origin-top-left scale-[0.25] border-0 bg-white transition-opacity duration-200 {previewLoading
 					? 'opacity-0'
 					: 'opacity-100'}"
@@ -174,7 +174,7 @@
 			</span>
 		</div>
 	{/if}
-	{#if previewLoading && (image || textLike)}
+	{#if previewLoading && (image || frame || textLike)}
 		<div
 			class="absolute inset-0 animate-pulse bg-zinc-100 motion-reduce:animate-none"
 			aria-hidden="true"

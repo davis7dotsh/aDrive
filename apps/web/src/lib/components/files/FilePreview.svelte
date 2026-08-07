@@ -295,9 +295,14 @@
 			<audio controls src={linkUrl} class="w-full"></audio>
 		</div>
 	{:else if (file.contentType === 'application/pdf' || html) && linkUrl}
+		<!-- Sandbox keeps framed HTML from navigating the dashboard window;
+		     PDFs stay unsandboxed because Chrome's viewer breaks inside one. -->
 		<iframe
 			src={linkUrl}
 			title={`Preview of ${file.displayName}`}
+			sandbox={file.contentType === 'application/pdf'
+				? undefined
+				: 'allow-scripts allow-same-origin allow-forms allow-popups allow-downloads'}
 			class="h-[70vh] w-full border-0"
 		></iframe>
 	{:else}
