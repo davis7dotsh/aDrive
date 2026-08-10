@@ -1,6 +1,7 @@
 import type { DashboardFile, FileDetail, FileSummary } from '@adrive/shared';
 import { Context, Effect, Layer, Schema } from 'effect';
 import { SqlClient } from 'effect/unstable/sql';
+import { dashboardThumbnailKey } from '../../file-thumbnail';
 import { AppConfig } from '../config';
 import {
 	compensateBlobFailure,
@@ -931,10 +932,10 @@ const makeFiles = Effect.gen(function* () {
 						const [versions, assets] = await Promise.all([
 							db
 								.prepare(
-									'SELECT r2_key FROM file_versions WHERE file_id = ? AND r2_key NOT LIKE ?'
+									'SELECT version, r2_key FROM file_versions WHERE file_id = ? AND r2_key NOT LIKE ?'
 								)
 								.bind(row.id, 'site-version/%')
-								.all<{ r2_key: string }>(),
+								.all<{ version: number; r2_key: string }>(),
 							db
 								.prepare('SELECT r2_key FROM site_assets WHERE file_id = ?')
 								.bind(row.id)
@@ -946,7 +947,10 @@ const makeFiles = Effect.gen(function* () {
 							);
 						}
 						return [
-							...versions.results.map((item) => item.r2_key),
+							...versions.results.flatMap((item) => [
+								item.r2_key,
+								dashboardThumbnailKey(row.id, item.version)
+							]),
 							...assets.results.map((item) => item.r2_key)
 						];
 					},

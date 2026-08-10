@@ -23,8 +23,12 @@ export const decodeRangeHeader = (value: string | null) =>
 					})
 	});
 
-export const rangeHeaders = (object: R2ObjectBody, totalSize: number) => {
-	if (!object.range) {
+export const rangeHeaders = (
+	object: Pick<R2ObjectBody, 'range' | 'size'>,
+	totalSize: number,
+	requestedRange: string | null
+) => {
+	if (requestedRange === null) {
 		return {
 			status: 200,
 			contentLength: object.size,
@@ -32,14 +36,44 @@ export const rangeHeaders = (object: R2ObjectBody, totalSize: number) => {
 		};
 	}
 	const range = object.range;
+	if (!range) return null;
+	const suffix =
+		'suffix' in range && typeof range.suffix === 'number'
+			? range.suffix
+			: undefined;
+	const returnedOffset =
+		'offset' in range && typeof range.offset === 'number'
+			? range.offset
+			: undefined;
+	const returnedLength =
+		'length' in range && typeof range.length === 'number'
+			? range.length
+			: undefined;
+	if (
+		suffix === undefined &&
+		returnedOffset === undefined &&
+		returnedLength === undefined
+	) {
+		return null;
+	}
 	const offset =
-		'suffix' in range
-			? Math.max(0, totalSize - range.suffix)
-			: (range.offset ?? Math.max(0, totalSize - (range.length ?? totalSize)));
+		suffix !== undefined
+			? Math.max(0, totalSize - suffix)
+			: (returnedOffset ??
+				Math.max(0, totalSize - (returnedLength ?? totalSize)));
 	const length =
-		'suffix' in range
-			? Math.min(totalSize, range.suffix)
-			: (range.length ?? totalSize - offset);
+		suffix !== undefined
+			? Math.min(totalSize, suffix)
+			: (returnedLength ?? totalSize - offset);
+	if (
+		!Number.isSafeInteger(offset) ||
+		!Number.isSafeInteger(length) ||
+		offset < 0 ||
+		length <= 0 ||
+		offset + length > totalSize
+	) {
+		return null;
+	}
 	return {
 		status: 206,
 		contentLength: length,

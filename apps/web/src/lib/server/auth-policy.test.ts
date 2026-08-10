@@ -3,6 +3,7 @@ import {
 	allowsCredentialOrigin,
 	normalizeUserCode,
 	shouldCountDownload,
+	shouldRecordFileDownload,
 	validateExpiration
 } from './auth-policy';
 
@@ -27,6 +28,12 @@ describe('auth policy', () => {
 		expect(shouldCountDownload('bytes=0-999')).toBe(true);
 		expect(shouldCountDownload('bytes=1000-1999')).toBe(false);
 		expect(shouldCountDownload('bytes=-500')).toBe(false);
+	});
+
+	it('does not count an internal thumbnail read as a download', () => {
+		expect(shouldRecordFileDownload(null, 'thumbnail')).toBe(false);
+		expect(shouldRecordFileDownload('bytes=0-999', 'thumbnail')).toBe(false);
+		expect(shouldRecordFileDownload(null, null)).toBe(true);
 	});
 
 	it('requires the dashboard origin for cookie-authenticated mutations', () => {

@@ -1,6 +1,10 @@
 <script lang="ts">
 	import type { DashboardFile } from '@adrive/shared';
 	import { getContentLink, getFilePreview } from '$lib/dashboard/api';
+	import {
+		dashboardThumbnailUrl,
+		supportsDashboardThumbnail
+	} from '$lib/file-thumbnail';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { resource, useIntersectionObserver } from 'runed';
 	import type { Attachment } from 'svelte/attachments';
@@ -25,6 +29,7 @@
 		};
 	};
 	const image = $derived(file.contentType.startsWith('image/'));
+	const resizableImage = $derived(supportsDashboardThumbnail(file.contentType));
 	const frame = $derived(
 		file.kind === 'site' || file.contentType.startsWith('text/html')
 	);
@@ -55,6 +60,7 @@
 				file.kind,
 				file.public,
 				image,
+				resizableImage,
 				frame,
 				textLike,
 				unavailable,
@@ -69,6 +75,7 @@
 				kind,
 				isPublic,
 				isImage,
+				isResizableImage,
 				isFrame,
 				isText,
 				isUnavailable,
@@ -85,7 +92,12 @@
 						: (await getContentLink(auth, id, version, signal, isUnavailable))
 								.url;
 				signal.throwIfAborted();
-				return { source, text: '' };
+				return {
+					source: isResizableImage
+						? dashboardThumbnailUrl(source, id, version)
+						: source,
+					text: ''
+				};
 			}
 			if (isFrame) {
 				if (kind === 'site') {
@@ -149,7 +161,10 @@
 		<img
 			src={source}
 			alt=""
+			width="480"
+			height="360"
 			loading="lazy"
+			decoding="async"
 			class="size-full object-cover transition-opacity duration-200 {previewLoading
 				? 'opacity-0'
 				: 'opacity-100'}"

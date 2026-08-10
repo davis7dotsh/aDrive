@@ -5,10 +5,10 @@ import {
 	contentSecurityPolicy
 } from '$lib/server/content-headers';
 import { AppConfig } from '$lib/server/config';
-import { shouldCountDownload } from '$lib/server/auth-policy';
+import { shouldRecordFileDownload } from '$lib/server/auth-policy';
 import { decodeRangeHeader, rangeHeaders } from '$lib/server/download-response';
 import { runEdge } from '$lib/server/edge';
-import { NotFound } from '$lib/server/errors';
+import { NotFound, StorageError } from '$lib/server/errors';
 import { Blobs } from '$lib/server/services/blobs';
 import { Files } from '$lib/server/services/files';
 import { GrantSecrets } from '$lib/server/services/grant-secrets';
@@ -51,8 +51,14 @@ export const GET: RequestHandler = ({ params, request, url }) =>
 			const blobs = yield* Blobs;
 			const range = yield* decodeRangeHeader(request.headers.get('range'));
 			const object = yield* blobs.get(content.r2Key, range);
-			const responseRange = rangeHeaders(object, content.file.sizeBytes);
-			if (shouldCountDownload(range)) {
+			const responseRange = rangeHeaders(object, content.file.sizeBytes, range);
+			if (!responseRange) {
+				return yield* new StorageError({
+					operation: 'read file range',
+					cause: 'R2 returned invalid byte range metadata'
+				});
+			}
+			if (shouldRecordFileDownload(range, url.searchParams.get('purpose'))) {
 				yield* files.recordDownload(content.file.id);
 			}
 
