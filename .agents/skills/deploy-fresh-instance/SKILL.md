@@ -21,7 +21,8 @@ the operator's own domain, hostnames, and names.
 - `wrangler whoami` succeeds and points at the intended Cloudflare account.
 - The operator's domain is already added as a **Cloudflare zone** (the
   custom-domain routes attach automatically on deploy only if the zone
-  exists). Individual DNS records are created by the deploy; the zone is not.
+  exists). Remove conflicting CNAME records for the two application
+  hostnames; the deploy creates their DNS records, but not the zone.
 - Node 26 + pnpm installed; run `pnpm install` once at the repo root.
 - Decide the **two hostnames** now — a dashboard origin and a content
   origin. They must be **distinct hosts** (e.g. `drive.` and `files.`);
@@ -65,8 +66,9 @@ adrive-production` shows them appearing one at a time over a minute or
    Vectorize/AI setup above is incomplete, the deploy in step 5 will stop.
 
 5. In the Cloudflare dashboard, open **Images → Transformations**, select
-   the application zone, and enable transformations. Complete this before
-   deployment; the dashboard thumbnail route depends on the zone-level setting.
+   the zone that owns `CONTENT_ORIGIN` (`davis7.space` for
+   `files.davis7.space`), and enable transformations. Dashboard thumbnails
+   require this zone-level setting.
 
 ## 3. Set the passcode secret (from `apps/web`)
 
@@ -132,7 +134,8 @@ Expected live checks once both origins are up:
 - `GET <content>/api/files` → **421** (dashboard API rejected on content origin)
 - `GET <dashboard>/f/<uuid>` → **421** (content rejected on dashboard origin)
 - missing file → **404**
-- a real public file without a `Range` header → **200** with no `Content-Range`
+- a known non-empty public file without a `Range` header → **200** with no
+  `Content-Range`
 - the same file with `Range: bytes=0-99` → **206** with a valid `Content-Range`
 
 ## 7. Backfill note (semantic search)

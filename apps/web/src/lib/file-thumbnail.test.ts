@@ -30,6 +30,8 @@ describe('dashboard thumbnails', () => {
 		expect(isWebpContentType('Image/WebP; charset=binary')).toBe(true);
 		expect(isWebpContentType('image/png')).toBe(false);
 		expect(matchesEtag('"other", "current"', '"current"')).toBe(true);
+		expect(matchesEtag('W/"current"', '"current"')).toBe(true);
+		expect(matchesEtag('"current"', 'W/"current"')).toBe(true);
 		expect(matchesEtag('*', '"current"')).toBe(true);
 		expect(matchesEtag('"other"', '"current"')).toBe(false);
 	});

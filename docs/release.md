@@ -27,13 +27,15 @@ installer run from the repository root.
    384 dims; embeddings run within the 10k neurons/day allocation).
 
 5. In the Cloudflare dashboard, open **Images → Transformations**, select
-   the application zone, and enable transformations. Dashboard thumbnails
+   the zone that owns `CONTENT_ORIGIN` (`davis7.space` for
+   `files.davis7.space`), and enable transformations. Dashboard thumbnails
    require this zone-level setting.
 6. From `apps/web`: `wrangler secret put PASSCODE --env production`
    (12+ characters).
-7. DNS for `drive.davis7.space` and `files.davis7.space` must be on the
-   Cloudflare zone for davis7.space; the custom-domain routes in
-   `wrangler.jsonc` attach them on first deploy.
+7. The `davis7.space` zone must be active in Cloudflare. Remove existing
+   CNAME records for `drive.davis7.space` and `files.davis7.space` before
+   deployment; the custom-domain routes in `wrangler.jsonc` create the
+   required DNS records automatically.
 8. From the repo root: `pnpm release`
 9. From the repo root: set up backups on your backup host
    (`scripts/backup/install-backup-host.sh`) and complete the restore drill

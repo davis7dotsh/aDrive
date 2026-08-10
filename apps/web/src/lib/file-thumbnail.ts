@@ -28,11 +28,14 @@ export const supportsDashboardThumbnail = (contentType: string) => {
 export const isWebpContentType = (contentType: string | null) =>
 	contentType?.split(';', 1)[0]?.trim().toLowerCase() === 'image/webp';
 
+const weakEtag = (value: string) => value.trim().replace(/^W\//, '');
+
 export const matchesEtag = (header: string | null, etag: string) =>
 	header
 		?.split(',')
 		.some(
-			(candidate) => candidate.trim() === '*' || candidate.trim() === etag
+			(candidate) =>
+				candidate.trim() === '*' || weakEtag(candidate) === weakEtag(etag)
 		) ?? false;
 
 export const dashboardThumbnailUrl = (
