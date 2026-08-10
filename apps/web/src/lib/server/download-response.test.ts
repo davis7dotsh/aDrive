@@ -26,6 +26,23 @@ describe('download ranges', () => {
 		});
 	});
 
+	it('returns a full response when R2 ignores a range request', () => {
+		const expected = {
+			status: 200,
+			contentLength: 1_000,
+			contentRange: undefined
+		};
+		expect(
+			rangeHeaders({ size: 1_000, range: undefined }, 1_000, 'bytes=0-99')
+		).toEqual(expected);
+		expect(
+			rangeHeaders({ size: 1_000, range: {} as R2Range }, 1_000, 'bytes=0-99')
+		).toEqual(expected);
+		expect(
+			rangeHeaders({ size: 0, range: { offset: 0, length: 0 } }, 0, 'bytes=0-')
+		).toEqual({ status: 200, contentLength: 0, contentRange: undefined });
+	});
+
 	it('builds valid offset and suffix range responses', () => {
 		const offsetRange = Object.defineProperty(
 			{ offset: 100, length: 200 },
@@ -55,9 +72,6 @@ describe('download ranges', () => {
 				1_000,
 				'bytes=0-99'
 			)
-		).toBeNull();
-		expect(
-			rangeHeaders({ size: 1_000, range: {} as R2Range }, 1_000, 'bytes=0-99')
 		).toBeNull();
 	});
 });

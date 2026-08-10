@@ -28,15 +28,14 @@ export const rangeHeaders = (
 	totalSize: number,
 	requestedRange: string | null
 ) => {
-	if (requestedRange === null) {
-		return {
-			status: 200,
-			contentLength: object.size,
-			contentRange: undefined
-		};
-	}
+	const fullResponse = () => ({
+		status: 200,
+		contentLength: object.size,
+		contentRange: undefined
+	});
+	if (requestedRange === null) return fullResponse();
 	const range = object.range;
-	if (!range) return null;
+	if (!range) return fullResponse();
 	const suffix =
 		'suffix' in range && typeof range.suffix === 'number'
 			? range.suffix
@@ -54,7 +53,7 @@ export const rangeHeaders = (
 		returnedOffset === undefined &&
 		returnedLength === undefined
 	) {
-		return null;
+		return fullResponse();
 	}
 	const offset =
 		suffix !== undefined
@@ -65,6 +64,7 @@ export const rangeHeaders = (
 		suffix !== undefined
 			? Math.min(totalSize, suffix)
 			: (returnedLength ?? totalSize - offset);
+	if (totalSize === 0 && offset === 0 && length === 0) return fullResponse();
 	if (
 		!Number.isSafeInteger(offset) ||
 		!Number.isSafeInteger(length) ||
