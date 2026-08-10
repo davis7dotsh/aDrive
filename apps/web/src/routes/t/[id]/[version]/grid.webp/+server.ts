@@ -84,16 +84,20 @@ export const GET: RequestHandler = ({ params, url }) =>
 				);
 			}
 
+			const sourceGrant = yield* grantSecrets.mint({
+				contentOrigin: config.contentOrigin,
+				fileId: params.id,
+				version: content.file.version,
+				purpose: 'thumbnail-source'
+			});
 			const sourceUrl = dashboardThumbnailSourceUrl(
 				config.contentOrigin,
 				params.id,
 				content.file.version,
-				hasGrant
-					? {
-							expires: url.searchParams.get('e') ?? '',
-							signature: url.searchParams.get('g') ?? ''
-						}
-					: null
+				{
+					expires: String(sourceGrant.expiresAtSeconds),
+					signature: sourceGrant.signature
+				}
 			);
 			const bytes = yield* Effect.tryPromise({
 				try: async () => {

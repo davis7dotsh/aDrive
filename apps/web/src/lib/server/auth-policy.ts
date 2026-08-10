@@ -46,8 +46,8 @@ export const shouldCountDownload = (rangeHeader: string | null) => {
 
 export const shouldRecordFileDownload = (
 	rangeHeader: string | null,
-	purpose: string | null
-) => purpose !== 'thumbnail' && shouldCountDownload(rangeHeader);
+	verifiedThumbnailSource: boolean
+) => !verifiedThumbnailSource && shouldCountDownload(rangeHeader);
 
 export const allowsCredentialOrigin = (
 	method: string,

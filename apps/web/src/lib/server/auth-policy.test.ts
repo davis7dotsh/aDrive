@@ -31,9 +31,9 @@ describe('auth policy', () => {
 	});
 
 	it('does not count an internal thumbnail read as a download', () => {
-		expect(shouldRecordFileDownload(null, 'thumbnail')).toBe(false);
-		expect(shouldRecordFileDownload('bytes=0-999', 'thumbnail')).toBe(false);
-		expect(shouldRecordFileDownload(null, null)).toBe(true);
+		expect(shouldRecordFileDownload(null, true)).toBe(false);
+		expect(shouldRecordFileDownload('bytes=0-999', true)).toBe(false);
+		expect(shouldRecordFileDownload(null, false)).toBe(true);
 	});
 
 	it('requires the dashboard origin for cookie-authenticated mutations', () => {

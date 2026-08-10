@@ -29,12 +29,17 @@ export const GET: RequestHandler = ({ params, request, url }) =>
 			const version = requestedVersion(url);
 			if (version === null) return yield* new NotFound({ id: params.id });
 			const hasGrant = url.searchParams.has('e') && url.searchParams.has('g');
+			const thumbnailSource = url.searchParams.get('purpose') === 'thumbnail';
+			if (thumbnailSource && !hasGrant) {
+				return yield* new NotFound({ id: params.id });
+			}
 			const content = yield* files.findContent(params.id, version, hasGrant);
 			const privateResponse = hasGrant || !content.file.public;
 			const dashboardPreview =
 				(content.file.contentType === 'application/pdf' ||
 					content.file.contentType.startsWith('text/html')) &&
 				url.searchParams.get('preview') === 'dashboard';
+			let verifiedThumbnailSource = false;
 			if (!content.file.public || hasGrant) {
 				const expiresAtSeconds = Number(url.searchParams.get('e'));
 				const signature = url.searchParams.get('g') ?? '';
@@ -44,9 +49,11 @@ export const GET: RequestHandler = ({ params, request, url }) =>
 					fileId: params.id,
 					version: content.file.version,
 					expiresAtSeconds,
-					signature
+					signature,
+					purpose: thumbnailSource ? 'thumbnail-source' : undefined
 				});
 				if (!granted) return yield* new NotFound({ id: params.id });
+				verifiedThumbnailSource = thumbnailSource;
 			}
 			const blobs = yield* Blobs;
 			const range = yield* decodeRangeHeader(request.headers.get('range'));
@@ -58,7 +65,7 @@ export const GET: RequestHandler = ({ params, request, url }) =>
 					cause: 'R2 returned invalid byte range metadata'
 				});
 			}
-			if (shouldRecordFileDownload(range, url.searchParams.get('purpose'))) {
+			if (shouldRecordFileDownload(range, verifiedThumbnailSource)) {
 				yield* files.recordDownload(content.file.id);
 			}
 
