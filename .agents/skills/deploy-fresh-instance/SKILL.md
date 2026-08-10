@@ -64,6 +64,10 @@ adrive-production` shows them appearing one at a time over a minute or
    of silently degrading to keyword search. That is intended — if the
    Vectorize/AI setup above is incomplete, the deploy in step 5 will stop.
 
+5. In the Cloudflare dashboard, open **Images → Transformations**, select
+   the application zone, and enable transformations. Complete this before
+   deployment; the dashboard thumbnail route depends on the zone-level setting.
+
 ## 3. Set the passcode secret (from `apps/web`)
 
 ```
@@ -128,7 +132,8 @@ Expected live checks once both origins are up:
 - `GET <content>/api/files` → **421** (dashboard API rejected on content origin)
 - `GET <dashboard>/f/<uuid>` → **421** (content rejected on dashboard origin)
 - missing file → **404**
-- a real public file → **206**
+- a real public file without a `Range` header → **200** with no `Content-Range`
+- the same file with `Range: bytes=0-99` → **206** with a valid `Content-Range`
 
 ## 7. Backfill note (semantic search)
 

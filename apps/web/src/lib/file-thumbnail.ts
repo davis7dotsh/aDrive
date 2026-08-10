@@ -25,6 +25,16 @@ export const supportsDashboardThumbnail = (contentType: string) => {
 	return normalized !== undefined && TRANSFORMABLE_IMAGE_TYPES.has(normalized);
 };
 
+export const isWebpContentType = (contentType: string | null) =>
+	contentType?.split(';', 1)[0]?.trim().toLowerCase() === 'image/webp';
+
+export const matchesEtag = (header: string | null, etag: string) =>
+	header
+		?.split(',')
+		.some(
+			(candidate) => candidate.trim() === '*' || candidate.trim() === etag
+		) ?? false;
+
 export const dashboardThumbnailUrl = (
 	contentUrl: string,
 	id: string,

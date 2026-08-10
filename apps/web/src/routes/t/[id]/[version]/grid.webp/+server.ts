@@ -4,6 +4,8 @@ import {
 	DASHBOARD_THUMBNAIL,
 	dashboardThumbnailKey,
 	dashboardThumbnailSourceUrl,
+	isWebpContentType,
+	matchesEtag,
 	supportsDashboardThumbnail
 } from '$lib/file-thumbnail';
 import { contentSecurityPolicy } from '$lib/server/content-headers';
@@ -13,6 +15,8 @@ import { NotFound, StorageError } from '$lib/server/errors';
 import { Blobs } from '$lib/server/services/blobs';
 import { Files } from '$lib/server/services/files';
 import { GrantSecrets } from '$lib/server/services/grant-secrets';
+
+const PUBLIC_CACHE_CONTROL = 'public, max-age=0, must-revalidate';
 
 const parsedVersion = (value: string) => {
 	const version = Number(value);
@@ -29,7 +33,7 @@ const thumbnailResponse = (
 		headers: {
 			'Cache-Control': privateResponse
 				? 'private, no-store'
-				: 'public, max-age=31536000, immutable',
+				: PUBLIC_CACHE_CONTROL,
 			'Content-Length': String(size),
 			'Content-Security-Policy': contentSecurityPolicy('image/webp'),
 			'Content-Type': 'image/webp',
@@ -39,7 +43,16 @@ const thumbnailResponse = (
 		}
 	});
 
-export const GET: RequestHandler = ({ params, url }) =>
+const notModifiedResponse = (etag: string) =>
+	new Response(null, {
+		status: 304,
+		headers: {
+			'Cache-Control': PUBLIC_CACHE_CONTROL,
+			ETag: etag
+		}
+	});
+
+export const GET: RequestHandler = ({ params, request, url }) =>
 	runEdge(
 		Effect.gen(function* () {
 			const version = parsedVersion(params.version);
@@ -76,6 +89,15 @@ export const GET: RequestHandler = ({ params, url }) =>
 				)
 			);
 			if (cached.found) {
+				if (
+					!privateResponse &&
+					matchesEtag(
+						request.headers.get('if-none-match'),
+						cached.object.httpEtag
+					)
+				) {
+					return notModifiedResponse(cached.object.httpEtag);
+				}
 				return thumbnailResponse(
 					cached.object.body,
 					cached.object.size,
@@ -107,7 +129,7 @@ export const GET: RequestHandler = ({ params, url }) =>
 					if (!response.ok) {
 						throw new Error(`Image transform returned ${response.status}`);
 					}
-					if (response.headers.get('content-type') !== 'image/webp') {
+					if (!isWebpContentType(response.headers.get('content-type'))) {
 						throw new Error('Image transform did not return WebP');
 					}
 					const output = await response.arrayBuffer();
@@ -126,6 +148,12 @@ export const GET: RequestHandler = ({ params, url }) =>
 				bytes.byteLength,
 				'image/webp'
 			);
+			if (
+				!privateResponse &&
+				matchesEtag(request.headers.get('if-none-match'), stored.etag)
+			) {
+				return notModifiedResponse(stored.etag);
+			}
 
 			return thumbnailResponse(
 				bytes,

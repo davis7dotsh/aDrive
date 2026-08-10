@@ -4,6 +4,8 @@ import {
 	dashboardThumbnailKey,
 	dashboardThumbnailSourceUrl,
 	dashboardThumbnailUrl,
+	isWebpContentType,
+	matchesEtag,
 	supportsDashboardThumbnail
 } from './file-thumbnail';
 
@@ -21,6 +23,15 @@ describe('dashboard thumbnails', () => {
 		expect(dashboardThumbnailKey('file-id', 3)).toBe(
 			'thumbnail/file-id/3/grid.webp'
 		);
+	});
+
+	it('accepts parameterized WebP responses and matches cached validators', () => {
+		expect(isWebpContentType('image/webp')).toBe(true);
+		expect(isWebpContentType('Image/WebP; charset=binary')).toBe(true);
+		expect(isWebpContentType('image/png')).toBe(false);
+		expect(matchesEtag('"other", "current"', '"current"')).toBe(true);
+		expect(matchesEtag('*', '"current"')).toBe(true);
+		expect(matchesEtag('"other"', '"current"')).toBe(false);
 	});
 
 	it('resizes raster images but leaves SVG and non-images alone', () => {
