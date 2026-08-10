@@ -93,6 +93,16 @@ describe('private file grants', () => {
 			verifyPrivateGrant({ ...base, purpose: 'thumbnail-source' })
 		).resolves.toBe(true);
 		await expect(verifyPrivateGrant(base)).resolves.toBe(false);
+
+		const unscopedGrant = await mint();
+		await expect(
+			verifyPrivateGrant({
+				...base,
+				expiresAtSeconds: unscopedGrant.expiresAtSeconds,
+				signature: unscopedGrant.signature,
+				purpose: 'thumbnail-source'
+			})
+		).resolves.toBe(false);
 	});
 
 	it('rejects expired and tampered grants', async () => {
