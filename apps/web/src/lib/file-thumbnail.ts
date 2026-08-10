@@ -28,6 +28,11 @@ export const supportsDashboardThumbnail = (contentType: string) => {
 export const isWebpContentType = (contentType: string | null) =>
 	contentType?.split(';', 1)[0]?.trim().toLowerCase() === 'image/webp';
 
+export const isTransformedWebpResponse = (
+	contentType: string | null,
+	cfResized: string | null
+) => cfResized !== null && isWebpContentType(contentType);
+
 const weakEtag = (value: string) => value.trim().replace(/^W\//, '');
 
 export const matchesEtag = (header: string | null, etag: string) =>

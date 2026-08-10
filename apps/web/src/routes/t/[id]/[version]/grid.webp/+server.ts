@@ -4,7 +4,7 @@ import {
 	DASHBOARD_THUMBNAIL,
 	dashboardThumbnailKey,
 	dashboardThumbnailSourceUrl,
-	isWebpContentType,
+	isTransformedWebpResponse,
 	matchesEtag,
 	supportsDashboardThumbnail
 } from '$lib/file-thumbnail';
@@ -129,8 +129,13 @@ export const GET: RequestHandler = ({ params, request, url }) =>
 					if (!response.ok) {
 						throw new Error(`Image transform returned ${response.status}`);
 					}
-					if (!isWebpContentType(response.headers.get('content-type'))) {
-						throw new Error('Image transform did not return WebP');
+					if (
+						!isTransformedWebpResponse(
+							response.headers.get('content-type'),
+							response.headers.get('cf-resized')
+						)
+					) {
+						throw new Error('Image transform did not return transformed WebP');
 					}
 					const output = await response.arrayBuffer();
 					if (output.byteLength === 0) {

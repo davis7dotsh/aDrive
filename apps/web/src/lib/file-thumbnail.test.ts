@@ -4,6 +4,7 @@ import {
 	dashboardThumbnailKey,
 	dashboardThumbnailSourceUrl,
 	dashboardThumbnailUrl,
+	isTransformedWebpResponse,
 	isWebpContentType,
 	matchesEtag,
 	supportsDashboardThumbnail
@@ -29,6 +30,8 @@ describe('dashboard thumbnails', () => {
 		expect(isWebpContentType('image/webp')).toBe(true);
 		expect(isWebpContentType('Image/WebP; charset=binary')).toBe(true);
 		expect(isWebpContentType('image/png')).toBe(false);
+		expect(isTransformedWebpResponse('image/webp', 'quality=75')).toBe(true);
+		expect(isTransformedWebpResponse('image/webp', null)).toBe(false);
 		expect(matchesEtag('"other", "current"', '"current"')).toBe(true);
 		expect(matchesEtag('W/"current"', '"current"')).toBe(true);
 		expect(matchesEtag('"current"', 'W/"current"')).toBe(true);
