@@ -31,7 +31,11 @@ export const isWebpContentType = (contentType: string | null) =>
 export const isTransformedWebpResponse = (
 	contentType: string | null,
 	cfResized: string | null
-) => cfResized !== null && isWebpContentType(contentType);
+) =>
+	cfResized !== null &&
+	cfResized.trim().length > 0 &&
+	!/(?:^|[;,])\s*err\s*=/i.test(cfResized) &&
+	isWebpContentType(contentType);
 
 const weakEtag = (value: string) => value.trim().replace(/^W\//, '');
 
