@@ -26,7 +26,11 @@ describe('dashboard thumbnails', () => {
 	it('resizes raster images but leaves SVG and non-images alone', () => {
 		expect(supportsDashboardThumbnail('image/jpeg')).toBe(true);
 		expect(supportsDashboardThumbnail(' IMAGE/PNG; charset=binary')).toBe(true);
+		expect(supportsDashboardThumbnail('image/avif')).toBe(true);
+		expect(supportsDashboardThumbnail('image/heic')).toBe(true);
 		expect(supportsDashboardThumbnail('image/svg+xml')).toBe(false);
+		expect(supportsDashboardThumbnail('image/bmp')).toBe(false);
+		expect(supportsDashboardThumbnail('image/tiff')).toBe(false);
 		expect(supportsDashboardThumbnail('application/pdf')).toBe(false);
 	});
 

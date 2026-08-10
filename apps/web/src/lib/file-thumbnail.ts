@@ -11,11 +11,18 @@ export const DASHBOARD_THUMBNAIL = {
 export const dashboardThumbnailKey = (id: string, version: number) =>
 	`thumbnail/${id}/${version}/grid.webp`;
 
+const TRANSFORMABLE_IMAGE_TYPES = new Set([
+	'image/jpeg',
+	'image/png',
+	'image/gif',
+	'image/webp',
+	'image/avif',
+	'image/heic'
+]);
+
 export const supportsDashboardThumbnail = (contentType: string) => {
 	const normalized = contentType.split(';', 1)[0]?.trim().toLowerCase();
-	return (
-		normalized?.startsWith('image/') === true && normalized !== 'image/svg+xml'
-	);
+	return normalized !== undefined && TRANSFORMABLE_IMAGE_TYPES.has(normalized);
 };
 
 export const dashboardThumbnailUrl = (
