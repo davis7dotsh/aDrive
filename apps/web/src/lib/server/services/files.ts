@@ -1,7 +1,7 @@
 import type { DashboardFile, FileDetail, FileSummary } from '@adrive/shared';
 import { Context, Effect, Layer, Schema } from 'effect';
 import { SqlClient } from 'effect/unstable/sql';
-import { dashboardThumbnailKey } from '../../file-thumbnail';
+import { dashboardThumbnailPrefix } from '../../file-thumbnail';
 import { AppConfig } from '../config';
 import {
 	compensateBlobFailure,
@@ -904,7 +904,7 @@ const makeFiles = Effect.gen(function* () {
 				yield* checkStorageQuota(
 					thumbnailQuotaDelta(state.thumbnail_size_bytes, size)
 				);
-				const r2Key = `thumbnail/${id}/${version}/${crypto.randomUUID()}.webp`;
+				const r2Key = `${dashboardThumbnailPrefix(id, version)}${crypto.randomUUID()}.webp`;
 				const stored = yield* blobs.put(r2Key, body, size, 'image/webp');
 				const commitCommand = commitThumbnailStorageCommand(
 					id,
@@ -1041,21 +1041,17 @@ const makeFiles = Effect.gen(function* () {
 				});
 				if (claimed.meta.changes !== 1) continue;
 
-				const keys = yield* Effect.tryPromise({
+				const deletion = yield* Effect.tryPromise({
 					try: async () => {
 						const [versions, assets] = await Promise.all([
 							db
 								.prepare(
-									`SELECT version, r2_key, thumbnail_r2_key
+									`SELECT version, r2_key
 									FROM file_versions
 									WHERE file_id = ? AND r2_key NOT LIKE ?`
 								)
 								.bind(row.id, 'site-version/%')
-								.all<{
-									version: number;
-									r2_key: string;
-									thumbnail_r2_key: string | null;
-								}>(),
+								.all<{ version: number; r2_key: string }>(),
 							db
 								.prepare('SELECT r2_key FROM site_assets WHERE file_id = ?')
 								.bind(row.id)
@@ -1066,22 +1062,22 @@ const makeFiles = Effect.gen(function* () {
 								versions.error ?? assets.error ?? 'Purge key listing failed'
 							);
 						}
-						return [
-							...versions.results.flatMap((item) => [
-								item.r2_key,
-								dashboardThumbnailKey(row.id, item.version),
-								...(item.thumbnail_r2_key === null
-									? []
-									: [item.thumbnail_r2_key])
-							]),
-							...assets.results.map((item) => item.r2_key)
-						];
+						return {
+							keys: [
+								...versions.results.map((item) => item.r2_key),
+								...assets.results.map((item) => item.r2_key)
+							],
+							thumbnailPrefixes: versions.results.map((item) =>
+								dashboardThumbnailPrefix(row.id, item.version)
+							)
+						};
 					},
 					catch: (cause) =>
 						new StorageError({ operation: 'list file purge keys', cause })
 				});
 
-				const deleted = yield* blobs.deleteMany(keys).pipe(
+				const deleted = yield* blobs.deleteMany(deletion.keys).pipe(
+					Effect.andThen(blobs.deletePrefixes(deletion.thumbnailPrefixes)),
 					Effect.as(true),
 					Effect.catch((failure) =>
 						Effect.tryPromise({

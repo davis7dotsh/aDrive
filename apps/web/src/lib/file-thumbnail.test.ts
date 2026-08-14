@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	DASHBOARD_THUMBNAIL,
-	dashboardThumbnailKey,
+	dashboardThumbnailPrefix,
 	dashboardThumbnailSourceUrl,
 	dashboardThumbnailUrl,
 	isTransformedWebpResponse,
@@ -21,9 +21,7 @@ describe('dashboard thumbnails', () => {
 			anim: false,
 			metadata: 'none'
 		});
-		expect(dashboardThumbnailKey('file-id', 3)).toBe(
-			'thumbnail/file-id/3/grid.webp'
-		);
+		expect(dashboardThumbnailPrefix('file-id', 3)).toBe('thumbnail/file-id/3/');
 	});
 
 	it('accepts parameterized WebP responses and matches cached validators', () => {

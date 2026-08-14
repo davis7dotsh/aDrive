@@ -8,8 +8,8 @@ export const DASHBOARD_THUMBNAIL = {
 	metadata: 'none'
 } as const;
 
-export const dashboardThumbnailKey = (id: string, version: number) =>
-	`thumbnail/${id}/${version}/grid.webp`;
+export const dashboardThumbnailPrefix = (id: string, version: number) =>
+	`thumbnail/${id}/${version}/`;
 
 const TRANSFORMABLE_IMAGE_TYPES = new Set([
 	'image/jpeg',

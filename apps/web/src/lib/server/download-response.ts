@@ -23,18 +23,6 @@ export const decodeRangeHeader = (value: string | null) =>
 					})
 	});
 
-const requestedRangeOffset = (
-	value: string,
-	totalSize: number,
-	returnedLength: number
-) => {
-	const match = /^bytes=(?:(\d+)-\d*|-(\d+))$/i.exec(value.trim());
-	if (match === null) return Number.NaN;
-	return match[2] === undefined
-		? Number(match[1])
-		: Math.max(0, totalSize - returnedLength);
-};
-
 export const rangeHeaders = (
 	object: Pick<R2ObjectBody, 'range' | 'size'>,
 	totalSize: number,
@@ -70,12 +58,7 @@ export const rangeHeaders = (
 	const offset =
 		suffix !== undefined
 			? Math.max(0, totalSize - suffix)
-			: (returnedOffset ??
-				requestedRangeOffset(
-					requestedRange,
-					totalSize,
-					returnedLength ?? totalSize
-				));
+			: (returnedOffset ?? 0);
 	const length =
 		suffix !== undefined
 			? Math.min(totalSize, suffix)

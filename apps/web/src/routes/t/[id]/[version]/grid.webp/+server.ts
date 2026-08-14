@@ -51,6 +51,19 @@ const notModifiedResponse = (etag: string) =>
 		}
 	});
 
+const publicThumbnailRedirect = (url: URL) => {
+	const location = new URL(url);
+	location.searchParams.delete('e');
+	location.searchParams.delete('g');
+	return new Response(null, {
+		status: 307,
+		headers: {
+			'Cache-Control': 'private, no-store',
+			Location: location.href
+		}
+	});
+};
+
 export const GET: RequestHandler = ({ params, request, url }) =>
 	runEdge(
 		Effect.gen(function* () {
@@ -80,7 +93,10 @@ export const GET: RequestHandler = ({ params, request, url }) =>
 				return yield* new NotFound({ id: params.id });
 			}
 
-			const privateResponse = resolved.unavailable || !content.file.public;
+			const redirectPublicGrant =
+				hasGrant && !resolved.unavailable && content.file.public;
+			const privateResponse =
+				hasGrant || resolved.unavailable || !content.file.public;
 			if (!content.file.public || hasGrant) {
 				const granted = yield* grantSecrets.verify({
 					contentOrigin: config.contentOrigin,
@@ -104,6 +120,7 @@ export const GET: RequestHandler = ({ params, request, url }) =>
 							)
 						);
 			if (cached.found) {
+				if (redirectPublicGrant) return publicThumbnailRedirect(url);
 				if (
 					!privateResponse &&
 					matchesEtag(
@@ -171,6 +188,7 @@ export const GET: RequestHandler = ({ params, request, url }) =>
 				content.thumbnailR2Key
 			);
 			if (result._tag === 'Existing') {
+				if (redirectPublicGrant) return publicThumbnailRedirect(url);
 				const existing = yield* blobs.get(result.r2Key);
 				if (
 					!privateResponse &&
@@ -186,6 +204,7 @@ export const GET: RequestHandler = ({ params, request, url }) =>
 				);
 			}
 			const stored = result.blob;
+			if (redirectPublicGrant) return publicThumbnailRedirect(url);
 			if (
 				!privateResponse &&
 				matchesEtag(request.headers.get('if-none-match'), stored.etag)
