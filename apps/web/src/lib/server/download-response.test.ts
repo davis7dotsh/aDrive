@@ -65,13 +65,31 @@ describe('download ranges', () => {
 		});
 	});
 
-	it('treats a length-only R2 range as a prefix', () => {
+	it('derives a missing R2 offset from the requested range', () => {
 		expect(
 			rangeHeaders({ size: 100, range: { length: 100 } }, 1_000, 'bytes=0-99')
 		).toEqual({
 			status: 206,
 			contentLength: 100,
 			contentRange: 'bytes 0-99/1000'
+		});
+		expect(
+			rangeHeaders(
+				{ size: 100, range: { length: 100 } },
+				1_000,
+				'bytes=900-999'
+			)
+		).toEqual({
+			status: 206,
+			contentLength: 100,
+			contentRange: 'bytes 900-999/1000'
+		});
+		expect(
+			rangeHeaders({ size: 100, range: { length: 100 } }, 1_000, 'bytes=-100')
+		).toEqual({
+			status: 206,
+			contentLength: 100,
+			contentRange: 'bytes 900-999/1000'
 		});
 	});
 
