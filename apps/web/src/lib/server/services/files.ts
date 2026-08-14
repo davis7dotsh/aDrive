@@ -29,7 +29,12 @@ import { fileIndexStatements } from '../search-index';
 import { ensureStorageQuota } from '../storage-quota';
 import { retryAt, safeIndexError } from '../semantic-policy';
 import { validateUploadLength } from '../upload-stream';
-import { Blobs } from './blobs';
+import {
+	commitThumbnailStorageCommand,
+	thumbnailQuotaDelta,
+	thumbnailStorageStateCommand
+} from '../thumbnail-storage';
+import { Blobs, type StoredBlob } from './blobs';
 import { Db } from './bindings';
 import { Tags } from './tags';
 
@@ -139,6 +144,12 @@ export interface FilesShape {
 	) => Effect.Effect<MutationResult, InvalidRequest | NotFound | StorageError>;
 	readonly scheduleAllPurgesNow: Effect.Effect<number, StorageError>;
 	readonly recordDownload: (id: string) => Effect.Effect<void, StorageError>;
+	readonly storeDashboardThumbnail: (
+		id: string,
+		version: number,
+		body: ReadableStream<Uint8Array> | null,
+		size: number
+	) => Effect.Effect<StoredBlob, InvalidRequest | NotFound | StorageError>;
 	readonly sweepPurges: (limit: number) => Effect.Effect<number, StorageError>;
 	readonly findContent: (
 		id: string,
@@ -178,8 +189,8 @@ const makeFiles = Effect.gen(function* () {
 	const tags = yield* Tags;
 	const preparePurgeCommand = (command: PurgeSqlCommand) =>
 		db.prepare(command.sql).bind(...command.bindings);
-	const compensateStoredBlob = (
-		failure: StorageError,
+	const compensateStoredBlob = <OriginalError>(
+		failure: OriginalError,
 		fileId: string,
 		version: number,
 		r2Key: string,
@@ -854,6 +865,70 @@ const makeFiles = Effect.gen(function* () {
 				)
 			);
 		}),
+		storeDashboardThumbnail: Effect.fn('Files.storeDashboardThumbnail')(
+			function* (id, version, body, size) {
+				const now = new Date().toISOString();
+				const stateCommand = thumbnailStorageStateCommand(id, version, now);
+				const state = yield* Effect.tryPromise({
+					try: () =>
+						db
+							.prepare(stateCommand.sql)
+							.bind(...stateCommand.bindings)
+							.first<{ thumbnail_size_bytes: number }>(),
+					catch: (cause) =>
+						new StorageError({
+							operation: 'find dashboard thumbnail state',
+							cause
+						})
+				});
+				if (state === null) return yield* new NotFound({ id });
+
+				yield* checkStorageQuota(
+					thumbnailQuotaDelta(state.thumbnail_size_bytes, size)
+				);
+				const r2Key = dashboardThumbnailKey(id, version);
+				const stored = yield* blobs.put(r2Key, body, size, 'image/webp');
+				const commitCommand = commitThumbnailStorageCommand(
+					id,
+					version,
+					stored.size,
+					new Date().toISOString()
+				);
+				const commit = Effect.tryPromise({
+					try: () =>
+						db
+							.prepare(commitCommand.sql)
+							.bind(...commitCommand.bindings)
+							.run(),
+					catch: (cause) =>
+						new StorageError({
+							operation: 'record dashboard thumbnail',
+							cause
+						})
+				});
+				const committed = yield* commit.pipe(
+					Effect.catch((failure) =>
+						compensateStoredBlob(
+							failure,
+							id,
+							version,
+							r2Key,
+							'dashboard thumbnail'
+						)
+					)
+				);
+				if (committed.meta.changes !== 1) {
+					return yield* compensateStoredBlob(
+						new NotFound({ id }),
+						id,
+						version,
+						r2Key,
+						'dashboard thumbnail'
+					);
+				}
+				return stored;
+			}
+		),
 		sweepPurges: Effect.fn('Files.sweepPurges')(function* (limit) {
 			const bounded = Math.max(1, Math.min(limit, 10));
 			const now = new Date().toISOString();

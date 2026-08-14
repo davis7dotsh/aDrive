@@ -105,6 +105,7 @@ export const GET: RequestHandler = ({ params, request, url }) =>
 					privateResponse
 				);
 			}
+			if (!hasGrant) return yield* new NotFound({ id: params.id });
 
 			const sourceGrant = yield* grantSecrets.mint({
 				contentOrigin: config.contentOrigin,
@@ -147,11 +148,11 @@ export const GET: RequestHandler = ({ params, request, url }) =>
 					new StorageError({ operation: 'generate dashboard thumbnail', cause })
 			});
 			const body = new Response(bytes).body;
-			const stored = yield* blobs.put(
-				key,
+			const stored = yield* files.storeDashboardThumbnail(
+				params.id,
+				content.file.version,
 				body,
-				bytes.byteLength,
-				'image/webp'
+				bytes.byteLength
 			);
 			if (
 				!privateResponse &&

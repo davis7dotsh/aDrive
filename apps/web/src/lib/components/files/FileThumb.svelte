@@ -87,10 +87,18 @@
 			if (!shouldLoad) return { source: '', text: '' };
 			if (isImage) {
 				const source =
-					isPublic && !isUnavailable
+					isPublic && !isUnavailable && !isResizableImage
 						? `${origin}/f/${id}?v=${version}`
-						: (await getContentLink(auth, id, version, signal, isUnavailable))
-								.url;
+						: (
+								await getContentLink(
+									auth,
+									id,
+									version,
+									signal,
+									isUnavailable,
+									isResizableImage
+								)
+							).url;
 				signal.throwIfAborted();
 				return {
 					source: isResizableImage

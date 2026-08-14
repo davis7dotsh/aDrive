@@ -69,7 +69,7 @@ describe('file content links', () => {
 		expect(link.public).toBe(false);
 	});
 
-	it('requires a signed grant when an authenticated user previews unavailable public bytes', async () => {
+	it('requires a signed grant when requested for public bytes', async () => {
 		const grant = await mintPrivateGrant({
 			signingKey: 'kS0x8xqQZ2mcYYhBBLVBn1dnlTjluNkETdn3_1v4Gxw',
 			contentOrigin: config.contentOrigin,
