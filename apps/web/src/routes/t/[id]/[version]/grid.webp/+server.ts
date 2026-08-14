@@ -61,12 +61,26 @@ export const GET: RequestHandler = ({ params, request, url }) =>
 			const files = yield* Files;
 			const grantSecrets = yield* GrantSecrets;
 			const hasGrant = url.searchParams.has('e') && url.searchParams.has('g');
-			const content = yield* files.findContent(params.id, version, hasGrant);
+			const resolved = yield* files.findContent(params.id, version).pipe(
+				Effect.map((content) => ({ content, unavailable: false }) as const),
+				Effect.catchTag('NotFound', () =>
+					hasGrant
+						? files
+								.findContent(params.id, version, true)
+								.pipe(
+									Effect.map(
+										(content) => ({ content, unavailable: true }) as const
+									)
+								)
+						: Effect.fail(new NotFound({ id: params.id }))
+				)
+			);
+			const { content } = resolved;
 			if (!supportsDashboardThumbnail(content.file.contentType)) {
 				return yield* new NotFound({ id: params.id });
 			}
 
-			const privateResponse = !content.file.public;
+			const privateResponse = resolved.unavailable || !content.file.public;
 			if (!content.file.public || hasGrant) {
 				const granted = yield* grantSecrets.verify({
 					contentOrigin: config.contentOrigin,
