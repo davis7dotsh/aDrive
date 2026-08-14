@@ -27,6 +27,8 @@ export const normalizeOrigins = (config: OriginConfig) => {
 export const classifyRoute = (pathname: string) =>
 	pathname === '/f' ||
 	pathname.startsWith('/f/') ||
+	pathname === '/t' ||
+	pathname.startsWith('/t/') ||
 	pathname === '/s' ||
 	pathname.startsWith('/s/')
 		? 'content'

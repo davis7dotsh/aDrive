@@ -8,6 +8,7 @@ interface PrivateGrantScope {
 	readonly fileId: string;
 	readonly version: number;
 	readonly expiresAtSeconds: number;
+	readonly purpose?: 'thumbnail-source';
 }
 
 export interface MintPrivateGrantOptions extends Omit<
@@ -34,15 +35,19 @@ const grantPayload = ({
 	contentOrigin,
 	fileId,
 	version,
-	expiresAtSeconds
-}: PrivateGrantScope) =>
-	[
+	expiresAtSeconds,
+	purpose
+}: PrivateGrantScope) => {
+	const payload = [
 		'adrive-private-file-grant-v1',
 		contentOrigin,
 		fileId,
 		String(version),
 		String(expiresAtSeconds)
-	].join('\n');
+	];
+	if (purpose) payload.push(purpose);
+	return payload.join('\n');
+};
 
 const importSigningKey = (signingKey: string) =>
 	crypto.subtle.importKey(
@@ -85,11 +90,12 @@ export const mintPrivateGrant = async ({
 	contentOrigin,
 	fileId,
 	version,
+	purpose,
 	now = new Date()
 }: MintPrivateGrantOptions) => {
 	const expiresAtSeconds =
 		Math.floor(now.getTime() / 1_000) + PRIVATE_GRANT_TTL_SECONDS;
-	const scope = { contentOrigin, fileId, version, expiresAtSeconds };
+	const scope = { contentOrigin, fileId, version, expiresAtSeconds, purpose };
 	const key = await importSigningKey(signingKey);
 	const signature = base64Url(
 		await crypto.subtle.sign(

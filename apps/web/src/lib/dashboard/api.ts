@@ -211,11 +211,13 @@ export const getContentLink = async (
 	id: string,
 	version?: number,
 	signal?: AbortSignal,
-	includeUnavailable = false
+	includeUnavailable = false,
+	requireGrant = false
 ) => {
 	const params = new URLSearchParams();
 	if (version !== undefined) params.set('v', String(version));
 	if (includeUnavailable) params.set('unavailable', 'true');
+	if (requireGrant) params.set('grant', 'true');
 	const response = await request(
 		`/api/files/${encodeURIComponent(id)}/link${params.size > 0 ? `?${params}` : ''}`,
 		token,

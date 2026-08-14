@@ -52,7 +52,8 @@ export const buildFileContentLink = async (
 export const resolveFileContentLink = (
 	id: string,
 	version?: number,
-	includeUnavailable = false
+	includeUnavailable = false,
+	requireGrant = false
 ) =>
 	Effect.gen(function* () {
 		const config = yield* AppConfig;
@@ -86,7 +87,7 @@ export const resolveFileContentLink = (
 		}
 		const content = yield* files.findContent(id, version, includeUnavailable);
 		const grant =
-			content.file.public && !includeUnavailable
+			content.file.public && !includeUnavailable && !requireGrant
 				? undefined
 				: yield* grantSecrets.mint({
 						contentOrigin: config.contentOrigin,
@@ -94,7 +95,13 @@ export const resolveFileContentLink = (
 						version: content.file.version
 					});
 		return yield* Effect.promise(() =>
-			buildFileContentLink(config, content, version, grant, includeUnavailable)
+			buildFileContentLink(
+				config,
+				content,
+				version,
+				grant,
+				includeUnavailable || requireGrant
+			)
 		);
 	});
 

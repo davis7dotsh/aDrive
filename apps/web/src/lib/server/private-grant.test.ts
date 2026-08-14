@@ -69,6 +69,42 @@ describe('private file grants', () => {
 		);
 	});
 
+	it('binds internal grants to their purpose', async () => {
+		const grant = await mintPrivateGrant({
+			signingKey,
+			contentOrigin,
+			fileId: 'file-1',
+			version: 4,
+			purpose: 'thumbnail-source',
+			now
+		});
+		const base = {
+			signingKey,
+			contentOrigin,
+			requestOrigin: contentOrigin,
+			fileId: 'file-1',
+			version: 4,
+			expiresAtSeconds: grant.expiresAtSeconds,
+			signature: grant.signature,
+			now
+		};
+
+		await expect(
+			verifyPrivateGrant({ ...base, purpose: 'thumbnail-source' })
+		).resolves.toBe(true);
+		await expect(verifyPrivateGrant(base)).resolves.toBe(false);
+
+		const unscopedGrant = await mint();
+		await expect(
+			verifyPrivateGrant({
+				...base,
+				expiresAtSeconds: unscopedGrant.expiresAtSeconds,
+				signature: unscopedGrant.signature,
+				purpose: 'thumbnail-source'
+			})
+		).resolves.toBe(false);
+	});
+
 	it('rejects expired and tampered grants', async () => {
 		const grant = await mint();
 		const base = {

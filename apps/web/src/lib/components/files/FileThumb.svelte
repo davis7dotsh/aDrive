@@ -1,6 +1,10 @@
 <script lang="ts">
 	import type { DashboardFile } from '@adrive/shared';
 	import { getContentLink, getFilePreview } from '$lib/dashboard/api';
+	import {
+		dashboardThumbnailUrl,
+		supportsDashboardThumbnail
+	} from '$lib/file-thumbnail';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { resource, useIntersectionObserver } from 'runed';
 	import type { Attachment } from 'svelte/attachments';
@@ -25,6 +29,7 @@
 		};
 	};
 	const image = $derived(file.contentType.startsWith('image/'));
+	const resizableImage = $derived(supportsDashboardThumbnail(file.contentType));
 	const frame = $derived(
 		file.kind === 'site' || file.contentType.startsWith('text/html')
 	);
@@ -36,6 +41,8 @@
 	let visible = $state(false);
 	let loadedSource = $state('');
 	let failedSource = $state('');
+	let retryingSource = $state('');
+	let retriedThumbnail = $state({ primary: '', source: '' });
 
 	useIntersectionObserver(
 		() => element,
@@ -55,6 +62,7 @@
 				file.kind,
 				file.public,
 				image,
+				resizableImage,
 				frame,
 				textLike,
 				unavailable,
@@ -69,6 +77,7 @@
 				kind,
 				isPublic,
 				isImage,
+				isResizableImage,
 				isFrame,
 				isText,
 				isUnavailable,
@@ -82,10 +91,23 @@
 				const source =
 					isPublic && !isUnavailable
 						? `${origin}/f/${id}?v=${version}`
-						: (await getContentLink(auth, id, version, signal, isUnavailable))
-								.url;
+						: (
+								await getContentLink(
+									auth,
+									id,
+									version,
+									signal,
+									isUnavailable,
+									isResizableImage
+								)
+							).url;
 				signal.throwIfAborted();
-				return { source, text: '' };
+				return {
+					source: isResizableImage
+						? dashboardThumbnailUrl(source, id, version)
+						: source,
+					text: ''
+				};
 			}
 			if (isFrame) {
 				if (kind === 'site') {
@@ -116,8 +138,48 @@
 		},
 		{ initialValue: { source: '', text: '' } }
 	);
-	const source = $derived(thumbnail.current.source);
+	const primarySource = $derived(thumbnail.current.source);
+	const source = $derived(
+		retriedThumbnail.primary === primarySource
+			? retriedThumbnail.source
+			: primarySource
+	);
 	const text = $derived(thumbnail.current.text);
+	const handleImageError = async (failed: string) => {
+		const primary = thumbnail.current.source;
+		if (
+			failed !== primary ||
+			!file.public ||
+			unavailable ||
+			!resizableImage ||
+			retryingSource === primary ||
+			retriedThumbnail.primary === primary
+		) {
+			failedSource = failed;
+			return;
+		}
+
+		retryingSource = primary;
+		try {
+			const link = await getContentLink(
+				token,
+				file.id,
+				file.version,
+				undefined,
+				false,
+				true
+			);
+			if (thumbnail.current.source !== primary) return;
+			retriedThumbnail = {
+				primary,
+				source: dashboardThumbnailUrl(link.url, file.id, file.version)
+			};
+		} catch {
+			if (thumbnail.current.source === primary) failedSource = failed;
+		} finally {
+			if (retryingSource === primary) retryingSource = '';
+		}
+	};
 	const previewLoading = $derived(
 		(image || frame || textLike) &&
 			(!visible ||
@@ -149,14 +211,15 @@
 		<img
 			src={source}
 			alt=""
+			width="480"
+			height="360"
 			loading="lazy"
+			decoding="async"
 			class="size-full object-cover transition-opacity duration-200 {previewLoading
 				? 'opacity-0'
 				: 'opacity-100'}"
 			onload={() => (loadedSource = source)}
-			onerror={() => {
-				failedSource = source;
-			}}
+			onerror={() => void handleImageError(source)}
 		/>
 	{:else if text}
 		<pre

@@ -1,6 +1,12 @@
 import { Effect } from 'effect';
 import { InvalidRequest, StorageError } from './errors';
 
+export interface StorageQuotaDatabase {
+	readonly prepare: (query: string) => {
+		readonly first: <T>() => Promise<T | null>;
+	};
+}
+
 // Bytes actually held in R2: every version of a regular file is stored,
 // a site keeps only its current version's assets (old assets are deleted
 // at commit), and assets staged into an uncommitted publish session are
@@ -11,7 +17,7 @@ import { InvalidRequest, StorageError } from './errors';
 const TOTAL_STORED_BYTES_SQL = `
 	SELECT
 		COALESCE((
-			SELECT SUM(v.size_bytes)
+			SELECT SUM(v.size_bytes + v.thumbnail_size_bytes)
 			FROM file_versions v
 			JOIN files f ON f.id = v.file_id
 			WHERE f.is_site = 0
@@ -31,7 +37,7 @@ const TOTAL_STORED_BYTES_SQL = `
 	AS total`;
 
 export const ensureStorageQuota = (
-	db: D1Database,
+	db: StorageQuotaDatabase,
 	maxTotalBytes: number,
 	incomingBytes: number
 ) =>

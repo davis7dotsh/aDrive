@@ -27,6 +27,9 @@ export interface BlobsShape {
 	readonly deleteMany: (
 		keys: ReadonlyArray<string>
 	) => Effect.Effect<void, StorageError>;
+	readonly deletePrefixes: (
+		prefixes: ReadonlyArray<string>
+	) => Effect.Effect<void, StorageError>;
 }
 
 export class Blobs extends Context.Service<Blobs, BlobsShape>()('app/Blobs') {}
@@ -91,6 +94,33 @@ const makeBlobs = Effect.gen(function* () {
 					}
 				},
 				catch: (cause) => new StorageError({ operation: 'delete blobs', cause })
+			});
+		}),
+		deletePrefixes: Effect.fn('Blobs.deletePrefixes')(function* (prefixes) {
+			if (prefixes.length === 0) return;
+			yield* Effect.tryPromise({
+				try: async () => {
+					for (const prefix of prefixes) {
+						const keys: string[] = [];
+						let cursor: string | undefined;
+						do {
+							const page = await bucket.list({ prefix, cursor, limit: 1_000 });
+							keys.push(...page.objects.map((object) => object.key));
+							if (!page.truncated) break;
+							if (page.cursor === undefined) {
+								throw new Error(
+									'Truncated R2 listing did not include a cursor'
+								);
+							}
+							cursor = page.cursor;
+						} while (cursor !== undefined);
+						for (let index = 0; index < keys.length; index += 500) {
+							await bucket.delete(keys.slice(index, index + 500));
+						}
+					}
+				},
+				catch: (cause) =>
+					new StorageError({ operation: 'delete blob prefixes', cause })
 			});
 		})
 	});

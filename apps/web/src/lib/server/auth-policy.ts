@@ -44,6 +44,11 @@ export const shouldCountDownload = (rangeHeader: string | null) => {
 	return /^bytes=0-(?:\d*)$/i.test(rangeHeader.trim());
 };
 
+export const shouldRecordFileDownload = (
+	rangeHeader: string | null,
+	verifiedThumbnailSource: boolean
+) => !verifiedThumbnailSource && shouldCountDownload(rangeHeader);
+
 export const allowsCredentialOrigin = (
 	method: string,
 	origin: string | null,
