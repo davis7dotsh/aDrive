@@ -90,6 +90,10 @@ export interface UploadResult {
 	readonly forcedPublic: boolean;
 }
 
+export type DashboardThumbnailStoreResult =
+	| { readonly _tag: 'Stored'; readonly blob: StoredBlob }
+	| { readonly _tag: 'Existing'; readonly r2Key: string };
+
 export interface MutationResult {
 	readonly file: DashboardFile;
 	readonly forcedPublic: boolean;
@@ -152,7 +156,10 @@ export interface FilesShape {
 		body: ReadableStream<Uint8Array> | null,
 		size: number,
 		expectedR2Key: string | null
-	) => Effect.Effect<StoredBlob, InvalidRequest | NotFound | StorageError>;
+	) => Effect.Effect<
+		DashboardThumbnailStoreResult,
+		InvalidRequest | NotFound | StorageError
+	>;
 	readonly sweepPurges: (limit: number) => Effect.Effect<number, StorageError>;
 	readonly findContent: (
 		id: string,
@@ -518,7 +525,7 @@ const makeFiles = Effect.gen(function* () {
 			const rows = yield* sql`
 				SELECT
 					f.id, f.display_name, v.content_type, v.version, v.size_bytes,
-					f.public AS is_public, v.r2_key, v.created_at
+					f.public AS is_public, v.r2_key, v.thumbnail_r2_key, v.created_at
 				FROM files f
 				JOIN file_versions v ON v.file_id = f.id
 				WHERE f.id = ${id} AND v.version = ${version}
@@ -870,8 +877,7 @@ const makeFiles = Effect.gen(function* () {
 		}),
 		storeDashboardThumbnail: Effect.fn('Files.storeDashboardThumbnail')(
 			function* (id, version, body, size, expectedR2Key) {
-				const now = new Date().toISOString();
-				const stateCommand = thumbnailStorageStateCommand(id, version, now);
+				const stateCommand = thumbnailStorageStateCommand(id, version);
 				const state = yield* Effect.tryPromise({
 					try: () =>
 						db
@@ -889,7 +895,10 @@ const makeFiles = Effect.gen(function* () {
 				});
 				if (state === null) return yield* new NotFound({ id });
 				if (state.thumbnail_r2_key !== expectedR2Key) {
-					return yield* new NotFound({ id });
+					if (state.thumbnail_r2_key === null) {
+						return yield* new NotFound({ id });
+					}
+					return { _tag: 'Existing', r2Key: state.thumbnail_r2_key } as const;
 				}
 
 				yield* checkStorageQuota(
@@ -902,8 +911,7 @@ const makeFiles = Effect.gen(function* () {
 					version,
 					r2Key,
 					stored.size,
-					expectedR2Key,
-					new Date().toISOString()
+					expectedR2Key
 				);
 				const commit = Effect.tryPromise({
 					try: () =>
@@ -929,15 +937,35 @@ const makeFiles = Effect.gen(function* () {
 					)
 				);
 				if (committed.meta.changes !== 1) {
-					return yield* compensateStoredBlob(
+					yield* compensateStoredBlob(
 						new NotFound({ id }),
 						id,
 						version,
 						r2Key,
 						'dashboard thumbnail'
-					);
+					).pipe(Effect.catchTag('NotFound', () => Effect.void));
+					const winnerCommand = thumbnailStorageStateCommand(id, version);
+					const winner = yield* Effect.tryPromise({
+						try: () =>
+							db
+								.prepare(winnerCommand.sql)
+								.bind(...winnerCommand.bindings)
+								.first<{ thumbnail_r2_key: string | null }>(),
+						catch: (cause) =>
+							new StorageError({
+								operation: 'find committed dashboard thumbnail',
+								cause
+							})
+					});
+					if (winner === null || winner.thumbnail_r2_key === null) {
+						return yield* new NotFound({ id });
+					}
+					return {
+						_tag: 'Existing',
+						r2Key: winner.thumbnail_r2_key
+					} as const;
 				}
-				return stored;
+				return { _tag: 'Stored', blob: stored } as const;
 			}
 		),
 		sweepPurges: Effect.fn('Files.sweepPurges')(function* (limit) {

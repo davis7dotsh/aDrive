@@ -149,13 +149,29 @@ export const GET: RequestHandler = ({ params, request, url }) =>
 					new StorageError({ operation: 'generate dashboard thumbnail', cause })
 			});
 			const body = new Response(bytes).body;
-			const stored = yield* files.storeDashboardThumbnail(
+			const result = yield* files.storeDashboardThumbnail(
 				params.id,
 				content.file.version,
 				body,
 				bytes.byteLength,
 				content.thumbnailR2Key
 			);
+			if (result._tag === 'Existing') {
+				const existing = yield* blobs.get(result.r2Key);
+				if (
+					!privateResponse &&
+					matchesEtag(request.headers.get('if-none-match'), existing.httpEtag)
+				) {
+					return notModifiedResponse(existing.httpEtag);
+				}
+				return thumbnailResponse(
+					existing.body,
+					existing.size,
+					existing.httpEtag,
+					privateResponse
+				);
+			}
+			const stored = result.blob;
 			if (
 				!privateResponse &&
 				matchesEtag(request.headers.get('if-none-match'), stored.etag)

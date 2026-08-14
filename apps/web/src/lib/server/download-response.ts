@@ -58,8 +58,7 @@ export const rangeHeaders = (
 	const offset =
 		suffix !== undefined
 			? Math.max(0, totalSize - suffix)
-			: (returnedOffset ??
-				Math.max(0, totalSize - (returnedLength ?? totalSize)));
+			: (returnedOffset ?? 0);
 	const length =
 		suffix !== undefined
 			? Math.min(totalSize, suffix)

@@ -64,10 +64,9 @@ afterEach(() => {
 });
 
 describe('dashboard thumbnail storage', () => {
-	it('commits only while the source version remains active', () => {
+	it('stops commits after purge claims the source version', () => {
 		const database = makeDatabase();
-		const now = '2026-08-13T01:00:00.000Z';
-		const state = thumbnailStorageStateCommand('file-1', 1, now);
+		const state = thumbnailStorageStateCommand('file-1', 1);
 
 		expect(database.prepare(state.sql).get(...state.bindings)).toEqual({
 			thumbnail_r2_key: null,
@@ -84,17 +83,35 @@ describe('dashboard thumbnail storage', () => {
 				1,
 				'thumbnail/file-1/1/loser.webp',
 				20,
-				null,
-				now
+				null
 			)
 		);
 
 		expect(result.changes).toBe(0);
 	});
 
+	it('allows previews before a trashed file is purged', () => {
+		const database = makeDatabase();
+		database
+			.prepare("UPDATE files SET deleted_at = '2026-08-13' WHERE id = 'file-1'")
+			.run();
+
+		expect(
+			run(
+				database,
+				commitThumbnailStorageCommand(
+					'file-1',
+					1,
+					'thumbnail/file-1/1/trash.webp',
+					20,
+					null
+				)
+			).changes
+		).toBe(1);
+	});
+
 	it("does not let a losing writer replace another writer's thumbnail", () => {
 		const database = makeDatabase();
-		const now = '2026-08-13T01:00:00.000Z';
 		const winner = run(
 			database,
 			commitThumbnailStorageCommand(
@@ -102,8 +119,7 @@ describe('dashboard thumbnail storage', () => {
 				1,
 				'thumbnail/file-1/1/winner.webp',
 				20,
-				null,
-				now
+				null
 			)
 		);
 		const loser = run(
@@ -113,8 +129,7 @@ describe('dashboard thumbnail storage', () => {
 				1,
 				'thumbnail/file-1/1/loser.webp',
 				20,
-				null,
-				now
+				null
 			)
 		);
 
@@ -141,8 +156,7 @@ describe('dashboard thumbnail storage', () => {
 				1,
 				'thumbnail/file-1/1/current.webp',
 				20,
-				null,
-				'2026-08-13T01:00:00.000Z'
+				null
 			)
 		);
 

@@ -65,6 +65,16 @@ describe('download ranges', () => {
 		});
 	});
 
+	it('treats a length-only R2 range as a prefix', () => {
+		expect(
+			rangeHeaders({ size: 100, range: { length: 100 } }, 1_000, 'bytes=0-99')
+		).toEqual({
+			status: 206,
+			contentLength: 100,
+			contentRange: 'bytes 0-99/1000'
+		});
+	});
+
 	it('rejects non-finite range metadata', () => {
 		expect(
 			rangeHeaders(

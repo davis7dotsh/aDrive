@@ -41,6 +41,8 @@
 	let visible = $state(false);
 	let loadedSource = $state('');
 	let failedSource = $state('');
+	let retryingSource = $state('');
+	let retriedThumbnail = $state({ primary: '', source: '' });
 
 	useIntersectionObserver(
 		() => element,
@@ -87,7 +89,7 @@
 			if (!shouldLoad) return { source: '', text: '' };
 			if (isImage) {
 				const source =
-					isPublic && !isUnavailable && !isResizableImage
+					isPublic && !isUnavailable
 						? `${origin}/f/${id}?v=${version}`
 						: (
 								await getContentLink(
@@ -136,8 +138,48 @@
 		},
 		{ initialValue: { source: '', text: '' } }
 	);
-	const source = $derived(thumbnail.current.source);
+	const primarySource = $derived(thumbnail.current.source);
+	const source = $derived(
+		retriedThumbnail.primary === primarySource
+			? retriedThumbnail.source
+			: primarySource
+	);
 	const text = $derived(thumbnail.current.text);
+	const handleImageError = async (failed: string) => {
+		const primary = thumbnail.current.source;
+		if (
+			failed !== primary ||
+			!file.public ||
+			unavailable ||
+			!resizableImage ||
+			retryingSource === primary ||
+			retriedThumbnail.primary === primary
+		) {
+			failedSource = failed;
+			return;
+		}
+
+		retryingSource = primary;
+		try {
+			const link = await getContentLink(
+				token,
+				file.id,
+				file.version,
+				undefined,
+				false,
+				true
+			);
+			if (thumbnail.current.source !== primary) return;
+			retriedThumbnail = {
+				primary,
+				source: dashboardThumbnailUrl(link.url, file.id, file.version)
+			};
+		} catch {
+			if (thumbnail.current.source === primary) failedSource = failed;
+		} finally {
+			if (retryingSource === primary) retryingSource = '';
+		}
+	};
 	const previewLoading = $derived(
 		(image || frame || textLike) &&
 			(!visible ||
@@ -177,9 +219,7 @@
 				? 'opacity-0'
 				: 'opacity-100'}"
 			onload={() => (loadedSource = source)}
-			onerror={() => {
-				failedSource = source;
-			}}
+			onerror={() => void handleImageError(source)}
 		/>
 	{:else if text}
 		<pre
