@@ -15,7 +15,7 @@ import { Blobs } from '$lib/server/services/blobs';
 import { Files } from '$lib/server/services/files';
 import { GrantSecrets } from '$lib/server/services/grant-secrets';
 
-const PUBLIC_CACHE_CONTROL = 'public, max-age=0, must-revalidate';
+const PUBLIC_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 
 const parsedVersion = (value: string) => {
 	const version = Number(value);
