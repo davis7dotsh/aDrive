@@ -46,6 +46,7 @@ const FileContentRow = Schema.Struct({
 	size_bytes: Schema.Int,
 	is_public: Schema.Int,
 	r2_key: Schema.String,
+	thumbnail_r2_key: Schema.NullOr(Schema.String),
 	created_at: Schema.String
 });
 
@@ -81,6 +82,7 @@ interface VersionUploadInput {
 export interface FileContent {
 	readonly file: FileSummary;
 	readonly r2Key: string;
+	readonly thumbnailR2Key: string | null;
 }
 
 export interface UploadResult {
@@ -148,7 +150,8 @@ export interface FilesShape {
 		id: string,
 		version: number,
 		body: ReadableStream<Uint8Array> | null,
-		size: number
+		size: number,
+		expectedR2Key: string | null
 	) => Effect.Effect<StoredBlob, InvalidRequest | NotFound | StorageError>;
 	readonly sweepPurges: (limit: number) => Effect.Effect<number, StorageError>;
 	readonly findContent: (
@@ -866,7 +869,7 @@ const makeFiles = Effect.gen(function* () {
 			);
 		}),
 		storeDashboardThumbnail: Effect.fn('Files.storeDashboardThumbnail')(
-			function* (id, version, body, size) {
+			function* (id, version, body, size, expectedR2Key) {
 				const now = new Date().toISOString();
 				const stateCommand = thumbnailStorageStateCommand(id, version, now);
 				const state = yield* Effect.tryPromise({
@@ -874,7 +877,10 @@ const makeFiles = Effect.gen(function* () {
 						db
 							.prepare(stateCommand.sql)
 							.bind(...stateCommand.bindings)
-							.first<{ thumbnail_size_bytes: number }>(),
+							.first<{
+								thumbnail_r2_key: string | null;
+								thumbnail_size_bytes: number;
+							}>(),
 					catch: (cause) =>
 						new StorageError({
 							operation: 'find dashboard thumbnail state',
@@ -882,16 +888,21 @@ const makeFiles = Effect.gen(function* () {
 						})
 				});
 				if (state === null) return yield* new NotFound({ id });
+				if (state.thumbnail_r2_key !== expectedR2Key) {
+					return yield* new NotFound({ id });
+				}
 
 				yield* checkStorageQuota(
 					thumbnailQuotaDelta(state.thumbnail_size_bytes, size)
 				);
-				const r2Key = dashboardThumbnailKey(id, version);
+				const r2Key = `thumbnail/${id}/${version}/${crypto.randomUUID()}.webp`;
 				const stored = yield* blobs.put(r2Key, body, size, 'image/webp');
 				const commitCommand = commitThumbnailStorageCommand(
 					id,
 					version,
+					r2Key,
 					stored.size,
+					expectedR2Key,
 					new Date().toISOString()
 				);
 				const commit = Effect.tryPromise({
@@ -1007,10 +1018,16 @@ const makeFiles = Effect.gen(function* () {
 						const [versions, assets] = await Promise.all([
 							db
 								.prepare(
-									'SELECT version, r2_key FROM file_versions WHERE file_id = ? AND r2_key NOT LIKE ?'
+									`SELECT version, r2_key, thumbnail_r2_key
+									FROM file_versions
+									WHERE file_id = ? AND r2_key NOT LIKE ?`
 								)
 								.bind(row.id, 'site-version/%')
-								.all<{ version: number; r2_key: string }>(),
+								.all<{
+									version: number;
+									r2_key: string;
+									thumbnail_r2_key: string | null;
+								}>(),
 							db
 								.prepare('SELECT r2_key FROM site_assets WHERE file_id = ?')
 								.bind(row.id)
@@ -1024,7 +1041,10 @@ const makeFiles = Effect.gen(function* () {
 						return [
 							...versions.results.flatMap((item) => [
 								item.r2_key,
-								dashboardThumbnailKey(row.id, item.version)
+								dashboardThumbnailKey(row.id, item.version),
+								...(item.thumbnail_r2_key === null
+									? []
+									: [item.thumbnail_r2_key])
 							]),
 							...assets.results.map((item) => item.r2_key)
 						];
@@ -1106,7 +1126,7 @@ const makeFiles = Effect.gen(function* () {
 					? yield* sql`
 							SELECT
 								f.id, f.display_name, v.content_type, v.version, v.size_bytes,
-								f.public AS is_public, v.r2_key, v.created_at
+				f.public AS is_public, v.r2_key, v.thumbnail_r2_key, v.created_at
 							FROM files f
 							JOIN file_versions v
 								ON v.file_id = f.id AND v.version = f.current_version
@@ -1131,7 +1151,7 @@ const makeFiles = Effect.gen(function* () {
 					: yield* sql`
 							SELECT
 								f.id, f.display_name, v.content_type, v.version, v.size_bytes,
-								f.public AS is_public, v.r2_key, v.created_at
+				f.public AS is_public, v.r2_key, v.thumbnail_r2_key, v.created_at
 							FROM files f
 							JOIN file_versions v ON v.file_id = f.id
 							WHERE f.id = ${id} AND v.version = ${version}
@@ -1173,7 +1193,8 @@ const makeFiles = Effect.gen(function* () {
 					indexAttempts: 0,
 					indexError: null
 				},
-				r2Key: row.r2_key
+				r2Key: row.r2_key,
+				thumbnailR2Key: row.thumbnail_r2_key
 			};
 		})
 	});

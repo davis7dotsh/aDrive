@@ -70,6 +70,7 @@ describe('dashboard thumbnail storage', () => {
 		const state = thumbnailStorageStateCommand('file-1', 1, now);
 
 		expect(database.prepare(state.sql).get(...state.bindings)).toEqual({
+			thumbnail_r2_key: null,
 			thumbnail_size_bytes: 0
 		});
 
@@ -78,17 +79,71 @@ describe('dashboard thumbnail storage', () => {
 			.run();
 		const result = run(
 			database,
-			commitThumbnailStorageCommand('file-1', 1, 20, now)
+			commitThumbnailStorageCommand(
+				'file-1',
+				1,
+				'thumbnail/file-1/1/loser.webp',
+				20,
+				null,
+				now
+			)
 		);
 
 		expect(result.changes).toBe(0);
+	});
+
+	it("does not let a losing writer replace another writer's thumbnail", () => {
+		const database = makeDatabase();
+		const now = '2026-08-13T01:00:00.000Z';
+		const winner = run(
+			database,
+			commitThumbnailStorageCommand(
+				'file-1',
+				1,
+				'thumbnail/file-1/1/winner.webp',
+				20,
+				null,
+				now
+			)
+		);
+		const loser = run(
+			database,
+			commitThumbnailStorageCommand(
+				'file-1',
+				1,
+				'thumbnail/file-1/1/loser.webp',
+				20,
+				null,
+				now
+			)
+		);
+
+		expect(winner.changes).toBe(1);
+		expect(loser.changes).toBe(0);
+		expect(
+			database
+				.prepare(
+					'SELECT thumbnail_r2_key, thumbnail_size_bytes FROM file_versions'
+				)
+				.get()
+		).toEqual({
+			thumbnail_r2_key: 'thumbnail/file-1/1/winner.webp',
+			thumbnail_size_bytes: 20
+		});
 	});
 
 	it('counts derivative bytes against the storage quota', async () => {
 		const database = makeDatabase();
 		run(
 			database,
-			commitThumbnailStorageCommand('file-1', 1, 20, '2026-08-13T01:00:00.000Z')
+			commitThumbnailStorageCommand(
+				'file-1',
+				1,
+				'thumbnail/file-1/1/current.webp',
+				20,
+				null,
+				'2026-08-13T01:00:00.000Z'
+			)
 		);
 
 		await expect(

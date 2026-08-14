@@ -1,6 +1,6 @@
 export interface ThumbnailStorageCommand {
 	readonly sql: string;
-	readonly bindings: ReadonlyArray<string | number>;
+	readonly bindings: ReadonlyArray<string | number | null>;
 }
 
 export const thumbnailStorageStateCommand = (
@@ -8,7 +8,7 @@ export const thumbnailStorageStateCommand = (
 	version: number,
 	now: string
 ): ThumbnailStorageCommand => ({
-	sql: `SELECT v.thumbnail_size_bytes
+	sql: `SELECT v.thumbnail_r2_key, v.thumbnail_size_bytes
 		FROM file_versions v
 		JOIN files f ON f.id = v.file_id
 		WHERE v.file_id = ? AND v.version = ?
@@ -22,12 +22,18 @@ export const thumbnailStorageStateCommand = (
 export const commitThumbnailStorageCommand = (
 	fileId: string,
 	version: number,
+	r2Key: string,
 	size: number,
+	expectedR2Key: string | null,
 	now: string
 ): ThumbnailStorageCommand => ({
 	sql: `UPDATE file_versions
-		SET thumbnail_size_bytes = ?
+		SET thumbnail_r2_key = ?, thumbnail_size_bytes = ?
 		WHERE file_id = ? AND version = ?
+			AND (
+				(thumbnail_r2_key IS NULL AND ? IS NULL)
+				OR thumbnail_r2_key = ?
+			)
 			AND EXISTS (
 				SELECT 1
 				FROM files f
@@ -36,7 +42,7 @@ export const commitThumbnailStorageCommand = (
 					AND (f.expires_at IS NULL OR f.expires_at > ?)
 					AND f.purge_state = 'none'
 			)`,
-	bindings: [size, fileId, version, now]
+	bindings: [r2Key, size, fileId, version, expectedR2Key, expectedR2Key, now]
 });
 
 export const thumbnailQuotaDelta = (storedSize: number, incomingSize: number) =>

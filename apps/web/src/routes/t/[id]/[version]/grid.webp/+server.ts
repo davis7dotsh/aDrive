@@ -2,7 +2,6 @@ import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
 import {
 	DASHBOARD_THUMBNAIL,
-	dashboardThumbnailKey,
 	dashboardThumbnailSourceUrl,
 	isTransformedWebpResponse,
 	matchesEtag,
@@ -67,7 +66,7 @@ export const GET: RequestHandler = ({ params, request, url }) =>
 				return yield* new NotFound({ id: params.id });
 			}
 
-			const privateResponse = hasGrant || !content.file.public;
+			const privateResponse = !content.file.public;
 			if (!content.file.public || hasGrant) {
 				const granted = yield* grantSecrets.verify({
 					contentOrigin: config.contentOrigin,
@@ -81,13 +80,15 @@ export const GET: RequestHandler = ({ params, request, url }) =>
 			}
 
 			const blobs = yield* Blobs;
-			const key = dashboardThumbnailKey(params.id, content.file.version);
-			const cached = yield* blobs.get(key).pipe(
-				Effect.map((object) => ({ found: true as const, object })),
-				Effect.catchTag('NotFound', () =>
-					Effect.succeed({ found: false as const })
-				)
-			);
+			const cached =
+				content.thumbnailR2Key === null
+					? { found: false as const }
+					: yield* blobs.get(content.thumbnailR2Key).pipe(
+							Effect.map((object) => ({ found: true as const, object })),
+							Effect.catchTag('NotFound', () =>
+								Effect.succeed({ found: false as const })
+							)
+						);
 			if (cached.found) {
 				if (
 					!privateResponse &&
@@ -152,7 +153,8 @@ export const GET: RequestHandler = ({ params, request, url }) =>
 				params.id,
 				content.file.version,
 				body,
-				bytes.byteLength
+				bytes.byteLength,
+				content.thumbnailR2Key
 			);
 			if (
 				!privateResponse &&
