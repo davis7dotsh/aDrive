@@ -2,6 +2,7 @@ import { InvalidRequest } from '../errors';
 
 export const MCP_MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
 export const MCP_MAX_BASE64_CHARS = Math.ceil(MCP_MAX_UPLOAD_BYTES / 3) * 4 + 8;
+export const MCP_MAX_RAW_BASE64_CHARS = MCP_MAX_BASE64_CHARS * 2;
 export const MCP_MAX_SITE_TOTAL_BYTES = 8 * 1024 * 1024;
 export const MCP_LIST_DEFAULT = 50;
 export const MCP_LIST_MAX = 200;
@@ -22,6 +23,12 @@ const padBase64 = (value: string) => {
 };
 
 export const decodeBase64 = (value: string) => {
+	if (value.length > MCP_MAX_RAW_BASE64_CHARS) {
+		throw new InvalidRequest({
+			status: 413,
+			message: 'Content exceeds the 2 MiB MCP upload limit'
+		});
+	}
 	const compact = value.replace(/\s+/g, '');
 	if (compact.length === 0) return new Uint8Array();
 	const normalized = padBase64(
@@ -58,7 +65,9 @@ const bytesFromInput = (input: {
 		if (input.text.length > MCP_MAX_UPLOAD_BYTES) return tooLarge();
 		return { ok: true, bytes: new TextEncoder().encode(input.text) };
 	}
-	const compact = (input.content_base64 ?? '').replace(/\s+/g, '');
+	const raw = input.content_base64 ?? '';
+	if (raw.length > MCP_MAX_RAW_BASE64_CHARS) return tooLarge();
+	const compact = raw.replace(/\s+/g, '');
 	if (compact.length > MCP_MAX_BASE64_CHARS) return tooLarge();
 	try {
 		return { ok: true, bytes: decodeBase64(compact) };

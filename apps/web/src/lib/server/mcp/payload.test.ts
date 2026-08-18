@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { InvalidRequest } from '../errors';
 import {
 	MCP_MAX_BASE64_CHARS,
+	MCP_MAX_RAW_BASE64_CHARS,
 	MCP_MAX_UPLOAD_BYTES,
 	decodeBase64,
 	decodeExclusiveContent,
@@ -49,6 +50,15 @@ describe('MCP payload', () => {
 		expect(
 			decodeExclusiveContent({
 				content_base64: 'A'.repeat(MCP_MAX_BASE64_CHARS + 1)
+			})
+		).toEqual({
+			ok: false,
+			message: 'Content exceeds the 2 MiB MCP upload limit',
+			status: 413
+		});
+		expect(
+			decodeExclusiveContent({
+				content_base64: ' '.repeat(MCP_MAX_RAW_BASE64_CHARS + 1)
 			})
 		).toEqual({
 			ok: false,

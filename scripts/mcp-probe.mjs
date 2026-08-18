@@ -1,8 +1,10 @@
 const url = process.argv[2];
-const token = process.argv[3];
+const token = process.env.ADRIVE_API_KEY;
 
 if (!url || !token) {
-	console.error('usage: node scripts/mcp-probe.mjs <mcp-url> <api-key>');
+	console.error(
+		'usage: ADRIVE_API_KEY=adr_… node scripts/mcp-probe.mjs <mcp-url>'
+	);
 	process.exit(1);
 }
 

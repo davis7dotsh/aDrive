@@ -152,7 +152,7 @@ const registerReadTools = (server: McpServer, input: McpServerInput) => {
 					if (cursor !== null) {
 						return yield* new InvalidRequest({
 							status: 400,
-							message: 'Listing stopped after 500 pages with more remaining'
+							message: `Listing stopped after ${MCP_STATUS_PAGE_CAP} pages with more remaining`
 						});
 					}
 					return {
