@@ -5,6 +5,13 @@ export const SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
 export const DEVICE_CODE_TTL_SECONDS = 10 * 60;
 export const DEVICE_POLL_INTERVAL_SECONDS = 5;
 
+const BEARER_SCHEME = /^Bearer\s+(\S+)/i;
+
+export const bearerToken = (authorization: string | null | undefined) => {
+	if (authorization == null) return '';
+	return BEARER_SCHEME.exec(authorization.trim())?.[1] ?? '';
+};
+
 export const normalizeApiKeyName = (value: string) => {
 	const name = value.normalize('NFKC').trim().replace(/\s+/g, ' ');
 	if (!name || name.length > 80 || /[\u0000-\u001f\u007f]/.test(name)) {

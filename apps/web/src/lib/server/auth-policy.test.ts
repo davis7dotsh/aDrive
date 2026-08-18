@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	LAST_USED_TOUCH_INTERVAL_MS,
 	allowsCredentialOrigin,
+	bearerToken,
 	normalizeUserCode,
 	shouldCountDownload,
 	shouldRecordFileDownload,
@@ -54,6 +55,16 @@ describe('auth policy', () => {
 				now
 			)
 		).toBe(true);
+	});
+
+	it('reads Bearer tokens without regard to scheme case', () => {
+		expect(bearerToken('Bearer adr_abc_secret')).toBe('adr_abc_secret');
+		expect(bearerToken('bearer adr_abc_secret')).toBe('adr_abc_secret');
+		expect(bearerToken('BEARER adr_abc_secret')).toBe('adr_abc_secret');
+		expect(bearerToken(' Bearer adr_abc_secret ')).toBe('adr_abc_secret');
+		expect(bearerToken('Basic abc')).toBe('');
+		expect(bearerToken('Bearer')).toBe('');
+		expect(bearerToken(null)).toBe('');
 	});
 
 	it('requires the dashboard origin for cookie-authenticated mutations', () => {
