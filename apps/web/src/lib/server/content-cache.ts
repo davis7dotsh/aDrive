@@ -50,6 +50,9 @@ export const fileContentCacheRequest = (url: URL) => {
 	const key = new URL(url.pathname, url.origin);
 	const version = url.searchParams.get('v');
 	if (version) key.searchParams.set('v', version);
+	if (url.searchParams.get('preview') === 'dashboard') {
+		key.searchParams.set('preview', 'dashboard');
+	}
 	return new Request(key, { method: 'GET' });
 };
 

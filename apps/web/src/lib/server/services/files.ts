@@ -1129,6 +1129,7 @@ const makeFiles = Effect.gen(function* () {
 					catch: (cause) =>
 						new StorageError({ operation: 'finish file purge', cause })
 				});
+				forgetTagListCache(db);
 			}
 			return due.length;
 		}),

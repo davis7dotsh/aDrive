@@ -53,11 +53,17 @@ describe('content cache policy', () => {
 		expect(firstIfNoneMatchEtag('')).toBeNull();
 	});
 
-	it('keys file cache entries on the immutable version and ignores grants', () => {
-		const request = fileContentCacheRequest(
+	it('keys file cache entries on version and preview policy', () => {
+		const previewRequest = fileContentCacheRequest(
 			new URL('https://files.example/f/id?v=3&e=1&g=sig&preview=dashboard')
 		);
-		expect(request.url).toBe('https://files.example/f/id?v=3');
+		const contentRequest = fileContentCacheRequest(
+			new URL('https://files.example/f/id?v=3&e=1&g=sig')
+		);
+		expect(previewRequest.url).toBe(
+			'https://files.example/f/id?v=3&preview=dashboard'
+		);
+		expect(contentRequest.url).toBe('https://files.example/f/id?v=3');
 		expect(
 			pathCacheRequest(new URL('https://files.example/t/id/3/grid.webp?g=1'))
 				.url
