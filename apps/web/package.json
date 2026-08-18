@@ -18,10 +18,13 @@
 	"dependencies": {
 		"@adrive/shared": "workspace:^",
 		"@effect/sql-d1": "4.0.0-beta.102",
+		"@modelcontextprotocol/server": "2.0.0",
+		"agents": "^0.20.1",
 		"effect": "4.0.0-beta.102",
 		"markdown-it": "^14.3.0",
 		"mime": "^4.1.0",
-		"runed": "^0.37.1"
+		"runed": "^0.37.1",
+		"zod": "^4.4.3"
 	},
 	"devDependencies": {
 		"@effect/language-service": "0.87.1",
