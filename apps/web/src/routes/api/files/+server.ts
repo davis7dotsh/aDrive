@@ -91,13 +91,22 @@ export const GET: RequestHandler = ({ cookies, request, url }) =>
 				})
 			};
 			const listing = yield* files.list(trashed, page);
+			const omitMeta = url.searchParams.get('omitMeta') === '1';
 			return Response.json({
 				files: listing.files,
 				nextCursor: listing.nextCursor,
-				tags: yield* tags.list,
+				tags: omitMeta ? [] : yield* tags.list,
 				contentOrigin: config.contentOrigin,
 				maxUploadBytes: config.maxUploadBytes,
-				semantic: yield* indexing.status
+				semantic: omitMeta
+					? {
+							enabled: false,
+							indexedChunks: 0,
+							dimensions: 384,
+							model: '',
+							costNotice: ''
+						}
+					: yield* indexing.status
 			});
 		})
 	);

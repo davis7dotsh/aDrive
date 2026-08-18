@@ -1,7 +1,13 @@
 import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
+import { matchesEtag } from '$lib/file-thumbnail';
 import { shouldCountDownload } from '$lib/server/auth-policy';
 import { contentSecurityPolicy } from '$lib/server/content-headers';
+import {
+	firstIfNoneMatchEtag,
+	notModifiedResponse,
+	siteCacheControl
+} from '$lib/server/content-cache';
 import { AppConfig } from '$lib/server/config';
 import { runEdge } from '$lib/server/edge';
 import { NotFound } from '$lib/server/errors';
@@ -36,7 +42,7 @@ const siteGrant = (path: string) => {
 	};
 };
 
-export const GET: RequestHandler = ({ params, request, url }) =>
+const serveSite: RequestHandler = ({ params, request, url }) =>
 	runEdge(
 		Effect.gen(function* () {
 			const grant = siteGrant(params.path ?? '');
@@ -72,28 +78,69 @@ export const GET: RequestHandler = ({ params, request, url }) =>
 					version: grant?.version
 				}
 			);
-			const object = yield* blobs.get(asset.r2Key);
-			if (
+			const cacheControl = siteCacheControl(hasGrant, asset.contentType);
+			const ifNoneMatch = request.headers.get('if-none-match');
+			const headersFor = (etag: string, size: number) => ({
+				'Cache-Control': cacheControl,
+				'Content-Length': String(size),
+				'Content-Security-Policy': contentSecurityPolicy(
+					asset.contentType,
+					config.dashboardOrigin
+				),
+				'Content-Type': asset.contentType,
+				ETag: etag,
+				'Referrer-Policy': 'no-referrer',
+				'X-Content-Type-Options': 'nosniff'
+			});
+
+			if (request.method === 'HEAD') {
+				const object = yield* blobs.head(asset.r2Key);
+				if (!hasGrant && matchesEtag(ifNoneMatch, object.httpEtag)) {
+					return notModifiedResponse(object.httpEtag, cacheControl);
+				}
+				return new Response(null, {
+					headers: headersFor(object.httpEtag, object.size)
+				});
+			}
+
+			const conditionalEtag = hasGrant
+				? null
+				: firstIfNoneMatchEtag(ifNoneMatch);
+			const countHtmlDownload =
 				asset.contentType === 'text/html' &&
-				shouldCountDownload(request.headers.get('range'))
-			) {
+				shouldCountDownload(request.headers.get('range'));
+
+			if (conditionalEtag === '*') {
+				const object = yield* blobs.head(asset.r2Key);
+				if (countHtmlDownload) yield* files.recordDownload(params.id);
+				return notModifiedResponse(object.httpEtag, cacheControl);
+			}
+
+			const loaded =
+				conditionalEtag === null
+					? {
+							changed: true as const,
+							object: yield* blobs.get(asset.r2Key)
+						}
+					: yield* blobs.getIfChanged(asset.r2Key, conditionalEtag);
+			if (!loaded.changed) {
+				if (countHtmlDownload) yield* files.recordDownload(params.id);
+				return notModifiedResponse(loaded.object.httpEtag, cacheControl);
+			}
+			if (!hasGrant && matchesEtag(ifNoneMatch, loaded.object.httpEtag)) {
+				if (countHtmlDownload) yield* files.recordDownload(params.id);
+				return notModifiedResponse(loaded.object.httpEtag, cacheControl);
+			}
+
+			const object = loaded.object;
+			if (countHtmlDownload) {
 				yield* files.recordDownload(params.id);
 			}
 			return new Response(object.body, {
-				headers: {
-					'Cache-Control': hasGrant
-						? 'private, no-store'
-						: 'public, max-age=0, must-revalidate',
-					'Content-Length': String(object.size),
-					'Content-Security-Policy': contentSecurityPolicy(
-						asset.contentType,
-						config.dashboardOrigin
-					),
-					'Content-Type': asset.contentType,
-					ETag: object.httpEtag,
-					'Referrer-Policy': 'no-referrer',
-					'X-Content-Type-Options': 'nosniff'
-				}
+				headers: headersFor(object.httpEtag, object.size)
 			});
 		})
 	);
+
+export const GET = serveSite;
+export const HEAD = serveSite;

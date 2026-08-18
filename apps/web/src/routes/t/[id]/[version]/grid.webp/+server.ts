@@ -8,14 +8,19 @@ import {
 	supportsDashboardThumbnail
 } from '$lib/file-thumbnail';
 import { contentSecurityPolicy } from '$lib/server/content-headers';
+import {
+	fileCacheControl,
+	matchEdgeCache,
+	notModifiedResponse,
+	pathCacheRequest,
+	storeEdgeCache
+} from '$lib/server/content-cache';
 import { AppConfig } from '$lib/server/config';
 import { runEdge } from '$lib/server/edge';
 import { NotFound, StorageError } from '$lib/server/errors';
 import { Blobs } from '$lib/server/services/blobs';
 import { Files } from '$lib/server/services/files';
 import { GrantSecrets } from '$lib/server/services/grant-secrets';
-
-const PUBLIC_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 
 const parsedVersion = (value: string) => {
 	const version = Number(value);
@@ -30,9 +35,7 @@ const thumbnailResponse = (
 ) =>
 	new Response(body, {
 		headers: {
-			'Cache-Control': privateResponse
-				? 'private, no-store'
-				: PUBLIC_CACHE_CONTROL,
+			'Cache-Control': fileCacheControl(privateResponse),
 			'Content-Length': String(size),
 			'Content-Security-Policy': contentSecurityPolicy('image/webp'),
 			'Content-Type': 'image/webp',
@@ -42,14 +45,8 @@ const thumbnailResponse = (
 		}
 	});
 
-const notModifiedResponse = (etag: string) =>
-	new Response(null, {
-		status: 304,
-		headers: {
-			'Cache-Control': PUBLIC_CACHE_CONTROL,
-			ETag: etag
-		}
-	});
+const publicNotModified = (etag: string) =>
+	notModifiedResponse(etag, fileCacheControl(false));
 
 const publicThumbnailRedirect = (url: URL) => {
 	const location = new URL(url);
@@ -64,7 +61,7 @@ const publicThumbnailRedirect = (url: URL) => {
 	});
 };
 
-export const GET: RequestHandler = ({ params, request, url }) =>
+export const GET: RequestHandler = ({ params, platform, request, url }) =>
 	runEdge(
 		Effect.gen(function* () {
 			const version = parsedVersion(params.version);
@@ -109,6 +106,18 @@ export const GET: RequestHandler = ({ params, request, url }) =>
 				if (!granted) return yield* new NotFound({ id: params.id });
 			}
 
+			const cacheRequest = pathCacheRequest(url);
+			if (!privateResponse && !redirectPublicGrant) {
+				const cachedResponse = yield* matchEdgeCache(platform, cacheRequest);
+				const cachedEtag = cachedResponse?.headers.get('ETag');
+				if (cachedResponse && cachedEtag) {
+					if (matchesEtag(request.headers.get('if-none-match'), cachedEtag)) {
+						return publicNotModified(cachedEtag);
+					}
+					return cachedResponse;
+				}
+			}
+
 			const blobs = yield* Blobs;
 			const cached =
 				content.thumbnailR2Key === null
@@ -128,14 +137,16 @@ export const GET: RequestHandler = ({ params, request, url }) =>
 						cached.object.httpEtag
 					)
 				) {
-					return notModifiedResponse(cached.object.httpEtag);
+					return publicNotModified(cached.object.httpEtag);
 				}
-				return thumbnailResponse(
+				const response = thumbnailResponse(
 					cached.object.body,
 					cached.object.size,
 					cached.object.httpEtag,
 					privateResponse
 				);
+				if (!privateResponse) storeEdgeCache(platform, cacheRequest, response);
+				return response;
 			}
 			if (!hasGrant) return yield* new NotFound({ id: params.id });
 
@@ -194,14 +205,16 @@ export const GET: RequestHandler = ({ params, request, url }) =>
 					!privateResponse &&
 					matchesEtag(request.headers.get('if-none-match'), existing.httpEtag)
 				) {
-					return notModifiedResponse(existing.httpEtag);
+					return publicNotModified(existing.httpEtag);
 				}
-				return thumbnailResponse(
+				const response = thumbnailResponse(
 					existing.body,
 					existing.size,
 					existing.httpEtag,
 					privateResponse
 				);
+				if (!privateResponse) storeEdgeCache(platform, cacheRequest, response);
+				return response;
 			}
 			const stored = result.blob;
 			if (redirectPublicGrant) return publicThumbnailRedirect(url);
@@ -209,14 +222,16 @@ export const GET: RequestHandler = ({ params, request, url }) =>
 				!privateResponse &&
 				matchesEtag(request.headers.get('if-none-match'), stored.etag)
 			) {
-				return notModifiedResponse(stored.etag);
+				return publicNotModified(stored.etag);
 			}
 
-			return thumbnailResponse(
+			const response = thumbnailResponse(
 				bytes,
 				stored.size,
 				stored.etag,
 				privateResponse
 			);
+			if (!privateResponse) storeEdgeCache(platform, cacheRequest, response);
+			return response;
 		})
 	);

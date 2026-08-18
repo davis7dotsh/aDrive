@@ -21,12 +21,17 @@ import {
 	vectorIdForChunk
 } from '../semantic-policy';
 import { isSearchableText, searchTextLimit } from '../search-text';
+import { createObjectTtlCache } from '../isolate-cache';
 import { Blobs } from './blobs';
 import { Db } from './bindings';
 import { Embedder, VectorIndex } from './semantic';
 
 const INDEX_LEASE_MS = 5 * 60 * 1_000;
 const EMBEDDING_MODEL = '@cf/baai/bge-small-en-v1.5';
+const SEMANTIC_STATUS_CACHE_TTL_MS = 10_000;
+const semanticStatusCache = createObjectTtlCache<D1Database, SemanticStatus>(
+	SEMANTIC_STATUS_CACHE_TTL_MS
+);
 
 const IndexJobRow = Schema.Struct({
 	id: Schema.String,
@@ -454,12 +459,19 @@ const makeIndexing = Effect.gen(function* () {
 	});
 
 	const status = Effect.gen(function* () {
+		const cached = semanticStatusCache.get(db);
+		if (cached) {
+			return {
+				...cached,
+				enabled: embedder.enabled && vectors.enabled
+			};
+		}
 		const rows = yield* all(
 			db.prepare('SELECT COUNT(*) AS count FROM file_chunks'),
 			CountRow,
 			'count indexed chunks'
 		);
-		return {
+		const result = {
 			enabled: embedder.enabled && vectors.enabled,
 			indexedChunks: rows[0]?.count ?? 0,
 			dimensions: 384,
@@ -467,6 +479,8 @@ const makeIndexing = Effect.gen(function* () {
 			costNotice:
 				'Vectorize bills each query against stored vectors × 384 dimensions; keyword search stays available when semantic search is off.'
 		};
+		semanticStatusCache.set(db, result);
+		return result;
 	}).pipe(Effect.withSpan('Indexing.status'));
 
 	return Indexing.of({

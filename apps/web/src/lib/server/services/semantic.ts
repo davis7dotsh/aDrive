@@ -1,5 +1,6 @@
 import { Context, Effect, Layer } from 'effect';
 import { StorageError } from '../errors';
+import { createQueryEmbeddingCache } from '../query-embedding-cache';
 import { collapseVectorMatches } from '../semantic-policy';
 
 const EMBEDDING_MODEL = '@cf/baai/bge-small-en-v1.5';
@@ -97,6 +98,7 @@ export const VectorIndexNull = Layer.succeed(
 );
 
 const liveLayers = (env: SemanticBoundEnv) => {
+	const embeddings = createQueryEmbeddingCache(env.AUTH_GUARD);
 	const embed = (values: ReadonlyArray<string>) =>
 		Effect.tryPromise({
 			try: async () =>
@@ -117,7 +119,17 @@ const liveLayers = (env: SemanticBoundEnv) => {
 			documents: (values) =>
 				values.length === 0 ? Effect.succeed([]) : embed(values),
 			query: (value) =>
-				embed([value]).pipe(Effect.map((vectors) => vectors[0] ?? null))
+				Effect.gen(function* () {
+					const cached = yield* Effect.promise(() => embeddings.get(value));
+					if (cached) return cached;
+					const vector = yield* embed([value]).pipe(
+						Effect.map((vectors) => vectors[0] ?? null)
+					);
+					if (vector) {
+						yield* Effect.promise(() => embeddings.set(value, vector));
+					}
+					return vector;
+				})
 		})
 	);
 

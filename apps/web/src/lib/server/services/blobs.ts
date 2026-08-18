@@ -1,4 +1,5 @@
 import { Context, Effect, Layer } from 'effect';
+import { isR2ObjectBody } from '../content-cache';
 import { NotFound, StorageError } from '../errors';
 import { streamIntoBucket } from '../upload-stream';
 import { Bucket } from './bindings';
@@ -19,6 +20,17 @@ export interface BlobsShape {
 		key: string,
 		range?: string | null
 	) => Effect.Effect<R2ObjectBody, NotFound | StorageError>;
+	readonly head: (
+		key: string
+	) => Effect.Effect<R2Object, NotFound | StorageError>;
+	readonly getIfChanged: (
+		key: string,
+		etag: string
+	) => Effect.Effect<
+		| { readonly changed: true; readonly object: R2ObjectBody }
+		| { readonly changed: false; readonly object: R2Object },
+		NotFound | StorageError
+	>;
 	readonly readTextPrefix: (
 		key: string,
 		maxBytes: number
@@ -57,6 +69,33 @@ const makeBlobs = Effect.gen(function* () {
 			});
 			if (object === null) return yield* new NotFound({ id: key });
 			return object;
+		}),
+		head: Effect.fn('Blobs.head')(function* (key) {
+			const object = yield* Effect.tryPromise({
+				try: () => bucket.head(key),
+				catch: (cause) => new StorageError({ operation: 'head blob', cause })
+			});
+			if (object === null) return yield* new NotFound({ id: key });
+			return object;
+		}),
+		getIfChanged: Effect.fn('Blobs.getIfChanged')(function* (key, etag) {
+			const object = yield* Effect.tryPromise({
+				try: async () => {
+					try {
+						return await bucket.get(key, {
+							onlyIf: { etagDoesNotMatch: etag }
+						});
+					} catch {
+						return bucket.get(key);
+					}
+				},
+				catch: (cause) =>
+					new StorageError({ operation: 'get blob if changed', cause })
+			});
+			if (object === null) return yield* new NotFound({ id: key });
+			return isR2ObjectBody(object)
+				? { changed: true as const, object }
+				: { changed: false as const, object };
 		}),
 		readTextPrefix: Effect.fn('Blobs.readTextPrefix')(
 			function* (key, maxBytes) {

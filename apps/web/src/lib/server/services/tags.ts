@@ -11,7 +11,17 @@ import {
 	normalizeTagName,
 	uniqueTagNames
 } from '../tag-policy';
+import { createObjectTtlCache } from '../isolate-cache';
 import { Db } from './bindings';
+
+const TAG_LIST_CACHE_TTL_MS = 5_000;
+const tagListCache = createObjectTtlCache<D1Database, ReadonlyArray<Tag>>(
+	TAG_LIST_CACHE_TTL_MS
+);
+
+export const forgetTagListCache = (db: D1Database) => {
+	tagListCache.delete(db);
+};
 
 const TagRow = Schema.Struct({
 	id: Schema.String,
@@ -74,6 +84,8 @@ const makeTags = Effect.gen(function* () {
 	const sql = (yield* SqlClient.SqlClient).withoutTransforms();
 
 	const list = Effect.gen(function* () {
+		const cached = tagListCache.get(db);
+		if (cached) return cached;
 		const rows = yield* sql
 			.unsafe(
 				`${tagSelect}
@@ -85,7 +97,9 @@ const makeTags = Effect.gen(function* () {
 					(cause) => new StorageError({ operation: 'list tags', cause })
 				)
 			);
-		return decodeTagRows(rows).map(toTag);
+		const tags = decodeTagRows(rows).map(toTag);
+		tagListCache.set(db, tags);
+		return tags;
 	}).pipe(Effect.withSpan('Tags.list'));
 
 	const find = Effect.fn('Tags.find')(function* (id: string) {
@@ -163,6 +177,7 @@ const makeTags = Effect.gen(function* () {
 				catch: (cause) =>
 					new StorageError({ operation: 'auto-create tags', cause })
 			});
+			forgetTagListCache(db);
 		}
 		const resolved = yield* findByNormalized(normalized);
 		const byNormalized = new Map(
@@ -207,6 +222,7 @@ const makeTags = Effect.gen(function* () {
 					cause: 'Tag was not returned after creation'
 				});
 			}
+			forgetTagListCache(db);
 			return result;
 		}),
 		update: Effect.fn('Tags.update')(function* (id, input) {
@@ -248,6 +264,7 @@ const makeTags = Effect.gen(function* () {
 					]),
 				catch: (cause) => new StorageError({ operation: 'update tag', cause })
 			});
+			forgetTagListCache(db);
 			return yield* find(id);
 		}),
 		remove: Effect.fn('Tags.remove')(function* (id) {
@@ -261,6 +278,7 @@ const makeTags = Effect.gen(function* () {
 					]),
 				catch: (cause) => new StorageError({ operation: 'delete tag', cause })
 			});
+			forgetTagListCache(db);
 		}),
 		setFileTags: Effect.fn('Tags.setFileTags')(function* (fileId, names) {
 			const file = yield* sql
@@ -290,6 +308,7 @@ const makeTags = Effect.gen(function* () {
 				catch: (cause) =>
 					new StorageError({ operation: 'set file tags', cause })
 			});
+			forgetTagListCache(db);
 		})
 	});
 });

@@ -135,7 +135,11 @@
 				files: [
 					...list.current.files,
 					...next.files.filter((file) => !seen.has(file.id))
-				]
+				],
+				tags: list.current.tags,
+				semantic: list.current.semantic,
+				contentOrigin: list.current.contentOrigin || next.contentOrigin,
+				maxUploadBytes: list.current.maxUploadBytes || next.maxUploadBytes
 			});
 		} catch (cause) {
 			toasts.error(cause, 'Could not load more files');

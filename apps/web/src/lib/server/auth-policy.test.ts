@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+	LAST_USED_TOUCH_INTERVAL_MS,
 	allowsCredentialOrigin,
 	normalizeUserCode,
 	shouldCountDownload,
 	shouldRecordFileDownload,
+	shouldTouchLastUsed,
 	validateExpiration
 } from './auth-policy';
 
@@ -34,6 +36,24 @@ describe('auth policy', () => {
 		expect(shouldRecordFileDownload(null, true)).toBe(false);
 		expect(shouldRecordFileDownload('bytes=0-999', true)).toBe(false);
 		expect(shouldRecordFileDownload(null, false)).toBe(true);
+	});
+
+	it('touches last-used timestamps only after the idle interval', () => {
+		const now = new Date('2026-08-18T12:00:00.000Z');
+		expect(shouldTouchLastUsed(null, now)).toBe(true);
+		expect(shouldTouchLastUsed('not-a-date', now)).toBe(true);
+		expect(
+			shouldTouchLastUsed(
+				new Date(now.getTime() - LAST_USED_TOUCH_INTERVAL_MS + 1).toISOString(),
+				now
+			)
+		).toBe(false);
+		expect(
+			shouldTouchLastUsed(
+				new Date(now.getTime() - LAST_USED_TOUCH_INTERVAL_MS).toISOString(),
+				now
+			)
+		).toBe(true);
 	});
 
 	it('requires the dashboard origin for cookie-authenticated mutations', () => {

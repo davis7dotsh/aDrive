@@ -64,6 +64,10 @@
 	//   6. `wrangler d1 migrations apply DB --env production --remote`
 	"env": {
 		"production": {
+			// Place the Worker near D1 for dashboard/search queries. Content
+			// routes still check visibility in D1, then serve from R2 or the
+			// Cache API.
+			"placement": { "mode": "smart" },
 			"routes": [
 				{ "pattern": "drive.davis7.space", "custom_domain": true },
 				{ "pattern": "files.davis7.space", "custom_domain": true }

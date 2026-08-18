@@ -49,6 +49,20 @@ export const shouldRecordFileDownload = (
 	verifiedThumbnailSource: boolean
 ) => !verifiedThumbnailSource && shouldCountDownload(rangeHeader);
 
+export const LAST_USED_TOUCH_INTERVAL_MS = 5 * 60 * 1_000;
+
+export const shouldTouchLastUsed = (
+	lastUsedAt: string | null | undefined,
+	now: Date
+) => {
+	if (!lastUsedAt) return true;
+	const then = Date.parse(lastUsedAt);
+	return (
+		!Number.isFinite(then) ||
+		now.getTime() - then >= LAST_USED_TOUCH_INTERVAL_MS
+	);
+};
+
 export const allowsCredentialOrigin = (
 	method: string,
 	origin: string | null,
