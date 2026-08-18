@@ -81,6 +81,16 @@ describe('applySecurityHeaders', () => {
 		expect(response.headers.get('Referrer-Policy')).toBe('no-referrer');
 	});
 
+	it('marks MCP responses private and uncacheable', () => {
+		const response = applySecurityHeaders(
+			new Response('{}', {
+				headers: { 'Content-Type': 'application/json' }
+			}),
+			{ ...context, pathname: '/mcp' }
+		);
+		expect(response.headers.get('Cache-Control')).toBe('private, no-store');
+	});
+
 	it('marks API responses private and uncacheable', () => {
 		const response = applySecurityHeaders(
 			new Response('{}', {

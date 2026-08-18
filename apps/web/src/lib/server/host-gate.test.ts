@@ -22,6 +22,7 @@ describe('host gate', () => {
 		expect(classifyRoute('/t/3f9f/1/grid.webp')).toBe('content');
 		expect(classifyRoute('/s/3f9f/assets/app.js')).toBe('content');
 		expect(classifyRoute('/api/files')).toBe('dashboard');
+		expect(classifyRoute('/mcp')).toBe('dashboard');
 		expect(classifyRoute('/')).toBe('dashboard');
 	});
 
@@ -41,6 +42,12 @@ describe('host gate', () => {
 		expect(() =>
 			assertHostRoute(new URL('https://drive.example.com/api/files'), origins)
 		).not.toThrow();
+		expect(() =>
+			assertHostRoute(new URL('https://drive.example.com/mcp'), origins)
+		).not.toThrow();
+		expect(() =>
+			assertHostRoute(new URL('https://content.example.com/mcp'), origins)
+		).toThrow(MisdirectedRequest);
 		expect(() =>
 			assertHostRoute(new URL('https://content.example.com/f/file-id'), origins)
 		).not.toThrow();
