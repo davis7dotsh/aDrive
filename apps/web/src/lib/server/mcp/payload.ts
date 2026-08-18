@@ -1,6 +1,7 @@
 import { InvalidRequest } from '../errors';
 
 export const MCP_MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
+export const MCP_MAX_BASE64_CHARS = Math.ceil(MCP_MAX_UPLOAD_BYTES / 3) * 4 + 8;
 export const MCP_MAX_SITE_TOTAL_BYTES = 8 * 1024 * 1024;
 export const MCP_LIST_DEFAULT = 50;
 export const MCP_LIST_MAX = 200;
@@ -41,15 +42,26 @@ export const decodeBase64 = (value: string) => {
 	}
 };
 
+const tooLarge = (): DecodedContent => ({
+	ok: false,
+	message: 'Content exceeds the 2 MiB MCP upload limit',
+	status: 413
+});
+
 const bytesFromInput = (input: {
 	readonly text?: string;
 	readonly content_base64?: string;
 }): DecodedContent => {
 	if (input.text !== undefined) {
+		// JS string length is a lower bound on UTF-8 bytes, so this rejects
+		// oversized payloads before TextEncoder allocates a second copy.
+		if (input.text.length > MCP_MAX_UPLOAD_BYTES) return tooLarge();
 		return { ok: true, bytes: new TextEncoder().encode(input.text) };
 	}
+	const compact = (input.content_base64 ?? '').replace(/\s+/g, '');
+	if (compact.length > MCP_MAX_BASE64_CHARS) return tooLarge();
 	try {
-		return { ok: true, bytes: decodeBase64(input.content_base64 ?? '') };
+		return { ok: true, bytes: decodeBase64(compact) };
 	} catch (cause) {
 		const message =
 			cause instanceof InvalidRequest
@@ -72,13 +84,7 @@ export const decodeExclusiveContent = (input: {
 	}
 	const decoded = bytesFromInput(input);
 	if (!decoded.ok) return decoded;
-	if (decoded.bytes.byteLength > MCP_MAX_UPLOAD_BYTES) {
-		return {
-			ok: false,
-			message: 'Content exceeds the 2 MiB MCP upload limit',
-			status: 413
-		};
-	}
+	if (decoded.bytes.byteLength > MCP_MAX_UPLOAD_BYTES) return tooLarge();
 	return decoded;
 };
 
