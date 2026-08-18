@@ -144,7 +144,10 @@ export const listFiles = async (
 ) => {
 	const params = new URLSearchParams();
 	if (trashed) params.set('trashed', 'true');
-	if (cursor) params.set('cursor', cursor);
+	if (cursor) {
+		params.set('cursor', cursor);
+		params.set('omitMeta', '1');
+	}
 	const response = await request(
 		`/api/files${params.size > 0 ? `?${params}` : ''}`,
 		token,

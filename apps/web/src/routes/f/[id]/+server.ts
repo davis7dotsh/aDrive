@@ -1,9 +1,19 @@
 import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
+import { matchesEtag } from '$lib/file-thumbnail';
 import {
 	contentDisposition,
 	contentSecurityPolicy
 } from '$lib/server/content-headers';
+import {
+	canUseEdgeCache,
+	fileCacheControl,
+	fileContentCacheRequest,
+	firstIfNoneMatchEtag,
+	matchEdgeCache,
+	notModifiedResponse,
+	storeEdgeCache
+} from '$lib/server/content-cache';
 import { AppConfig } from '$lib/server/config';
 import { shouldRecordFileDownload } from '$lib/server/auth-policy';
 import { decodeRangeHeader, rangeHeaders } from '$lib/server/download-response';
@@ -20,7 +30,7 @@ const requestedVersion = (url: URL) => {
 	return Number.isSafeInteger(version) && version > 0 ? version : null;
 };
 
-export const GET: RequestHandler = ({ params, request, url }) =>
+const serveFile: RequestHandler = ({ params, platform, request, url }) =>
 	runEdge(
 		Effect.gen(function* () {
 			const config = yield* AppConfig;
@@ -56,8 +66,112 @@ export const GET: RequestHandler = ({ params, request, url }) =>
 				verifiedThumbnailSource = thumbnailSource;
 			}
 			const blobs = yield* Blobs;
-			const range = yield* decodeRangeHeader(request.headers.get('range'));
-			const object = yield* blobs.get(content.r2Key, range);
+			const range =
+				request.method === 'HEAD'
+					? null
+					: yield* decodeRangeHeader(request.headers.get('range'));
+			const cacheControl = fileCacheControl(privateResponse);
+			const ifNoneMatch = request.headers.get('if-none-match');
+			const cacheRequest = fileContentCacheRequest(url);
+			const recordDownload = shouldRecordFileDownload(
+				range,
+				verifiedThumbnailSource
+			);
+			const headersFor = (
+				etag: string,
+				responseRange: {
+					readonly status: number;
+					readonly contentLength: number;
+					readonly contentRange?: string;
+				}
+			) => ({
+				'Accept-Ranges': 'bytes',
+				'Cache-Control': cacheControl,
+				'Content-Disposition': contentDisposition(
+					content.file.displayName,
+					content.file.contentType,
+					!content.file.public && !dashboardPreview
+				),
+				'Content-Length': String(responseRange.contentLength),
+				'Content-Security-Policy': contentSecurityPolicy(
+					content.file.contentType,
+					dashboardPreview ? config.dashboardOrigin : "'none'"
+				),
+				'Content-Type': content.file.contentType,
+				ETag: etag,
+				...(responseRange.contentRange
+					? { 'Content-Range': responseRange.contentRange }
+					: {}),
+				'Referrer-Policy': 'no-referrer',
+				'X-Content-Type-Options': 'nosniff'
+			});
+
+			if (canUseEdgeCache(privateResponse, range, content.file.sizeBytes)) {
+				const cached = yield* matchEdgeCache(platform, cacheRequest);
+				const cachedEtag = cached?.headers.get('ETag');
+				if (cached && cachedEtag) {
+					if (recordDownload) yield* files.recordDownload(content.file.id);
+					if (matchesEtag(ifNoneMatch, cachedEtag)) {
+						return notModifiedResponse(cachedEtag, cacheControl);
+					}
+					if (request.method === 'HEAD') {
+						return new Response(null, {
+							status: 200,
+							headers: headersFor(cachedEtag, {
+								status: 200,
+								contentLength: content.file.sizeBytes
+							})
+						});
+					}
+					return cached;
+				}
+			}
+
+			if (request.method === 'HEAD') {
+				const object = yield* blobs.head(content.r2Key);
+				if (!privateResponse && matchesEtag(ifNoneMatch, object.httpEtag)) {
+					return notModifiedResponse(object.httpEtag, cacheControl);
+				}
+				return new Response(null, {
+					status: 200,
+					headers: headersFor(object.httpEtag, {
+						status: 200,
+						contentLength: object.size
+					})
+				});
+			}
+
+			const conditionalEtag =
+				range === null && !privateResponse
+					? firstIfNoneMatchEtag(ifNoneMatch)
+					: null;
+			if (conditionalEtag === '*') {
+				const object = yield* blobs.head(content.r2Key);
+				if (recordDownload) yield* files.recordDownload(content.file.id);
+				return notModifiedResponse(object.httpEtag, cacheControl);
+			}
+
+			const loaded =
+				conditionalEtag === null
+					? {
+							changed: true as const,
+							object: yield* blobs.get(content.r2Key, range)
+						}
+					: yield* blobs.getIfChanged(content.r2Key, conditionalEtag);
+			if (!loaded.changed) {
+				if (recordDownload) yield* files.recordDownload(content.file.id);
+				return notModifiedResponse(loaded.object.httpEtag, cacheControl);
+			}
+			if (
+				range === null &&
+				!privateResponse &&
+				matchesEtag(ifNoneMatch, loaded.object.httpEtag)
+			) {
+				if (recordDownload) yield* files.recordDownload(content.file.id);
+				return notModifiedResponse(loaded.object.httpEtag, cacheControl);
+			}
+
+			const object = loaded.object;
 			const responseRange = rangeHeaders(object, content.file.sizeBytes, range);
 			if (!responseRange) {
 				return yield* new StorageError({
@@ -65,33 +179,20 @@ export const GET: RequestHandler = ({ params, request, url }) =>
 					cause: 'R2 returned invalid byte range metadata'
 				});
 			}
-			if (shouldRecordFileDownload(range, verifiedThumbnailSource)) {
+			if (recordDownload) {
 				yield* files.recordDownload(content.file.id);
 			}
 
-			return new Response(object.body, {
+			const response = new Response(object.body, {
 				status: responseRange.status,
-				headers: {
-					'Accept-Ranges': 'bytes',
-					'Content-Disposition': contentDisposition(
-						content.file.displayName,
-						content.file.contentType,
-						!content.file.public && !dashboardPreview
-					),
-					'Content-Length': String(responseRange.contentLength),
-					'Content-Security-Policy': contentSecurityPolicy(
-						content.file.contentType,
-						dashboardPreview ? config.dashboardOrigin : "'none'"
-					),
-					'Content-Type': content.file.contentType,
-					ETag: object.httpEtag,
-					...(responseRange.contentRange
-						? { 'Content-Range': responseRange.contentRange }
-						: {}),
-					...(privateResponse ? { 'Cache-Control': 'private, no-store' } : {}),
-					'Referrer-Policy': 'no-referrer',
-					'X-Content-Type-Options': 'nosniff'
-				}
+				headers: headersFor(object.httpEtag, responseRange)
 			});
+			if (canUseEdgeCache(privateResponse, range, content.file.sizeBytes)) {
+				storeEdgeCache(platform, cacheRequest, response);
+			}
+			return response;
 		})
 	);
+
+export const GET = serveFile;
+export const HEAD = serveFile;

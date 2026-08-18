@@ -25,12 +25,18 @@ export const sanitizeMatchQuery = (value: string) => {
 		.join(' ');
 };
 
-export const sanitizeTrigramQuery = (value: string) => {
-	const normalized = value
+export const normalizedSearchText = (value: string) =>
+	value
 		.normalize('NFKC')
 		.toLocaleLowerCase('en-US')
 		.replace(/[^\p{L}\p{N}]+/gu, ' ')
 		.trim();
+
+export const shouldEmbedSearchQuery = (value: string) =>
+	normalizedSearchText(value).length >= 3;
+
+export const sanitizeTrigramQuery = (value: string) => {
+	const normalized = normalizedSearchText(value);
 	if (normalized.length < 3) return null;
 
 	const trigrams = new Set<string>();

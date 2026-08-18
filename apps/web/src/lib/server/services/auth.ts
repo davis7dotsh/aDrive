@@ -10,6 +10,7 @@ import {
 	normalizeUserCode,
 	SESSION_COOKIE,
 	SESSION_MAX_AGE_SECONDS,
+	shouldTouchLastUsed,
 	validateExpiration
 } from '../auth-policy';
 import { AppConfig } from '../config';
@@ -36,7 +37,8 @@ const ApiKeyRow = Schema.Struct({
 
 const SessionRow = Schema.Struct({
 	token_hash: Schema.String,
-	expires_at: Schema.String
+	expires_at: Schema.String,
+	last_used_at: Schema.String
 });
 
 const DeviceCodeRow = Schema.Struct({
@@ -328,22 +330,25 @@ const makeAuth = Effect.gen(function* () {
 						message: 'A valid credential is required'
 					});
 				}
-				const nowIso = new Date().toISOString();
+				const now = new Date();
+				const nowIso = now.toISOString();
 				if (row.expires_at !== null && row.expires_at <= nowIso) {
 					return yield* new Unauthorized({
 						message: 'This API key has expired'
 					});
 				}
-				yield* sql`
-					UPDATE api_keys
-					SET last_used_at = ${nowIso}
-					WHERE id = ${row.id}
-				`.pipe(
-					Effect.mapError(
-						(cause) =>
-							new StorageError({ operation: 'update API key usage', cause })
-					)
-				);
+				if (shouldTouchLastUsed(row.last_used_at, now)) {
+					yield* sql`
+						UPDATE api_keys
+						SET last_used_at = ${nowIso}
+						WHERE id = ${row.id}
+					`.pipe(
+						Effect.mapError(
+							(cause) =>
+								new StorageError({ operation: 'update API key usage', cause })
+						)
+					);
+				}
 				return {
 					credentialId: row.id,
 					kind: 'api-key' as const,
@@ -362,11 +367,12 @@ const makeAuth = Effect.gen(function* () {
 				});
 			}
 			const tokenHash = yield* hashToken(sessionToken);
-			const now = new Date().toISOString();
+			const now = new Date();
+			const nowIso = now.toISOString();
 			const rows = yield* sql`
-				SELECT token_hash, expires_at
+				SELECT token_hash, expires_at, last_used_at
 				FROM dashboard_sessions
-				WHERE token_hash = ${tokenHash} AND expires_at > ${now}
+				WHERE token_hash = ${tokenHash} AND expires_at > ${nowIso}
 				LIMIT 1
 			`.pipe(
 				Effect.mapError(
@@ -380,15 +386,20 @@ const makeAuth = Effect.gen(function* () {
 					message: 'A valid credential is required'
 				});
 			}
-			yield* sql`
-				UPDATE dashboard_sessions SET last_used_at = ${now}
-				WHERE token_hash = ${tokenHash}
-			`.pipe(
-				Effect.mapError(
-					(cause) =>
-						new StorageError({ operation: 'update dashboard session', cause })
-				)
-			);
+			if (shouldTouchLastUsed(row.last_used_at, now)) {
+				yield* sql`
+					UPDATE dashboard_sessions SET last_used_at = ${nowIso}
+					WHERE token_hash = ${tokenHash}
+				`.pipe(
+					Effect.mapError(
+						(cause) =>
+							new StorageError({
+								operation: 'update dashboard session',
+								cause
+							})
+					)
+				);
+			}
 			return {
 				credentialId: row.token_hash,
 				kind: 'session' as const,

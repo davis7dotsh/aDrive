@@ -36,7 +36,7 @@ import {
 } from '../thumbnail-storage';
 import { Blobs, type StoredBlob } from './blobs';
 import { Db } from './bindings';
-import { Tags } from './tags';
+import { forgetTagListCache, Tags } from './tags';
 
 const FileContentRow = Schema.Struct({
 	id: Schema.String,
@@ -433,6 +433,7 @@ const makeFiles = Effect.gen(function* () {
 					compensateStoredBlob(failure, id, 1, r2Key, 'upload')
 				)
 			);
+			forgetTagListCache(db);
 
 			return {
 				file: {

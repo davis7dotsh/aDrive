@@ -4,7 +4,8 @@ import {
 	pinExactName,
 	reciprocalRankFusion,
 	sanitizeMatchQuery,
-	sanitizeTrigramQuery
+	sanitizeTrigramQuery,
+	shouldEmbedSearchQuery
 } from './search-ranking';
 
 describe('search query sanitization', () => {
@@ -18,6 +19,12 @@ describe('search query sanitization', () => {
 	it('builds only quoted OR-connected trigrams', () => {
 		expect(sanitizeTrigramQuery('A:B')).toBe('"a b"');
 		expect(sanitizeTrigramQuery('ab')).toBeNull();
+	});
+
+	it('skips Workers AI embeddings for queries too short to be semantic', () => {
+		expect(shouldEmbedSearchQuery('ab')).toBe(false);
+		expect(shouldEmbedSearchQuery('  a  ')).toBe(false);
+		expect(shouldEmbedSearchQuery('orbit')).toBe(true);
 	});
 });
 

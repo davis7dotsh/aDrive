@@ -10,7 +10,8 @@ import {
 	pinExactName,
 	reciprocalRankFusion,
 	sanitizeMatchQuery,
-	sanitizeTrigramQuery
+	sanitizeTrigramQuery,
+	shouldEmbedSearchQuery
 } from '../search-ranking';
 import {
 	eligibleSemanticCommand,
@@ -182,20 +183,22 @@ const makeSearch = Effect.gen(function* () {
 						rankedSearchCommand('files_trgm', trigramMatch, now, selectedTagIds)
 					)
 				: [];
-			const semanticCandidates = yield* embedder.query(trimmedQuery).pipe(
-				Effect.flatMap((embedding) => vectorIndex.search(embedding)),
-				Effect.catch((failure) =>
-					Effect.sync(() => {
-						console.error(
-							JSON.stringify({
-								message: 'semantic search degraded to keyword search',
-								operation: failure.operation
+			const semanticCandidates = shouldEmbedSearchQuery(trimmedQuery)
+				? yield* embedder.query(trimmedQuery).pipe(
+						Effect.flatMap((embedding) => vectorIndex.search(embedding)),
+						Effect.catch((failure) =>
+							Effect.sync(() => {
+								console.error(
+									JSON.stringify({
+										message: 'semantic search degraded to keyword search',
+										operation: failure.operation
+									})
+								);
+								return [];
 							})
-						);
-						return [];
-					})
-				)
-			);
+						)
+					)
+				: [];
 			const semantic = yield* filterSemantic(
 				semanticCandidates.map((candidate) => candidate.fileId),
 				selectedTagIds,
