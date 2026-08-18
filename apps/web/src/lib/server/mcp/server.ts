@@ -552,9 +552,10 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 						return yield* sites.commit(session.sessionId);
 					}).pipe(
 						Effect.catch((failure) =>
-							sites
-								.abort(session.sessionId)
-								.pipe(Effect.andThen(Effect.fail(failure)))
+							sites.abort(session.sessionId).pipe(
+								Effect.catch(() => Effect.void),
+								Effect.andThen(Effect.fail(failure))
+							)
 						)
 					);
 					return {
