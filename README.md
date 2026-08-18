@@ -23,6 +23,21 @@ the release's SHA-256 checksums, and prints PATH guidance. Pin a version
 with `ADRIVE_CLI_VERSION=cli-v0.1.0`, update later with `adrive upgrade`,
 then connect with `adrive login <your-drive-url>`.
 
+## Connect MCP
+
+The dashboard origin serves a streamable HTTP MCP endpoint at `/mcp`. Mint
+an API key in the dashboard, then point the client at that URL with a Bearer
+token:
+
+```
+https://<dashboard-host>/mcp
+Authorization: Bearer adr_…
+```
+
+Read-only keys can list, search, and read metadata. Read-write keys can
+upload, tag, and publish sites. MCP uploads are capped at 2 MiB; use the
+CLI for larger files.
+
 ## Local setup
 
 Requirements: Node 26+ and pnpm 11+.
