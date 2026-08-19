@@ -20,8 +20,8 @@ curl -fsSL https://raw.githubusercontent.com/davis7dotsh/aDrive/main/scripts/ins
 
 This installs to `~/.adrive/bin` (no sudo), verifies the download against
 the release's SHA-256 checksums, and prints PATH guidance. Pin a version
-with `ADRIVE_CLI_VERSION=cli-v0.1.0`, update later with `adrive upgrade`,
-then connect with `adrive login <your-drive-url>`.
+with `ADRIVE_CLI_VERSION=cli-v0.1.0`, update later with `adrive upgrade`
+or `adrive update`, then connect with `adrive login <your-drive-url>`.
 
 ## Connect MCP
 

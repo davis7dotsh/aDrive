@@ -511,4 +511,16 @@ describe('CLI stream and JSON contracts', () => {
 			'https'
 		);
 	});
+
+	it('accepts update as an alias of upgrade', async () => {
+		const help = await run(['--help']);
+		expect(help.status).toBe(0);
+		expect(help.stdout.toString()).toMatch(/upgrade,\s*update/);
+
+		const upgrade = await run(['upgrade', '--help']);
+		const update = await run(['update', '--help']);
+		expect(upgrade.status).toBe(0);
+		expect(update.status).toBe(0);
+		expect(upgrade.stdout.toString()).toBe(update.stdout.toString());
+	});
 });

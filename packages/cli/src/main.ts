@@ -1559,7 +1559,10 @@ const upgrade = Command.make(
 				yield* emit({ status: 'upgraded', from: CLI_VERSION, to: latest });
 			}
 		})
-).pipe(Command.withDescription('Update this CLI to the latest release'));
+).pipe(
+	Command.withDescription('Update this CLI to the latest release'),
+	Command.withAlias('update')
+);
 
 const root = Command.make('adrive', {
 	json: Flag.boolean('json').pipe(

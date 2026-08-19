@@ -146,9 +146,10 @@ adrive login "https://drive.example.com" --headless --name "agent-cli"
 
 ```sh
 adrive upgrade --check
+adrive update --check
 ```
 
-Run `adrive upgrade` only when the user asked to update the installed CLI. Verify the version afterward.
+`update` is an alias of `upgrade`. Run either only when the user asked to update the installed CLI. Verify the version afterward.
 
 ## Use JSON mode for automation
 
