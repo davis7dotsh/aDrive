@@ -63,7 +63,12 @@ export const applySecurityHeaders = (
 
 	// Every dashboard API response carries account or credential data;
 	// content routes (/f, /s, /t) own their own caching policy per file.
-	if (context.pathname.startsWith('/api/') && !headers.has('Cache-Control')) {
+	if (
+		(context.pathname.startsWith('/api/') ||
+			context.pathname === '/mcp' ||
+			context.pathname.startsWith('/mcp/')) &&
+		!headers.has('Cache-Control')
+	) {
 		headers.set('Cache-Control', 'private, no-store');
 	}
 

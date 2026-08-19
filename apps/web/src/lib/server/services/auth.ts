@@ -6,6 +6,7 @@ import {
 	DEVICE_CODE_TTL_SECONDS,
 	DEVICE_POLL_INTERVAL_SECONDS,
 	allowsCredentialOrigin,
+	bearerToken,
 	normalizeApiKeyName,
 	normalizeUserCode,
 	SESSION_COOKIE,
@@ -299,9 +300,7 @@ const makeAuth = Effect.gen(function* () {
 				});
 			}
 
-			const bearer = authorization?.startsWith('Bearer ')
-				? authorization.slice('Bearer '.length)
-				: '';
+			const bearer = bearerToken(authorization);
 			if (bearer) {
 				const match = API_KEY_PATTERN.exec(bearer);
 				if (!match) {

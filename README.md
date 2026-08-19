@@ -1,8 +1,8 @@
 # adrive
 
-All six planned phases are working: a Cloudflare-backed file spine, responsive
-dashboard, tags, hybrid search, static-site publishing, deployment-based
-authentication, and scheduled storage lifecycle management.
+adrive is a Cloudflare-backed file spine with a dashboard, tags, hybrid
+search, static-site publishing, deployment-based authentication, and
+scheduled storage lifecycle management.
 Uploads stream directly to R2, metadata and append-only version history live in
 D1, and file/site bytes are served from a separate cookie-less content origin.
 Search combines weighted FTS5 BM25 results, a filename trigram index, and an
@@ -22,6 +22,21 @@ This installs to `~/.adrive/bin` (no sudo), verifies the download against
 the release's SHA-256 checksums, and prints PATH guidance. Pin a version
 with `ADRIVE_CLI_VERSION=cli-v0.1.0`, update later with `adrive upgrade`,
 then connect with `adrive login <your-drive-url>`.
+
+## Connect MCP
+
+The dashboard origin serves a streamable HTTP MCP endpoint at `/mcp`. Mint
+an API key in the dashboard, then point the client at that URL with a Bearer
+token:
+
+```
+https://<dashboard-host>/mcp
+Authorization: Bearer adr_…
+```
+
+Read-only keys can list, search, and read metadata. Read-write keys can
+upload, tag, and publish sites. MCP uploads are capped at 2 MiB; use the
+CLI for larger files.
 
 ## Local setup
 

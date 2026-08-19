@@ -30,7 +30,7 @@ import type { Indexing } from './services/indexing';
 import type { Lifecycle } from './services/lifecycle';
 import type { GrantSecrets } from './services/grant-secrets';
 
-type AppServices =
+export type AppServices =
 	| SqlClient.SqlClient
 	| AppConfig
 	| AuthGuard

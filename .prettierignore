@@ -1,5 +1,4 @@
 node_modules/
-.notes/
 .svelte-kit/
 .svelte-check/
 .wrangler/
