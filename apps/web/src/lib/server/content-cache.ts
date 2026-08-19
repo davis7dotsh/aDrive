@@ -90,7 +90,11 @@ const workerCache = (platform: EdgePlatform) => {
 export const matchEdgeCache = (platform: EdgePlatform, cacheRequest: Request) =>
 	Effect.promise(async () => {
 		try {
-			return await workerCache(platform)?.match(cacheRequest);
+			const cached = await workerCache(platform)?.match(cacheRequest);
+			// The Workers Cache API returns responses with immutable headers, but
+			// hooks.server.ts applies security headers to every response. Hand back
+			// a reconstructed, mutable copy so those writes don't throw.
+			return cached && new Response(cached.body, cached);
 		} catch {
 			return undefined;
 		}
