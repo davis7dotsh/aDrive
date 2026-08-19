@@ -125,7 +125,10 @@ describe('content cache policy', () => {
 	it('hands back a mutable copy so hooks can add security headers', async () => {
 		const immutable = new Response('cached-bytes', {
 			status: 200,
-			headers: { 'Cache-Control': PUBLIC_IMMUTABLE_CACHE_CONTROL, ETag: '"abc"' }
+			headers: {
+				'Cache-Control': PUBLIC_IMMUTABLE_CACHE_CONTROL,
+				ETag: '"abc"'
+			}
 		});
 		// Mirror the Workers Cache API, whose responses reject header writes.
 		immutable.headers.set = () => {
