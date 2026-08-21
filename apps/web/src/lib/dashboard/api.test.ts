@@ -64,6 +64,20 @@ describe('content link memoization', () => {
 		expect(fetchMock).toHaveBeenCalledTimes(3);
 	});
 
+	it('does not memoize versionless current-file links', async () => {
+		stubLink({
+			url: 'https://content.example/f/id-e?v=3&e=2000000000&g=sig',
+			expiresAt: '2033-05-01T00:00:00.000Z',
+			version: 3,
+			public: false
+		});
+
+		await getContentLink('token', 'id-e');
+		await getContentLink('token', 'id-e');
+
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+	});
+
 	it('does not memoize public links', async () => {
 		stubLink({
 			url: 'https://content.example/f/id-d',
@@ -113,6 +127,30 @@ describe('preview memoization', () => {
 		await getFilePreview('token', 'id-v');
 
 		expect(fetchMock).toHaveBeenCalledTimes(3);
+	});
+
+	it('preserves markdown kind on a cached preview', async () => {
+		vi.stubGlobal(
+			'fetch',
+			fetchMock.mockImplementation(
+				async () =>
+					new Response('# hello', {
+						status: 200,
+						headers: { 'X-Adrive-Preview-Kind': 'markdown' }
+					})
+			)
+		);
+
+		await expect(getFilePreview('token', 'id-md', 1)).resolves.toEqual({
+			kind: 'markdown',
+			text: '# hello'
+		});
+		await expect(getFilePreview('token', 'id-md', 1)).resolves.toEqual({
+			kind: 'markdown',
+			text: '# hello'
+		});
+
+		expect(fetchMock).toHaveBeenCalledTimes(1);
 	});
 
 	it('skips caching very large previews', async () => {

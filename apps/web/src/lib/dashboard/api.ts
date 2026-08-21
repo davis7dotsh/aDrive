@@ -198,7 +198,10 @@ export const getFile = async (
 // balloon: entries are skipped past a size cap and evicted oldest-first.
 const MAX_PREVIEW_CACHE_BYTES = 128 * 1024;
 const MAX_PREVIEW_CACHE_ENTRIES = 200;
-const previewCache = new Map<`${string}\u0000${number}`, { text: string }>();
+const previewCache = new Map<
+	`${string}\u0000${number}`,
+	{ kind: string; text: string }
+>();
 
 export const getFilePreview = async (
 	token: string,
@@ -210,7 +213,7 @@ export const getFilePreview = async (
 		version === undefined ? null : (`${id}\u0000${version}` as const);
 	if (cacheKey !== null) {
 		const cached = previewCache.get(cacheKey);
-		if (cached) return { kind: 'text', text: cached.text };
+		if (cached) return { kind: cached.kind, text: cached.text };
 	}
 	const response = await request(
 		`/api/files/${encodeURIComponent(id)}/preview`,
@@ -220,7 +223,7 @@ export const getFilePreview = async (
 	const kind = response.headers.get('X-Adrive-Preview-Kind') ?? 'text';
 	const text = await response.text();
 	if (cacheKey !== null && text.length <= MAX_PREVIEW_CACHE_BYTES) {
-		previewCache.set(cacheKey, { text });
+		previewCache.set(cacheKey, { kind, text });
 		if (previewCache.size > MAX_PREVIEW_CACHE_ENTRIES) {
 			const oldest = previewCache.keys().next().value;
 			if (oldest !== undefined) previewCache.delete(oldest);
@@ -259,7 +262,7 @@ export const getContentLink = async (
 	requireGrant = false
 ) => {
 	const key = privateLinkKey(id, version, includeUnavailable, requireGrant);
-	const cached = privateLinkCache.get(key);
+	const cached = version === undefined ? undefined : privateLinkCache.get(key);
 	if (cached && cached.expiresAt - Date.now() > PRIVATE_LINK_RENEW_MS) {
 		return cached.payload;
 	}
@@ -273,9 +276,10 @@ export const getContentLink = async (
 		{ signal }
 	);
 	const payload = json(parseFileContentLink, response);
-	if (!includeUnavailable) {
+	if (version !== undefined && !includeUnavailable) {
 		// Only memoize still-available private grants; unavailable/trashed
-		// links are always checked against the server.
+		// links and versionless "current file" links are always checked
+		// against the server so a new version cannot reuse a stale grant.
 		const link = await payload;
 		if (!link.public && link.expiresAt !== null) {
 			const expiresAt = new Date(link.expiresAt).getTime();

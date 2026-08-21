@@ -90,16 +90,17 @@ export const GET: RequestHandler = ({ cookies, request, url }) =>
 								})
 				})
 			};
-			const listing = yield* files.list(trashed, page);
 			const omitMeta = url.searchParams.get('omitMeta') === '1';
 			// The three dashboard reads (files, tags, indexing status) are
 			// independent D1 queries; run them concurrently so the listing
-			// latency is the slowest query, not their sum.
-			const [tagList, status] = omitMeta
-				? [null, null]
-				: yield* Effect.all([tags.list, indexing.status], {
-						concurrency: 'unbounded'
-					});
+			// latency is the slowest query, not their sum. Pagination with
+			// omitMeta skips the metadata queries but still needs the listing.
+			const [listing, tagList, status] = omitMeta
+				? [yield* files.list(trashed, page), null, null]
+				: yield* Effect.all(
+						[files.list(trashed, page), tags.list, indexing.status],
+						{ concurrency: 'unbounded' }
+					);
 			return Response.json({
 				files: listing.files,
 				nextCursor: listing.nextCursor,
