@@ -15,7 +15,8 @@ import {
 	notModifiedResponse,
 	pathCacheRequest,
 	siteCacheControl,
-	storeEdgeCache
+	storeEdgeCache,
+	thumbnailCacheControl
 } from './content-cache';
 
 describe('content cache policy', () => {
@@ -27,6 +28,23 @@ describe('content cache policy', () => {
 		);
 		expect(fileCacheControl(true)).toBe(PRIVATE_CACHE_CONTROL);
 		expect(fileCacheControl(true, false)).toBe(PRIVATE_CACHE_CONTROL);
+	});
+
+	it('caps private thumbnail freshness to the remaining grant', () => {
+		const nowMs = 1_700_000_000_000;
+		const expiresAtSeconds = Math.floor(nowMs / 1_000) + 120;
+		expect(thumbnailCacheControl(false, expiresAtSeconds, nowMs)).toBe(
+			PUBLIC_IMMUTABLE_CACHE_CONTROL
+		);
+		expect(thumbnailCacheControl(true, expiresAtSeconds, nowMs)).toBe(
+			'private, max-age=120, must-revalidate'
+		);
+		expect(thumbnailCacheControl(true, expiresAtSeconds - 200, nowMs)).toBe(
+			'private, max-age=0, must-revalidate'
+		);
+		expect(thumbnailCacheControl(true, Number.NaN, nowMs)).toBe(
+			'private, max-age=0, must-revalidate'
+		);
 	});
 
 	it('revalidates published HTML and briefly caches other site assets', () => {

@@ -1,0 +1,18 @@
+# Cloudflare static-asset cache rules for the dashboard.
+# The adapter copies this file into the deployed assets and appends its own
+# immutable rules for /_app/immutable/*, so they are not repeated here.
+#
+# The favicon, touch icon, and OG image are tiny, stable files referenced from
+# the HTML shell. Keeping them for a day avoids re-downloading on every visit
+# while still picking up a future replacement within one day.
+/favicon.svg
+  Cache-Control: public, max-age=86400
+
+/apple-touch-icon.png
+  Cache-Control: public, max-age=86400
+
+/og-image.png
+  Cache-Control: public, max-age=86400
+
+/og-image.svg
+  Cache-Control: public, max-age=86400

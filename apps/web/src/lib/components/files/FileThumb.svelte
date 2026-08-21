@@ -49,7 +49,9 @@
 		(entries) => {
 			if (entries.some((entry) => entry.isIntersecting)) visible = true;
 		},
-		{ once: true, rootMargin: '160px' }
+		// Start every thumbnail ~4 rows ahead of the viewport so scrolling
+		// reveals already-decoded images instead of showing a skeleton.
+		{ once: true, rootMargin: '600px' }
 	);
 
 	const thumbnail = resource(
@@ -130,7 +132,7 @@
 				return { source: url.href, text: '' };
 			}
 			if (isText) {
-				const preview = await getFilePreview(auth, id, signal);
+				const preview = await getFilePreview(auth, id, version, signal);
 				signal.throwIfAborted();
 				return { source: '', text: preview.text.slice(0, 360) };
 			}
@@ -215,6 +217,7 @@
 			height="360"
 			loading="lazy"
 			decoding="async"
+			fetchpriority={visible ? 'high' : 'auto'}
 			class="size-full object-cover transition-opacity duration-200 {previewLoading
 				? 'opacity-0'
 				: 'opacity-100'}"

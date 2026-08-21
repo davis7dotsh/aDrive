@@ -31,12 +31,26 @@
 	const id = $derived(page.params.id);
 	const from = $derived(page.url.searchParams.get('from') ?? '');
 	const backHref = $derived(from.startsWith('?') ? `/${from}` : '/');
+	const ssrDetail = $derived(initialDetail);
+	let hydratedFileId: string | null = null;
 	const detail = resource(
 		() => [session.ready, session.token, id] as const,
-		([ready, token, fileId], _previous, { signal }) =>
-			ready && token && fileId
-				? getFile(token, fileId, signal)
-				: Promise.resolve(null),
+		([ready, token, fileId], _previous, { signal }) => {
+			if (!ready || !token || !fileId) return Promise.resolve(null);
+			// The detail page was already rendered server-side for this exact
+			// file; skip the duplicate fetch on hydration. Track that per file
+			// so a client navigation to another file can consume its SSR
+			// payload too. Explicit refetch() after mutations still hits the API.
+			if (
+				ssrDetail &&
+				ssrDetail.file.id === fileId &&
+				hydratedFileId !== fileId
+			) {
+				hydratedFileId = fileId;
+				return Promise.resolve(ssrDetail);
+			}
+			return getFile(token, fileId, signal);
+		},
 		{ initialValue: untrack(() => initialDetail) }
 	);
 	let busy = $state(false);
@@ -85,10 +99,11 @@
 		id;
 		operation += 1;
 		busy = false;
+		serverLoadError = initialError;
 	});
 
 	$effect(() => {
-		if (detail.current) serverLoadError = '';
+		if (detail.current?.file.id === id) serverLoadError = '';
 	});
 
 	const update = async (mutation: FileMutation, success: string) => {

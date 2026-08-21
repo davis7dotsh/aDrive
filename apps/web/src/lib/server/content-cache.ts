@@ -19,6 +19,22 @@ export const fileCacheControl = (
 		: PUBLIC_REVALIDATE_CACHE_CONTROL;
 };
 
+// Private thumbnail URLs include the grant (`e`/`g`). Keep those responses
+// fresh only until that grant expires so a later request hits verification
+// instead of the browser disk cache.
+export const thumbnailCacheControl = (
+	privateResponse: boolean,
+	expiresAtSeconds?: number,
+	nowMs = Date.now()
+) => {
+	if (!privateResponse) return PUBLIC_IMMUTABLE_CACHE_CONTROL;
+	if (expiresAtSeconds === undefined || !Number.isFinite(expiresAtSeconds)) {
+		return 'private, max-age=0, must-revalidate';
+	}
+	const remaining = Math.max(0, Math.floor(expiresAtSeconds - nowMs / 1_000));
+	return `private, max-age=${remaining}, must-revalidate`;
+};
+
 export const siteCacheControl = (
 	privateResponse: boolean,
 	contentType: string

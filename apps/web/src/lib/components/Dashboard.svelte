@@ -81,6 +81,8 @@
 			? seconds * 1_000
 			: undefined;
 	});
+	const ssrList = untrack(() => initialList);
+	let hydratedFromServer = false;
 	const list = resource(
 		() =>
 			[
@@ -96,6 +98,15 @@
 			{ signal }
 		) => {
 			if (!ready || !token) return emptyList;
+			// The page was already rendered server-side with this exact listing
+			// (query/trash/tags come from the same URL in both renderers). Skip
+			// the duplicate fetch so a dashboard visit costs one API call, not
+			// two; the resource still refreshes when params change or on the
+			// explicit refetch() that follows uploads and mutations.
+			if (ssrList && !hydratedFromServer) {
+				hydratedFromServer = true;
+				return ssrList;
+			}
 			// Plain browsing pages through /api/files; queries and tag filters
 			// go to search, whose results are relevance-bounded, not paginated.
 			return trashed
@@ -105,8 +116,10 @@
 					: listFiles(token, false, signal);
 		},
 		{
-			debounce: 200,
-			initialValue: untrack(() => initialList) ?? emptyList
+			// The search input already debounces keystrokes (useSearchParams
+			// above), so another debounce here only double-delays tag toggles,
+			// refetches after mutations, and the first hydrate. Run promptly.
+			initialValue: ssrList ?? emptyList
 		}
 	);
 	let serverLoadError = $state(untrack(() => initialError));

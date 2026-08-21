@@ -1,23 +1,24 @@
-import {
-	ApiKeyCreateResponseSchema,
-	ApiKeyListResponseSchema,
-	FileContentLinkResponseSchema,
-	FileDetailResponseSchema,
-	FileListResponseSchema,
-	FileMutationResponseSchema,
-	FileTagsResponseSchema,
-	SessionsRevokedResponseSchema,
-	TagResponseSchema,
-	UploadResponseSchema,
-	type FileContentLinkResponse,
-	type FileDetailResponse,
-	type FileListResponse,
-	type FileMutation,
-	type Tag,
-	type TagCreate,
-	type TagUpdate
+import type {
+	FileContentLinkResponse,
+	FileDetailResponse,
+	FileListResponse,
+	FileMutation,
+	Tag,
+	TagCreate,
+	TagUpdate
 } from '@adrive/shared';
-import { Schema } from 'effect';
+import {
+	parseApiKeyCreateResponse,
+	parseApiKeyListResponse,
+	parseFileContentLink,
+	parseFileDetailResponse,
+	parseFileListResponse,
+	parseFileMutationResponse,
+	parseFileTagsResponse,
+	parseSessionsRevokedResponse,
+	parseTagResponse,
+	parseUploadResponse
+} from './parse';
 
 export const BROWSER_SESSION = '__browser_session__';
 
@@ -68,10 +69,8 @@ const request = async (path: string, token: string, init?: RequestInit) => {
 	return response;
 };
 
-const json = async <A, I>(
-	schema: Schema.Codec<A, I, never>,
-	response: Response
-) => Schema.decodeUnknownPromise(schema)(await response.json());
+const json = async <A>(parse: (value: unknown) => A, response: Response) =>
+	parse(await response.json());
 
 export const checkKey = async (token: string, signal?: AbortSignal) => {
 	await request('/api/auth/check', token, { signal });
@@ -93,12 +92,12 @@ export const logoutEverywhere = async (token: string) => {
 	const response = await request('/api/auth/sessions', token, {
 		method: 'DELETE'
 	});
-	return json(SessionsRevokedResponseSchema, response);
+	return json(parseSessionsRevokedResponse, response);
 };
 
 export const listApiKeys = async (token: string, signal?: AbortSignal) => {
 	const response = await request('/api/auth/keys', token, { signal });
-	return (await json(ApiKeyListResponseSchema, response)).keys;
+	return (await json(parseApiKeyListResponse, response)).keys;
 };
 
 export const createApiKey = async (
@@ -111,7 +110,7 @@ export const createApiKey = async (
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name, scope })
 	});
-	return json(ApiKeyCreateResponseSchema, response);
+	return json(parseApiKeyCreateResponse, response);
 };
 
 export const revokeApiKey = async (token: string, id: string) => {
@@ -153,7 +152,7 @@ export const listFiles = async (
 		token,
 		{ signal }
 	);
-	return json(FileListResponseSchema, response);
+	return json(parseFileListResponse, response);
 };
 
 export const emptyTrash = async (token: string) => {
@@ -172,7 +171,7 @@ export const searchFiles = async (
 	const response = await request(`/api/search?${params.toString()}`, token, {
 		signal
 	});
-	return json(FileListResponseSchema, response);
+	return json(parseFileListResponse, response);
 };
 
 export const getFile = async (
@@ -190,24 +189,72 @@ export const getFile = async (
 			signal
 		}
 	);
-	return json(FileDetailResponseSchema, response);
+	return json(parseFileDetailResponse, response);
 };
+
+// Preview text is immutable per (file, version), and dashboard grids fetch
+// it for every visible text file on every visit, so memoize it in memory for
+// the session. Bounded so a session with many or large text files cannot
+// balloon: entries are skipped past a size cap and evicted oldest-first.
+const MAX_PREVIEW_CACHE_BYTES = 128 * 1024;
+const MAX_PREVIEW_CACHE_ENTRIES = 200;
+const previewCache = new Map<
+	`${string}\u0000${number}`,
+	{ kind: string; text: string }
+>();
 
 export const getFilePreview = async (
 	token: string,
 	id: string,
+	version?: number,
 	signal?: AbortSignal
 ) => {
+	const cacheKey =
+		version === undefined ? null : (`${id}\u0000${version}` as const);
+	if (cacheKey !== null) {
+		const cached = previewCache.get(cacheKey);
+		if (cached) return { kind: cached.kind, text: cached.text };
+	}
+	const params = new URLSearchParams();
+	if (version !== undefined) params.set('v', String(version));
 	const response = await request(
-		`/api/files/${encodeURIComponent(id)}/preview`,
+		`/api/files/${encodeURIComponent(id)}/preview${params.size > 0 ? `?${params}` : ''}`,
 		token,
 		{ signal }
 	);
-	return {
-		kind: response.headers.get('X-Adrive-Preview-Kind') ?? 'text',
-		text: await response.text()
-	};
+	const kind = response.headers.get('X-Adrive-Preview-Kind') ?? 'text';
+	const text = await response.text();
+	if (cacheKey !== null && text.length <= MAX_PREVIEW_CACHE_BYTES) {
+		previewCache.set(cacheKey, { kind, text });
+		if (previewCache.size > MAX_PREVIEW_CACHE_ENTRIES) {
+			const oldest = previewCache.keys().next().value;
+			if (oldest !== undefined) previewCache.delete(oldest);
+		}
+	}
+	return { kind, text };
 };
+
+// Signed private content links are expensive to mint (auth + D1 lookup +
+// HMAC per call) and identical across calls for the same file version, so
+// memoize them by scope with a safety margin. A dashboard grid can request
+// dozens of private thumbnails at once; without this every one of them fires
+// a separate /link request on every visit, which is the main pop-in source
+// for private files. Links are short-lived, so entries are reused only until
+// shortly before the server-side grant expires.
+const PRIVATE_LINK_RENEW_MS = 60_000;
+const MAX_PRIVATE_LINK_CACHE_ENTRIES = 200;
+interface CachedPrivateLink {
+	readonly expiresAt: number;
+	readonly payload: FileContentLinkResponse;
+}
+const privateLinkCache = new Map<string, CachedPrivateLink>();
+const privateLinkKey = (
+	id: string,
+	version: number | undefined,
+	includeUnavailable: boolean,
+	requireGrant: boolean
+) =>
+	`${id}\u0000${version ?? ''}\u0000${includeUnavailable ? 1 : 0}\u0000${requireGrant ? 1 : 0}`;
 
 export const getContentLink = async (
 	token: string,
@@ -217,6 +264,11 @@ export const getContentLink = async (
 	includeUnavailable = false,
 	requireGrant = false
 ) => {
+	const key = privateLinkKey(id, version, includeUnavailable, requireGrant);
+	const cached = version === undefined ? undefined : privateLinkCache.get(key);
+	if (cached && cached.expiresAt - Date.now() > PRIVATE_LINK_RENEW_MS) {
+		return cached.payload;
+	}
 	const params = new URLSearchParams();
 	if (version !== undefined) params.set('v', String(version));
 	if (includeUnavailable) params.set('unavailable', 'true');
@@ -226,10 +278,25 @@ export const getContentLink = async (
 		token,
 		{ signal }
 	);
-	return json(
-		FileContentLinkResponseSchema,
-		response
-	) satisfies Promise<FileContentLinkResponse>;
+	const payload = json(parseFileContentLink, response);
+	if (version !== undefined && !includeUnavailable) {
+		// Only memoize still-available private grants; unavailable/trashed
+		// links and versionless "current file" links are always checked
+		// against the server so a new version cannot reuse a stale grant.
+		const link = await payload;
+		if (!link.public && link.expiresAt !== null) {
+			const expiresAt = new Date(link.expiresAt).getTime();
+			if (Number.isFinite(expiresAt)) {
+				privateLinkCache.set(key, { expiresAt, payload: link });
+				if (privateLinkCache.size > MAX_PRIVATE_LINK_CACHE_ENTRIES) {
+					const oldest = privateLinkCache.keys().next().value;
+					if (oldest !== undefined) privateLinkCache.delete(oldest);
+				}
+			}
+		}
+		return link;
+	}
+	return payload;
 };
 
 type UploadOptions = {
@@ -308,7 +375,7 @@ export const uploadFile = async (
 		}
 		xhr.send(file);
 	});
-	return Schema.decodeUnknownPromise(UploadResponseSchema)(body);
+	return parseUploadResponse(body);
 };
 
 export const uploadVersion = async (token: string, id: string, file: File) => {
@@ -323,7 +390,7 @@ export const uploadVersion = async (token: string, id: string, file: File) => {
 			body: file
 		}
 	);
-	return json(FileMutationResponseSchema, response);
+	return json(parseFileMutationResponse, response);
 };
 
 export const mutateFile = async (
@@ -340,7 +407,7 @@ export const mutateFile = async (
 			body: JSON.stringify(mutation)
 		}
 	);
-	return json(FileMutationResponseSchema, response);
+	return json(parseFileMutationResponse, response);
 };
 
 export const createTag = async (token: string, input: TagCreate) => {
@@ -349,7 +416,7 @@ export const createTag = async (token: string, input: TagCreate) => {
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(input)
 	});
-	return (await json(TagResponseSchema, response)).tag;
+	return (await json(parseTagResponse, response)).tag;
 };
 
 export const updateTag = async (
@@ -362,7 +429,7 @@ export const updateTag = async (
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(input)
 	});
-	return (await json(TagResponseSchema, response)).tag;
+	return (await json(parseTagResponse, response)).tag;
 };
 
 export const deleteTag = async (token: string, id: string) => {
@@ -385,5 +452,5 @@ export const setFileTags = async (
 			body: JSON.stringify({ names: tags.map((tag) => tag.name) })
 		}
 	);
-	return (await json(FileTagsResponseSchema, response)).file;
+	return (await json(parseFileTagsResponse, response)).file;
 };
