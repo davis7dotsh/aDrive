@@ -1,23 +1,24 @@
-import {
-	ApiKeyCreateResponseSchema,
-	ApiKeyListResponseSchema,
-	FileContentLinkResponseSchema,
-	FileDetailResponseSchema,
-	FileListResponseSchema,
-	FileMutationResponseSchema,
-	FileTagsResponseSchema,
-	SessionsRevokedResponseSchema,
-	TagResponseSchema,
-	UploadResponseSchema,
-	type FileContentLinkResponse,
-	type FileDetailResponse,
-	type FileListResponse,
-	type FileMutation,
-	type Tag,
-	type TagCreate,
-	type TagUpdate
+import type {
+	FileContentLinkResponse,
+	FileDetailResponse,
+	FileListResponse,
+	FileMutation,
+	Tag,
+	TagCreate,
+	TagUpdate
 } from '@adrive/shared';
-import { Schema } from 'effect';
+import {
+	parseApiKeyCreateResponse,
+	parseApiKeyListResponse,
+	parseFileContentLink,
+	parseFileDetailResponse,
+	parseFileListResponse,
+	parseFileMutationResponse,
+	parseFileTagsResponse,
+	parseSessionsRevokedResponse,
+	parseTagResponse,
+	parseUploadResponse
+} from './parse';
 
 export const BROWSER_SESSION = '__browser_session__';
 
@@ -68,10 +69,8 @@ const request = async (path: string, token: string, init?: RequestInit) => {
 	return response;
 };
 
-const json = async <A, I>(
-	schema: Schema.Codec<A, I, never>,
-	response: Response
-) => Schema.decodeUnknownPromise(schema)(await response.json());
+const json = async <A>(parse: (value: unknown) => A, response: Response) =>
+	parse(await response.json());
 
 export const checkKey = async (token: string, signal?: AbortSignal) => {
 	await request('/api/auth/check', token, { signal });
@@ -93,12 +92,12 @@ export const logoutEverywhere = async (token: string) => {
 	const response = await request('/api/auth/sessions', token, {
 		method: 'DELETE'
 	});
-	return json(SessionsRevokedResponseSchema, response);
+	return json(parseSessionsRevokedResponse, response);
 };
 
 export const listApiKeys = async (token: string, signal?: AbortSignal) => {
 	const response = await request('/api/auth/keys', token, { signal });
-	return (await json(ApiKeyListResponseSchema, response)).keys;
+	return (await json(parseApiKeyListResponse, response)).keys;
 };
 
 export const createApiKey = async (
@@ -111,7 +110,7 @@ export const createApiKey = async (
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name, scope })
 	});
-	return json(ApiKeyCreateResponseSchema, response);
+	return json(parseApiKeyCreateResponse, response);
 };
 
 export const revokeApiKey = async (token: string, id: string) => {
@@ -153,7 +152,7 @@ export const listFiles = async (
 		token,
 		{ signal }
 	);
-	return json(FileListResponseSchema, response);
+	return json(parseFileListResponse, response);
 };
 
 export const emptyTrash = async (token: string) => {
@@ -172,7 +171,7 @@ export const searchFiles = async (
 	const response = await request(`/api/search?${params.toString()}`, token, {
 		signal
 	});
-	return json(FileListResponseSchema, response);
+	return json(parseFileListResponse, response);
 };
 
 export const getFile = async (
@@ -190,7 +189,7 @@ export const getFile = async (
 			signal
 		}
 	);
-	return json(FileDetailResponseSchema, response);
+	return json(parseFileDetailResponse, response);
 };
 
 export const getFilePreview = async (
@@ -252,10 +251,7 @@ export const getContentLink = async (
 		token,
 		{ signal }
 	);
-	const payload = json(
-		FileContentLinkResponseSchema,
-		response
-	) satisfies Promise<FileContentLinkResponse>;
+	const payload = json(parseFileContentLink, response);
 	if (!includeUnavailable) {
 		// Only memoize still-available private grants; unavailable/trashed
 		// links are always checked against the server.
@@ -347,7 +343,7 @@ export const uploadFile = async (
 		}
 		xhr.send(file);
 	});
-	return Schema.decodeUnknownPromise(UploadResponseSchema)(body);
+	return parseUploadResponse(body);
 };
 
 export const uploadVersion = async (token: string, id: string, file: File) => {
@@ -362,7 +358,7 @@ export const uploadVersion = async (token: string, id: string, file: File) => {
 			body: file
 		}
 	);
-	return json(FileMutationResponseSchema, response);
+	return json(parseFileMutationResponse, response);
 };
 
 export const mutateFile = async (
@@ -379,7 +375,7 @@ export const mutateFile = async (
 			body: JSON.stringify(mutation)
 		}
 	);
-	return json(FileMutationResponseSchema, response);
+	return json(parseFileMutationResponse, response);
 };
 
 export const createTag = async (token: string, input: TagCreate) => {
@@ -388,7 +384,7 @@ export const createTag = async (token: string, input: TagCreate) => {
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(input)
 	});
-	return (await json(TagResponseSchema, response)).tag;
+	return (await json(parseTagResponse, response)).tag;
 };
 
 export const updateTag = async (
@@ -401,7 +397,7 @@ export const updateTag = async (
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(input)
 	});
-	return (await json(TagResponseSchema, response)).tag;
+	return (await json(parseTagResponse, response)).tag;
 };
 
 export const deleteTag = async (token: string, id: string) => {
@@ -424,5 +420,5 @@ export const setFileTags = async (
 			body: JSON.stringify({ names: tags.map((tag) => tag.name) })
 		}
 	);
-	return (await json(FileTagsResponseSchema, response)).file;
+	return (await json(parseFileTagsResponse, response)).file;
 };
