@@ -1,7 +1,10 @@
 import { FileListResponseSchema } from '@adrive/shared';
 import type { FileListResponse } from '@adrive/shared';
-import { Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 import { supportsDashboardThumbnail } from '$lib/file-thumbnail';
+import { AppConfig } from '$lib/server/config';
+import { runWorkerProgram } from '$lib/server/edge';
+import { GrantSecrets } from '$lib/server/services/grant-secrets';
 import type { PageServerLoad } from './$types';
 
 // Preload the first-viewport public thumbnails so the grid's first images are
@@ -10,24 +13,81 @@ import type { PageServerLoad } from './$types';
 // per (id, version), so the browser caches them across visits.
 const THUMBNAIL_PRELOAD_LIMIT = 12;
 
-const thumbnailPreloads = (list: FileListResponse) => {
+const eligibleForThumbnailPreload = (file: FileListResponse['files'][number]) =>
+	file.kind === 'file' &&
+	file.public &&
+	file.deletedAt === null &&
+	file.expiresAt === null &&
+	supportsDashboardThumbnail(file.contentType);
+
+const thumbnailPreloadTargets = (list: FileListResponse) => {
 	if (!list.contentOrigin) return [];
-	const preloads: Array<string> = [];
+	const targets: Array<{ id: string; version: number }> = [];
 	for (const file of list.files) {
-		if (preloads.length >= THUMBNAIL_PRELOAD_LIMIT) break;
-		if (
-			file.kind === 'file' &&
-			file.public &&
-			file.deletedAt === null &&
-			file.expiresAt === null &&
-			supportsDashboardThumbnail(file.contentType)
-		) {
-			preloads.push(
-				`${list.contentOrigin}/t/${encodeURIComponent(file.id)}/${file.version}/grid.webp`
-			);
+		if (targets.length >= THUMBNAIL_PRELOAD_LIMIT) break;
+		if (eligibleForThumbnailPreload(file)) {
+			targets.push({ id: file.id, version: file.version });
 		}
 	}
-	return preloads;
+	return targets;
+};
+
+const preloadUrls = (
+	list: FileListResponse,
+	grants: ReadonlyArray<{ expires: string; signature: string } | undefined>
+) =>
+	thumbnailPreloadTargets(list).map((target, index) => {
+		const url = new URL(
+			`/t/${encodeURIComponent(target.id)}/${target.version}/grid.webp`,
+			list.contentOrigin
+		);
+		const grant = grants[index];
+		if (grant) {
+			url.searchParams.set('e', grant.expires);
+			url.searchParams.set('g', grant.signature);
+		}
+		return url.href;
+	});
+
+// Thumbnail generation is gated behind a signed grant (billing protection),
+// so a bare first request for a not-yet-generated public thumbnail 404s until
+// the client's fallback mints one. Mint grants server-side here so the very
+// first dashboard view generates+warms the first viewport immediately; any
+// failure falls back to bare URLs, which still self-heal after generation.
+const grantedThumbnailPreloads = async (
+	env: Env | undefined,
+	list: FileListResponse
+) => {
+	const plain = preloadUrls(list, []);
+	if (plain.length === 0 || env === undefined) return plain;
+	try {
+		const minted = await runWorkerProgram(
+			env,
+			Effect.all(
+				thumbnailPreloadTargets(list).map(({ id, version }) =>
+					Effect.gen(function* () {
+						const config = yield* AppConfig;
+						const secrets = yield* GrantSecrets;
+						return yield* secrets.mint({
+							contentOrigin: config.contentOrigin,
+							fileId: id,
+							version
+						});
+					})
+				),
+				{ concurrency: 'unbounded' }
+			)
+		);
+		return preloadUrls(
+			list,
+			minted.map((grant) => ({
+				expires: String(grant.expiresAtSeconds),
+				signature: grant.signature
+			}))
+		);
+	} catch {
+		return plain;
+	}
 };
 
 const readError = async (response: Response) => {
@@ -60,7 +120,12 @@ const tagIds = (url: URL) => {
 	}
 };
 
-export const load: PageServerLoad = async ({ depends, fetch, url }) => {
+export const load: PageServerLoad = async ({
+	depends,
+	fetch,
+	platform,
+	url
+}) => {
 	depends('adrive:files');
 	const trashed = url.searchParams.get('view') === 'trash';
 	const params = new URLSearchParams();
@@ -111,7 +176,10 @@ export const load: PageServerLoad = async ({ depends, fetch, url }) => {
 		return {
 			initialList,
 			initialError: '',
-			thumbnailPreloads: thumbnailPreloads(initialList)
+			thumbnailPreloads: await grantedThumbnailPreloads(
+				platform?.env,
+				initialList
+			)
 		};
 	} catch {
 		return {
