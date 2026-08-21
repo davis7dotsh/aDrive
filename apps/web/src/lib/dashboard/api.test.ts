@@ -64,6 +64,25 @@ describe('content link memoization', () => {
 		expect(fetchMock).toHaveBeenCalledTimes(3);
 	});
 
+	it('evicts the oldest private link once the cache is full', async () => {
+		stubLink({
+			url: 'https://content.example/f/id?v=1&e=2000000000&g=sig',
+			expiresAt: '2033-05-01T00:00:00.000Z',
+			version: 1,
+			public: false
+		});
+
+		for (let index = 0; index < 201; index += 1) {
+			await getContentLink('token', `id-bound-${index}`, 1);
+		}
+		fetchMock.mockClear();
+
+		await getContentLink('token', 'id-bound-0', 1);
+		await getContentLink('token', 'id-bound-200', 1);
+
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
+
 	it('does not memoize versionless current-file links', async () => {
 		stubLink({
 			url: 'https://content.example/f/id-e?v=3&e=2000000000&g=sig',

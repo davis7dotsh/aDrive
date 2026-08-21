@@ -242,6 +242,7 @@ export const getFilePreview = async (
 // for private files. Links are short-lived, so entries are reused only until
 // shortly before the server-side grant expires.
 const PRIVATE_LINK_RENEW_MS = 60_000;
+const MAX_PRIVATE_LINK_CACHE_ENTRIES = 200;
 interface CachedPrivateLink {
 	readonly expiresAt: number;
 	readonly payload: FileContentLinkResponse;
@@ -287,6 +288,10 @@ export const getContentLink = async (
 			const expiresAt = new Date(link.expiresAt).getTime();
 			if (Number.isFinite(expiresAt)) {
 				privateLinkCache.set(key, { expiresAt, payload: link });
+				if (privateLinkCache.size > MAX_PRIVATE_LINK_CACHE_ENTRIES) {
+					const oldest = privateLinkCache.keys().next().value;
+					if (oldest !== undefined) privateLinkCache.delete(oldest);
+				}
 			}
 		}
 		return link;
