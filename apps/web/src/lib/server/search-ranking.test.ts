@@ -70,6 +70,16 @@ describe('reciprocal rank fusion', () => {
 		expect(result[0]?.ranks).toEqual({ keyword: 2, semantic: 2 });
 	});
 
+	it('returns more than 50 rows when the caller asks for a deeper page window', () => {
+		const keyword = {
+			results: Array.from({ length: 60 }, (_, index) => ({
+				fileId: `k${String(index).padStart(2, '0')}`
+			})),
+			weight: 1
+		};
+		expect(reciprocalRankFusion({ keyword }, 55)).toHaveLength(55);
+	});
+
 	it('keeps keyword-only ordering and scores identical with an empty semantic source', () => {
 		const sources = {
 			keyword: {

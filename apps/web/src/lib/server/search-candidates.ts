@@ -1,5 +1,10 @@
 export type SearchIndex = 'files_fts' | 'files_trgm';
 
+// Candidate pool for one ranking pass. Search pages 50 at a time out of
+// this list; keep it large enough for a few pages without scanning the
+// whole index.
+export const SEARCH_CANDIDATE_LIMIT = 200;
+
 export interface SearchCommand {
 	readonly sql: string;
 	readonly bindings: ReadonlyArray<string>;
@@ -33,7 +38,7 @@ export const rankedSearchCommand = (
 				AND (f.expires_at IS NULL OR f.expires_at > ?)
 				${selectedTagFilter('f', tagIds)}
 			ORDER BY score ASC, ${index}.file_id
-			LIMIT 50`,
+			LIMIT ${SEARCH_CANDIDATE_LIMIT}`,
 		bindings: [match, now, ...tagIds]
 	};
 };
@@ -54,6 +59,6 @@ export const eligibleSemanticCommand = (
 			AND (f.expires_at IS NULL OR f.expires_at > ?)
 			${selectedTagFilter('f', tagIds)}
 		ORDER BY requested.ordinal
-		LIMIT 50`,
+		LIMIT ${SEARCH_CANDIDATE_LIMIT}`,
 	bindings: [JSON.stringify(fileIds), now, ...tagIds]
 });
