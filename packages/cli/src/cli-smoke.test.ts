@@ -17,6 +17,7 @@ let contentAuthorization: string | undefined;
 let contentRequestUrl = '';
 let devicePolls = 0;
 let deviceAuthorizations = 0;
+let authChecks = 0;
 let uploadedContentLength: string | undefined;
 let linkUrlOverride: string | undefined;
 
@@ -209,6 +210,7 @@ beforeAll(async () => {
 			return;
 		}
 		if (request.method === 'GET' && request.url === '/api/auth/check') {
+			authChecks += 1;
 			if (request.headers.authorization?.startsWith('Bearer adr_')) {
 				response.setHeader('Content-Type', 'application/json');
 				response.end(JSON.stringify({ ok: true }));
@@ -397,21 +399,44 @@ describe('CLI stream and JSON contracts', () => {
 	});
 
 	it('reports the server and credential state through whoami', async () => {
+		authChecks = 0;
 		const result = await run(['whoami']);
 		expect(result.status).toBe(0);
 		expect(result.stderr.toString()).toBe('');
+		expect(authChecks).toBe(1);
 		const out = result.stdout.toString();
 		expect(out).toContain(endpoint);
 		expect(out).toContain('Credential  accepted');
 	});
 
 	it('emits a machine-parseable whoami in --json mode', async () => {
+		authChecks = 0;
 		const result = await run(['--json', 'whoami']);
 		expect(result.status).toBe(0);
+		expect(authChecks).toBe(1);
 		expect(JSON.parse(result.stdout.toString())).toMatchObject({
 			endpoint,
 			authenticated: true
 		});
+	});
+
+	it('fails whoami when the server rejects the stored key', async () => {
+		const path = join(configHome, 'adrive', 'config.json');
+		const previous = await readFile(path, 'utf8');
+		await writeFile(
+			path,
+			JSON.stringify({ endpoint, apiKey: 'not-a-credential' }),
+			{ mode: 0o600 }
+		);
+		try {
+			const result = await run(['whoami']);
+			expect(result.status).not.toBe(0);
+			expect(result.stderr.toString()).toContain(
+				'Not signed in or the credential was rejected'
+			);
+		} finally {
+			await writeFile(path, previous, { mode: 0o600 });
+		}
 	});
 
 	it('summarizes the drive through status', async () => {

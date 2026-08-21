@@ -6,6 +6,7 @@ import {
 import { spawn } from 'node:child_process';
 import { Console, Effect, Schema } from 'effect';
 import { Argument, Command, Flag } from 'effect/unstable/cli';
+import { HttpClient } from 'effect/unstable/http';
 import {
 	configPath,
 	discoverContentOrigin,
@@ -13,7 +14,7 @@ import {
 	saveConfig
 } from '../config.ts';
 import { CliFailure } from '../errors.ts';
-import { responseError } from '../http.ts';
+import { apiRequest, ensureOk, responseError } from '../http.ts';
 import { emit, wantsJson } from '../output.ts';
 import { normalizeEndpoint, trustedServerUrl } from '../url-trust.ts';
 
@@ -215,6 +216,12 @@ export const login = Command.make(
 export const whoami = Command.make('whoami', {}, () =>
 	Effect.gen(function* () {
 		const config = yield* loadConfig;
+		const client = yield* HttpClient.HttpClient;
+		yield* client
+			.execute(
+				apiRequest('GET', `${config.endpoint}/api/auth/check`, config.apiKey)
+			)
+			.pipe(Effect.flatMap(ensureOk));
 		if (wantsJson()) {
 			yield* emit({
 				endpoint: config.endpoint,

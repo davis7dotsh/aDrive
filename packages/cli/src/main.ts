@@ -4,7 +4,7 @@ import * as NodeServices from '@effect/platform-node/NodeServices';
 import { Effect } from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
 import { login, whoami } from './commands/auth.ts';
-import { get, list, put, rename, status, tagSet } from './commands/files.ts';
+import { get, list, put, rename, status } from './commands/files.ts';
 import { site } from './commands/sites.ts';
 import { tag } from './commands/tags.ts';
 import { upgrade } from './commands/upgrade.ts';
