@@ -1,6 +1,6 @@
 ---
 name: deploy-fresh-instance
-description: Deploy a fresh a-drive instance to Cloudflare Workers — provision D1, R2, KV, and Vectorize plus Workers AI, set the PASSCODE secret, attach the two custom domains, and cut the first release. Use for the first-ever deploy to a new Cloudflare account or a new operator domain (not for routine redeploys, which are just `pnpm release`).
+description: Deploy a fresh a-drive instance to Cloudflare Workers — provision D1, R2, KV, and Vectorize plus Workers AI, set the PASSCODE secret, attach the two custom domains, and cut the first release. Use for the first-ever deploy to a new Cloudflare account or a new operator domain (not for routine redeploys, which are just `bun release`).
 ---
 
 # Deploy a fresh a-drive instance to Cloudflare
@@ -23,7 +23,7 @@ the operator's own domain, hostnames, and names.
   custom-domain routes attach automatically on deploy only if the zone
   exists). Remove conflicting CNAME records for the two application
   hostnames; the deploy creates their DNS records, but not the zone.
-- Node 26 + pnpm installed; run `pnpm install` once at the repo root.
+- Node 26 + Bun 1.4 installed; run `bun install` once at the repo root.
 - Decide the **two hostnames** now — a dashboard origin and a content
   origin. They must be **distinct hosts** (e.g. `drive.` and `files.`);
   the app rejects cross-origin serving and several checks depend on the
@@ -88,7 +88,7 @@ before the first deploy.
 ## 4. Commit the provisioned ids
 
 The D1 `database_id` and KV `id` are **configuration, not secrets** —
-commit the edited `wrangler.jsonc`. Two `pnpm release` preflight gates
+commit the edited `wrangler.jsonc`. Two `bun release` preflight gates
 depend on it:
 
 - **clean-tree gate** — the release refuses a dirty working tree, so the
@@ -102,7 +102,7 @@ depend on it:
 From the **repo root**:
 
 ```
-pnpm release
+bun release
 ```
 
 `scripts/release.sh` runs the full gate → format check → type/lint →

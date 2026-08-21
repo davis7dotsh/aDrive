@@ -5,7 +5,7 @@ node_modules/
 dist/
 build/
 coverage/
-pnpm-lock.yaml
+bun.lock
 apps/web/worker-configuration.d.ts
 # Cloudflare _headers/_redirects use their own syntax
 _headers

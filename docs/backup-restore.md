@@ -87,7 +87,7 @@ production database, so it stays untouched for rollback.
 2. Restore D1 from the latest export (above).
 3. Restore R2: `rclone sync ~/Backups/a-drive/r2-mirror adrive-r2-rw:<bucket>`
 4. Set the secret: `wrangler secret put PASSCODE --env production`.
-5. Deploy: `pnpm release` (or `wrangler deploy --env production`).
+5. Deploy: `bun release` (or `wrangler deploy --env production`).
 6. DNS: point `drive.davis7.space` and `files.davis7.space` at the new
    Worker (custom domains attach from the routes in wrangler.jsonc).
 7. Run the verification skill (`.agents/skills/verify-deployment`).

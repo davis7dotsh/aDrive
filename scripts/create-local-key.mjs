@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { join } from 'node:path';
 
 const prefix = randomBytes(4).toString('hex');
 const secret = randomBytes(32).toString('base64url');
@@ -13,20 +14,12 @@ const sql = [
 ].join(' ');
 
 const result = spawnSync(
-	'pnpm',
-	[
-		'--filter',
-		'@adrive/web',
-		'exec',
-		'wrangler',
-		'd1',
-		'execute',
-		'DB',
-		'--local',
-		'--command',
-		sql
-	],
-	{ stdio: ['ignore', 'inherit', 'inherit'] }
+	'bun',
+	['x', 'wrangler', 'd1', 'execute', 'DB', '--local', '--command', sql],
+	{
+		cwd: join(import.meta.dirname, '..', 'apps', 'web'),
+		stdio: ['ignore', 'inherit', 'inherit']
+	}
 );
 
 if (result.status !== 0) {

@@ -40,20 +40,20 @@ CLI for larger files.
 
 ## Local setup
 
-Requirements: Node 26+ and pnpm 11+.
+Requirements: Node 26+ and Bun 1.4+.
 
 ```bash
-pnpm install
-pnpm db:migrate:local
+bun install
+bun db:migrate:local
 cp apps/web/.dev.vars.example apps/web/.dev.vars
-pnpm key:create:local
+bun key:create:local
 ```
 
 Replace the example `PASSCODE` with a long local-only value. Copy the API key
 printed by the final command, then start both local origins:
 
 ```bash
-pnpm --filter @adrive/web dev
+bun --filter @adrive/web dev
 ```
 
 The dashboard/API is at `http://localhost:5173/`. Public file bytes are
@@ -98,19 +98,19 @@ atomic global security boundary.
 In another shell, configure and exercise the CLI:
 
 ```bash
-pnpm adrive login http://localhost:5173 --headless
-pnpm adrive list
-pnpm adrive put ./path/to/file.pdf
-pnpm adrive put ./path/to/private.bin --private
-printf 'from stdin' | pnpm adrive put - --name note.txt
-pnpm adrive put ./report.csv --expires 2026-08-31T00:00:00Z
-pnpm adrive get <file-uuid> --output ./downloaded-file
-pnpm adrive get <file-uuid> --output - > downloaded-file
-pnpm adrive site put ./dist
-pnpm adrive site put ./dist --id <existing-site-uuid>
-pnpm adrive --json tag list
-pnpm adrive tag create reports --color '#2563eb'
-pnpm adrive tag set <file-uuid> reports important
+bun adrive login http://localhost:5173 --headless
+bun adrive list
+bun adrive put ./path/to/file.pdf
+bun adrive put ./path/to/private.bin --private
+printf 'from stdin' | bun adrive put - --name note.txt
+bun adrive put ./report.csv --expires 2026-08-31T00:00:00Z
+bun adrive get <file-uuid> --output ./downloaded-file
+bun adrive get <file-uuid> --output - > downloaded-file
+bun adrive site put ./dist
+bun adrive site put ./dist --id <existing-site-uuid>
+bun adrive --json tag list
+bun adrive tag create reports --color '#2563eb'
+bun adrive tag set <file-uuid> reports important
 ```
 
 `login` starts a device flow. Normal mode tries to open the approval URL;
@@ -141,12 +141,12 @@ Site versions are intentionally not addressable with `?v=`.
 These commands do not start or build the app:
 
 ```bash
-pnpm format:check
-pnpm check
-pnpm test
+bun format:check
+bun check
+bun run test
 ```
 
-Run `pnpm --filter @adrive/web types:worker` after changing Wrangler bindings.
+Run `bun --filter @adrive/web types:worker` after changing Wrangler bindings.
 The checked-in `worker-configuration.d.ts` is generated from `wrangler.jsonc`.
 The Cloudflare adapter wrapper emits a standard module Worker with both `fetch`
 and `scheduled` exports. Its signed internal maintenance request is authenticated
@@ -158,7 +158,7 @@ at a time even though D1 whole-database export does not support virtual tables.
 After restoring the canonical tables, rebuild local search state with:
 
 ```bash
-pnpm search:rebuild:local
+bun search:rebuild:local
 ```
 
 The rebuild reads `files`, `file_versions`, `tags`, and `file_tags`; it does not
@@ -173,7 +173,7 @@ apply the migration remotely, set production dashboard/content origins, and set
 the passcode as a secret:
 
 ```bash
-pnpm --filter @adrive/web exec wrangler secret put PASSCODE
+cd apps/web && bun x wrangler secret put PASSCODE
 ```
 
 No remote resource is created or modified by the local setup above.
@@ -196,13 +196,14 @@ layer, or `required` to make a missing binding a startup error.
 Provision the optional resources once, before the first vector insert:
 
 ```bash
-pnpm --filter @adrive/web exec wrangler vectorize create adrive \
+cd apps/web
+bun x wrangler vectorize create adrive \
   --dimensions=384 --metric=cosine
-pnpm --filter @adrive/web exec wrangler vectorize create-metadata-index adrive \
+bun x wrangler vectorize create-metadata-index adrive \
   --propertyName=deleted --type=boolean
-pnpm --filter @adrive/web exec wrangler vectorize create-metadata-index adrive \
+bun x wrangler vectorize create-metadata-index adrive \
   --propertyName=kind --type=string
-pnpm --filter @adrive/web exec wrangler vectorize create-metadata-index adrive \
+bun x wrangler vectorize create-metadata-index adrive \
   --propertyName=visibility --type=string
 ```
 
@@ -214,7 +215,7 @@ Then add these bindings to `apps/web/wrangler.jsonc` and regenerate types:
 ```
 
 ```bash
-pnpm --filter @adrive/web types:worker
+bun --filter @adrive/web types:worker
 ```
 
 The embedding contract is pinned in Wrangler config to
