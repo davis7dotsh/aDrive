@@ -275,6 +275,9 @@ const makeSearch = Effect.gen(function* () {
 					})
 				)
 			);
+			// Fuse the full candidate pool on every page so page 0 and
+			// page 1 slice the same ranking instead of two different
+			// prefixes (offset+51 vs offset+101).
 			const fused = reciprocalRankFusion(
 				{
 					keyword: {
@@ -290,10 +293,8 @@ const makeSearch = Effect.gen(function* () {
 						weight: 1
 					}
 				},
-				Math.min(offset + PAGE_SIZE + 1, SEARCH_CANDIDATE_LIMIT)
+				SEARCH_CANDIDATE_LIMIT
 			);
-			// Hydrate only the visible page. The extra fused row decides
-			// nextCursor so pinExactName cannot steal from the lookahead.
 			const visible = fused.slice(offset, offset + PAGE_SIZE);
 			const hydrated = yield* hydrate(
 				visible.map((entry) => entry.fileId),
@@ -302,7 +303,7 @@ const makeSearch = Effect.gen(function* () {
 			return {
 				files: pinExactName(trimmedQuery, hydrated),
 				nextCursor:
-					fused.length > offset + PAGE_SIZE && page + 1 < MAX_PAGE
+					offset + PAGE_SIZE < fused.length && page + 1 < MAX_PAGE
 						? `o:${page + 1}`
 						: null
 			};
