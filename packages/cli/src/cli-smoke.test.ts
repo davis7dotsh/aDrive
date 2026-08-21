@@ -429,11 +429,14 @@ describe('CLI stream and JSON contracts', () => {
 			{ mode: 0o600 }
 		);
 		try {
+			authChecks = 0;
 			const result = await run(['whoami']);
 			expect(result.status).not.toBe(0);
-			expect(result.stderr.toString()).toContain(
-				'Not signed in or the credential was rejected'
-			);
+			expect(authChecks).toBe(1);
+			const err = result.stderr.toString();
+			expect(err).toContain('A valid credential is required');
+			expect(err).toContain('/api/auth/check');
+			expect(err).toContain('401');
 		} finally {
 			await writeFile(path, previous, { mode: 0o600 });
 		}
