@@ -9,7 +9,6 @@
 		token,
 		contentOrigin,
 		showTrash,
-		loading,
 		initialLoading,
 		queryActive,
 		layout,
@@ -34,7 +33,6 @@
 		token: string;
 		contentOrigin: string;
 		showTrash: boolean;
-		loading: boolean;
 		initialLoading: boolean;
 		queryActive: boolean;
 		layout: 'grid' | 'list';

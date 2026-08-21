@@ -60,6 +60,11 @@ export const createFileList = ({
 }: FileListDeps) => {
 	const ssrList = untrack(() => initialList);
 	let hydratedFromServer = false;
+	// The mode that produced the current listing, so "load more" follows the
+	// same route (list vs search) instead of always paging the plain list.
+	let lastMode: ListingMode | null = ssrList
+		? listingMode(trashed() ? 'trash' : null, query(), [...tags()])
+		: null;
 	const list = resource(
 		() =>
 			[session.ready, session.token, trashed(), query(), [...tags()]] as const,
@@ -76,11 +81,13 @@ export const createFileList = ({
 			// explicit refetch() that follows uploads and mutations.
 			if (ssrList && !hydratedFromServer) {
 				hydratedFromServer = true;
+				lastMode = listingMode(isTrashed ? 'trash' : null, value, selectedTags);
 				return ssrList;
 			}
 			const mode = listingMode(isTrashed ? 'trash' : null, value, selectedTags);
+			const payload = await matchListing(mode, token, signal);
 			lastMode = mode;
-			return matchListing(mode, token, signal);
+			return payload;
 		},
 		{
 			// The search input already debounces keystrokes (useSearchParams
@@ -95,9 +102,6 @@ export const createFileList = ({
 		!list.current.contentOrigin && !listError
 	);
 	let loadingMore = $state(false);
-	// The mode that produced the current listing, so "load more" follows the
-	// same route (list vs search) instead of always paging the plain list.
-	let lastMode: ListingMode | null = null;
 
 	$effect(() => {
 		if (list.current.contentOrigin) serverLoadError = '';
@@ -170,11 +174,19 @@ export const createFileList = ({
 
 	return {
 		list,
-		listError,
-		initialListLoading,
-		loadingMore,
+		get listError() {
+			return listError;
+		},
+		get initialListLoading() {
+			return initialListLoading;
+		},
+		get loadingMore() {
+			return loadingMore;
+		},
 		loadMore,
-		visibleFiles,
+		get visibleFiles() {
+			return visibleFiles;
+		},
 		removeFile
 	};
 };

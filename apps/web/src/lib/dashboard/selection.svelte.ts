@@ -150,7 +150,9 @@ export const createSelection = ({
 		set bulkTagId(value: string) {
 			bulkTagId = value;
 		},
-		selectedFiles,
+		get selectedFiles() {
+			return selectedFiles;
+		},
 		selectFile,
 		selectAllVisible,
 		clear,

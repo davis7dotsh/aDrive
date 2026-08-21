@@ -71,6 +71,7 @@ describe('createSelection', () => {
 			flushSync(() => selection.selectFile(files[1]!, true, false));
 
 			expect(selection.selectedIds).toEqual(['b']);
+			expect(selection.selectedFiles.map((entry) => entry.id)).toEqual(['b']);
 		} finally {
 			dispose();
 		}
@@ -96,9 +97,10 @@ describe('createSelection', () => {
 
 		try {
 			flushSync(() => selection.selectAllVisible(true));
-			flushSync(() => selection.selectFile(files[1]!, false, true));
+			flushSync(() => selection.selectFile(files[0]!, true, false));
+			flushSync(() => selection.selectFile(files[2]!, false, true));
 
-			expect(selection.selectedIds).toEqual(['a', 'c']);
+			expect(selection.selectedIds).toEqual([]);
 		} finally {
 			dispose();
 		}
