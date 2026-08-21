@@ -13,6 +13,7 @@
 		"dev:dashboard": "vite dev --host 0.0.0.0 --port 5173",
 		"search:rebuild:local": "wrangler d1 execute DB --local --file scripts/rebuild-search-index.sql",
 		"test": "vitest run --config vite.config.ts",
+		"test:routes": "vitest run --config vitest.routes.config.ts",
 		"types:worker": "wrangler types"
 	},
 	"dependencies": {
