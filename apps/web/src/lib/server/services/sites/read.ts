@@ -2,13 +2,14 @@ import { sitePathCandidates } from '@adrive/shared';
 import { Effect } from 'effect';
 import { InvalidRequest, NotFound } from '../../errors';
 import type { SiteInternals } from './internals';
-import { SiteAssetRow } from './types';
+import { SiteAssetRow, type SitesShape } from './types';
 
-export const readOps = (internals: SiteInternals) => {
-	const { all, stagedAssets, db } = internals;
+export const readOps = (
+	internals: SiteInternals
+): Pick<SitesShape, 'findAsset'> => {
+	const { all, db } = internals;
 
 	return {
-		stagedAssets,
 		findAsset: Effect.fn('Sites.findAsset')(function* (
 			fileId: string,
 			requestPath: string,

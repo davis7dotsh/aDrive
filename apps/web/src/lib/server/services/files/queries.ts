@@ -11,14 +11,13 @@ import {
 	type ListCursor
 } from '../../list-cursor';
 import type { FileInternals } from './internals';
-import type { FilesShape, ListPage } from './types';
+import type { FilesShape } from './types';
 import { decodeContentRows, decodeVersionRows, toVersion } from './types';
 
 export const queryOps = (
 	internals: FileInternals
 ): Pick<FilesShape, 'list' | 'detail' | 'findContent'> => {
-	const { db, sql } = internals;
-	const { findDashboardFile } = internals;
+	const { sql, findDashboardFile } = internals;
 	return {
 		list: Effect.fn('Files.list')(function* (trashed, page) {
 			const now = new Date().toISOString();
