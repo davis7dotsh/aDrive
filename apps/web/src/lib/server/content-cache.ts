@@ -9,8 +9,15 @@ export const PUBLIC_SITE_ASSET_CACHE_CONTROL =
 	'public, max-age=120, stale-while-revalidate=600, must-revalidate';
 export const EDGE_CACHE_MAX_BYTES = 512 * 1024;
 
-export const fileCacheControl = (privateResponse: boolean) =>
-	privateResponse ? PRIVATE_CACHE_CONTROL : PUBLIC_IMMUTABLE_CACHE_CONTROL;
+export const fileCacheControl = (
+	privateResponse: boolean,
+	pinnedVersion = true
+) => {
+	if (privateResponse) return PRIVATE_CACHE_CONTROL;
+	return pinnedVersion
+		? PUBLIC_IMMUTABLE_CACHE_CONTROL
+		: PUBLIC_REVALIDATE_CACHE_CONTROL;
+};
 
 export const siteCacheControl = (
 	privateResponse: boolean,
@@ -62,8 +69,10 @@ export const pathCacheRequest = (url: URL) =>
 export const canUseEdgeCache = (
 	privateResponse: boolean,
 	range: string | null,
-	sizeBytes: number
+	sizeBytes: number,
+	pinnedVersion = true
 ) =>
+	pinnedVersion &&
 	!privateResponse &&
 	range === null &&
 	Number.isSafeInteger(sizeBytes) &&
