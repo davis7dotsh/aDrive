@@ -33,9 +33,11 @@ installer run from the repository root.
 6. From `apps/web`: `wrangler secret put PASSCODE --env production`
    (12+ characters).
 7. The `davis7.space` zone must be active in Cloudflare. Remove existing
-   CNAME records for `drive.davis7.space` and `files.davis7.space` before
-   deployment; the custom-domain routes in `wrangler.jsonc` create the
-   required DNS records automatically.
+   CNAME records for `drive.davis7.space`, `files.davis7.space`, and
+   `adrive.davis7.space` before deployment; the custom-domain routes in
+   the `wrangler.jsonc` files create the required DNS records
+   automatically. `adrive.davis7.space` serves the static landing page
+   (`apps/site`, an assets-only Worker with no build step).
 8. From the repo root: `bun release`
 9. From the repo root: set up backups on your backup host
    (`scripts/backup/install-backup-host.sh`) and complete the restore drill
@@ -88,6 +90,17 @@ bun x wrangler rollback --env production           # interactive picker
 
 Rollback redeploys the previous Worker bundle. It does not touch D1, R2,
 KV, or secrets — which is why the migration rule above matters.
+
+### Landing site
+
+The landing page is a separate assets-only Worker (`apps/site`). Roll it
+back the same way:
+
+```
+cd apps/site
+bun x wrangler deployments list
+bun x wrangler rollback
+```
 
 ### D1
 

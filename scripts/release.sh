@@ -45,6 +45,7 @@ bun x vite build
 
 step "Deploy dry run"
 bun x wrangler deploy --dry-run --env "${ENV_NAME}"
+(cd "${ROOT}/apps/site" && bun x wrangler deploy --dry-run)
 
 step "D1 migrations"
 # Migrations run before the new Worker so both old and new code briefly run
@@ -56,6 +57,10 @@ bun x wrangler d1 migrations apply DB --env "${ENV_NAME}" --remote
 
 step "Deploy"
 bun x wrangler deploy --env "${ENV_NAME}"
+
+step "Deploy landing site"
+# Static assets-only Worker (apps/site/wrangler.jsonc). No build step.
+(cd "${ROOT}/apps/site" && bun x wrangler deploy)
 
 step "Record"
 cd "${ROOT}"

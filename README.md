@@ -38,6 +38,11 @@ Read-only keys can list, search, and read metadata. Read-write keys can
 upload, tag, and publish sites. MCP uploads are capped at 2 MiB; use the
 CLI for larger files.
 
+The marketing landing page lives in `apps/site` — a static assets-only
+Worker (no build step) deployed by `bun release` to
+`https://adrive.davis7.space`. Preview it locally with
+`cd apps/site && bunx wrangler dev`.
+
 ## Local setup
 
 Requirements: Node 26+ and Bun 1.4+.
