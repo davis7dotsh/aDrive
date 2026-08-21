@@ -70,7 +70,8 @@ const serveFile: RequestHandler = ({ params, platform, request, url }) =>
 				request.method === 'HEAD'
 					? null
 					: yield* decodeRangeHeader(request.headers.get('range'));
-			const cacheControl = fileCacheControl(privateResponse);
+			const pinnedVersion = version !== undefined;
+			const cacheControl = fileCacheControl(privateResponse, pinnedVersion);
 			const ifNoneMatch = request.headers.get('if-none-match');
 			const cacheRequest = fileContentCacheRequest(url);
 			const recordDownload = shouldRecordFileDownload(
@@ -106,7 +107,14 @@ const serveFile: RequestHandler = ({ params, platform, request, url }) =>
 				'X-Content-Type-Options': 'nosniff'
 			});
 
-			if (canUseEdgeCache(privateResponse, range, content.file.sizeBytes)) {
+			if (
+				canUseEdgeCache(
+					privateResponse,
+					range,
+					content.file.sizeBytes,
+					pinnedVersion
+				)
+			) {
 				const cached = yield* matchEdgeCache(platform, cacheRequest);
 				const cachedEtag = cached?.headers.get('ETag');
 				if (cached && cachedEtag) {
@@ -187,7 +195,14 @@ const serveFile: RequestHandler = ({ params, platform, request, url }) =>
 				status: responseRange.status,
 				headers: headersFor(object.httpEtag, responseRange)
 			});
-			if (canUseEdgeCache(privateResponse, range, content.file.sizeBytes)) {
+			if (
+				canUseEdgeCache(
+					privateResponse,
+					range,
+					content.file.sizeBytes,
+					pinnedVersion
+				)
+			) {
 				storeEdgeCache(platform, cacheRequest, response);
 			}
 			return response;

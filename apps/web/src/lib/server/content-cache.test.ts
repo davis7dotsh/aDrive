@@ -19,9 +19,14 @@ import {
 } from './content-cache';
 
 describe('content cache policy', () => {
-	it('makes versioned public files immutable and keeps grants private', () => {
+	it('makes pinned public versions immutable and revalidates the current URL', () => {
 		expect(fileCacheControl(false)).toBe(PUBLIC_IMMUTABLE_CACHE_CONTROL);
+		expect(fileCacheControl(false, true)).toBe(PUBLIC_IMMUTABLE_CACHE_CONTROL);
+		expect(fileCacheControl(false, false)).toBe(
+			PUBLIC_REVALIDATE_CACHE_CONTROL
+		);
 		expect(fileCacheControl(true)).toBe(PRIVATE_CACHE_CONTROL);
+		expect(fileCacheControl(true, false)).toBe(PRIVATE_CACHE_CONTROL);
 	});
 
 	it('revalidates published HTML and briefly caches other site assets', () => {
@@ -60,22 +65,27 @@ describe('content cache policy', () => {
 		const contentRequest = fileContentCacheRequest(
 			new URL('https://files.example/f/id?v=3&e=1&g=sig')
 		);
+		const currentRequest = fileContentCacheRequest(
+			new URL('https://files.example/f/id')
+		);
 		expect(previewRequest.url).toBe(
 			'https://files.example/f/id?v=3&preview=dashboard'
 		);
 		expect(contentRequest.url).toBe('https://files.example/f/id?v=3');
+		expect(currentRequest.url).toBe('https://files.example/f/id');
 		expect(
 			pathCacheRequest(new URL('https://files.example/t/id/3/grid.webp?g=1'))
 				.url
 		).toBe('https://files.example/t/id/3/grid.webp');
 	});
 
-	it('only edge-caches small public full-object responses', () => {
+	it('only edge-caches small pinned public full-object responses', () => {
 		expect(canUseEdgeCache(false, null, 12)).toBe(true);
 		expect(canUseEdgeCache(false, null, EDGE_CACHE_MAX_BYTES)).toBe(true);
 		expect(canUseEdgeCache(false, null, EDGE_CACHE_MAX_BYTES + 1)).toBe(false);
 		expect(canUseEdgeCache(true, null, 12)).toBe(false);
 		expect(canUseEdgeCache(false, 'bytes=0-10', 12)).toBe(false);
+		expect(canUseEdgeCache(false, null, 12, false)).toBe(false);
 	});
 
 	it('detects an R2 object that still has a body', () => {
@@ -125,7 +135,10 @@ describe('content cache policy', () => {
 	it('hands back a mutable copy so hooks can add security headers', async () => {
 		const immutable = new Response('cached-bytes', {
 			status: 200,
-			headers: { 'Cache-Control': PUBLIC_IMMUTABLE_CACHE_CONTROL, ETag: '"abc"' }
+			headers: {
+				'Cache-Control': PUBLIC_IMMUTABLE_CACHE_CONTROL,
+				ETag: '"abc"'
+			}
 		});
 		// Mirror the Workers Cache API, whose responses reject header writes.
 		immutable.headers.set = () => {
