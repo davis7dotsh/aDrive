@@ -14,8 +14,9 @@
 	],
 	"scripts": {
 		"adrive": "bun --filter @adrive/cli adrive",
-		"check": "bun run --filter '@adrive/*' --if-present check && bun run check:forbidden",
+		"check": "bun run --filter '@adrive/*' --if-present check && bun run check:forbidden && bun run check:wrangler-drift",
 		"check:forbidden": "bun scripts/check-forbidden.mjs",
+		"check:wrangler-drift": "bun scripts/check-wrangler-drift.mjs",
 		"db:migrate:local": "cd apps/web && bun x wrangler d1 migrations apply DB --local",
 		"format": "prettier --write .",
 		"format:check": "prettier --check .",

@@ -18,7 +18,10 @@ if [[ -n "$(git status --porcelain)" ]]; then
 fi
 COMMIT="$(git rev-parse HEAD)"
 echo "Releasing ${COMMIT} to env ${ENV_NAME}"
-if grep -q "replace-with-${ENV_NAME}" "${WEB}/wrangler.jsonc"; then
+# Env-specific resource ids must be real before a deploy. The top-level D1
+# id is an intentional local-dev placeholder ("replace-with-your-d1-…"), so
+# only flag placeholders that name this env.
+if grep "replace-with-${ENV_NAME}" "${WEB}/wrangler.jsonc" >/dev/null; then
 	echo "wrangler.jsonc still has placeholder ids for env ${ENV_NAME}." >&2
 	echo "Create the D1 database / KV namespace and paste their ids first." >&2
 	exit 1
