@@ -3,8 +3,8 @@
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
-	const preloads = data.thumbnailPreloads ?? [];
-	const contentOrigin = data.initialList?.contentOrigin ?? '';
+	const preloads = $derived(data.thumbnailPreloads ?? []);
+	const contentOrigin = $derived(data.initialList?.contentOrigin ?? '');
 </script>
 
 <svelte:head>

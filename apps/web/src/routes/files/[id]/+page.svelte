@@ -3,7 +3,7 @@
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
-	const contentOrigin = data.initialDetail?.contentOrigin ?? '';
+	const contentOrigin = $derived(data.initialDetail?.contentOrigin ?? '');
 </script>
 
 <svelte:head>
