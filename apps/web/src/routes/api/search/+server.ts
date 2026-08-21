@@ -18,11 +18,12 @@ export const GET: RequestHandler = ({ cookies, request, url }) =>
 			yield* authorizeRequest(auth, request, url, cookies);
 			// Run the relevance search and the small dashboard reads
 			// (tags, indexing status) concurrently.
-			const [files, tagList, semantic] = yield* Effect.all(
+			const [page, tagList, semantic] = yield* Effect.all(
 				[
 					search.files({
 						query: url.searchParams.get('q') ?? '',
-						tagIds: url.searchParams.getAll('tag').slice(0, 20)
+						tagIds: url.searchParams.getAll('tag').slice(0, 20),
+						cursor: url.searchParams.get('cursor')
 					}),
 					tags.list,
 					indexing.status
@@ -30,9 +31,8 @@ export const GET: RequestHandler = ({ cookies, request, url }) =>
 				{ concurrency: 'unbounded' }
 			);
 			return Response.json({
-				files,
-				// Search results are relevance-bounded rather than paginated.
-				nextCursor: null,
+				files: page.files,
+				nextCursor: page.nextCursor,
 				tags: tagList,
 				contentOrigin: config.contentOrigin,
 				maxUploadBytes: config.maxUploadBytes,

@@ -1,6 +1,6 @@
 import type { DashboardFile } from '@adrive/shared';
 import { Context, Effect, Layer } from 'effect';
-import { StorageError } from '../errors';
+import { InvalidRequest, StorageError } from '../errors';
 import {
 	dashboardFileColumns,
 	decodeDashboardRows,
@@ -29,17 +29,37 @@ interface RankedRow {
 export interface SearchInput {
 	readonly query: string;
 	readonly tagIds: ReadonlyArray<string>;
+	readonly cursor?: string | null;
+}
+
+// Search results are a fully ranked list, so pagination is an offset into
+// that ranking; the candidate pool itself stays bounded upstream. The
+// cursor round-trips as "o:<page>".
+const PAGE_SIZE = 50;
+const MAX_PAGE = 100;
+export interface SearchPage {
+	readonly files: ReadonlyArray<DashboardFile>;
+	readonly nextCursor: string | null;
 }
 
 export interface SearchShape {
 	readonly files: (
 		input: SearchInput
-	) => Effect.Effect<ReadonlyArray<DashboardFile>, StorageError>;
+	) => Effect.Effect<SearchPage, InvalidRequest | StorageError>;
 }
 
 export class Search extends Context.Service<Search, SearchShape>()(
 	'app/Search'
 ) {}
+
+const decodeCursor = (cursor: string | null | undefined) => {
+	if (!cursor) return 0;
+	const match = /^o:(\d+)$/.exec(cursor);
+	const page = match ? Number(match[1]) : Number.NaN;
+	return Number.isSafeInteger(page) && page >= 0 && page < MAX_PAGE
+		? page
+		: null;
+};
 
 const makeSearch = Effect.gen(function* () {
 	const db = yield* Db;
@@ -132,7 +152,9 @@ const makeSearch = Effect.gen(function* () {
 	});
 
 	const filteredRecent = Effect.fn('Search.filteredRecent')(function* (
-		tagIds: ReadonlyArray<string>
+		tagIds: ReadonlyArray<string>,
+		limit: number,
+		offset: number
 	) {
 		const tagFilter =
 			tagIds.length === 0
@@ -152,9 +174,9 @@ const makeSearch = Effect.gen(function* () {
 							AND (f.expires_at IS NULL OR f.expires_at > ?)
 							${tagFilter}
 						ORDER BY f.updated_at DESC, f.id
-						LIMIT 200`
+						LIMIT ? OFFSET ?`
 					)
-					.bind(new Date().toISOString(), ...tagIds)
+					.bind(new Date().toISOString(), ...tagIds, limit, offset)
 					.all();
 				if (!response.success)
 					throw new Error(response.error ?? 'File listing failed');
@@ -167,11 +189,32 @@ const makeSearch = Effect.gen(function* () {
 	});
 
 	return Search.of({
-		files: Effect.fn('Search.files')(function* ({ query, tagIds }) {
+		files: Effect.fn('Search.files')(function* ({ query, tagIds, cursor }) {
+			const page = decodeCursor(cursor ?? null);
+			if (page === null) {
+				return yield* new InvalidRequest({
+					status: 400,
+					message: 'Search cursor is invalid'
+				});
+			}
+			const offset = page * PAGE_SIZE;
 			const selectedTagIds = [...new Set(tagIds)].slice(0, 20);
 			const trimmedQuery = query.trim().slice(0, 256);
 			const keywordMatch = sanitizeMatchQuery(trimmedQuery);
-			if (!keywordMatch) return yield* filteredRecent(selectedTagIds);
+			if (!keywordMatch) {
+				const recent = yield* filteredRecent(
+					selectedTagIds,
+					PAGE_SIZE + 1,
+					offset
+				);
+				return {
+					files: recent.slice(0, PAGE_SIZE),
+					nextCursor:
+						recent.length > PAGE_SIZE && page + 1 < MAX_PAGE
+							? `o:${page + 1}`
+							: null
+				};
+			}
 
 			const trigramMatch = sanitizeTrigramQuery(trimmedQuery);
 			const now = new Date().toISOString();
@@ -245,11 +288,19 @@ const makeSearch = Effect.gen(function* () {
 					weight: 1
 				}
 			});
-			const hydrated = yield* hydrate(
-				fused.map((file) => file.fileId),
-				selectedTagIds
-			);
-			return pinExactName(trimmedQuery, hydrated);
+			// One extra id tells us whether another page exists without a
+			// second ranking pass.
+			const pageIds = fused
+				.slice(offset, offset + PAGE_SIZE + 1)
+				.map((entry) => entry.fileId);
+			const hydrated = yield* hydrate(pageIds, selectedTagIds);
+			return {
+				files: pinExactName(trimmedQuery, hydrated).slice(0, PAGE_SIZE),
+				nextCursor:
+					fused.length > offset + PAGE_SIZE && page + 1 < MAX_PAGE
+						? `o:${page + 1}`
+						: null
+			};
 		})
 	});
 });

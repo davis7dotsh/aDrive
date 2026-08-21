@@ -1,9 +1,23 @@
 import type { DashboardFile } from '@adrive/shared';
 import { getContentLink, listFiles, searchFiles } from './api';
 import type { FileListPayload } from './api';
+import { listingMode, type ListingMode } from '$lib/listing';
 import type { Toasts } from './toast.svelte';
 import { resource } from 'runed';
 import { untrack } from 'svelte';
+
+const fetchListing = (
+	mode: ListingMode,
+	token: string,
+	signal?: AbortSignal,
+	cursor?: string
+) =>
+	mode.kind === 'list'
+		? listFiles(token, mode.trashed, signal, cursor)
+		: searchFiles(token, mode.query, [...mode.tags], signal, cursor);
+
+const matchListing = (mode: ListingMode, token: string, signal?: AbortSignal) =>
+	fetchListing(mode, token, signal);
 
 const emptyList = {
 	files: [] as ReadonlyArray<DashboardFile>,
@@ -64,13 +78,9 @@ export const createFileList = ({
 				hydratedFromServer = true;
 				return ssrList;
 			}
-			// Plain browsing pages through /api/files; queries and tag filters
-			// go to search, whose results are relevance-bounded, not paginated.
-			return isTrashed
-				? listFiles(token, true, signal)
-				: value.trim() || selectedTags.length > 0
-					? searchFiles(token, value, selectedTags, signal)
-					: listFiles(token, false, signal);
+			const mode = listingMode(isTrashed ? 'trash' : null, value, selectedTags);
+			lastMode = mode;
+			return matchListing(mode, token, signal);
 		},
 		{
 			// The search input already debounces keystrokes (useSearchParams
@@ -85,6 +95,9 @@ export const createFileList = ({
 		!list.current.contentOrigin && !listError
 	);
 	let loadingMore = $state(false);
+	// The mode that produced the current listing, so "load more" follows the
+	// same route (list vs search) instead of always paging the plain list.
+	let lastMode: ListingMode | null = null;
 
 	$effect(() => {
 		if (list.current.contentOrigin) serverLoadError = '';
@@ -96,7 +109,11 @@ export const createFileList = ({
 		if (!token || !cursor || loadingMore) return;
 		loadingMore = true;
 		try {
-			const next = await listFiles(token, showTrash, undefined, cursor);
+			const mode: ListingMode = lastMode ?? {
+				kind: 'list',
+				trashed: showTrash
+			};
+			const next = await fetchListing(mode, token, undefined, cursor);
 			if (session.token !== token || list.current.nextCursor !== cursor) {
 				return;
 			}

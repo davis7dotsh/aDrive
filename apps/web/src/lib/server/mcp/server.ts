@@ -209,11 +209,12 @@ const registerReadTools = (server: McpServer, input: McpServerInput) => {
 				env,
 				Effect.gen(function* () {
 					const search = yield* Search;
+					const page = yield* search.files({
+						query,
+						tagIds: (tag_ids ?? []).slice(0, 20)
+					});
 					return {
-						files: yield* search.files({
-							query,
-							tagIds: (tag_ids ?? []).slice(0, 20)
-						})
+						files: page.files
 					};
 				})
 			)

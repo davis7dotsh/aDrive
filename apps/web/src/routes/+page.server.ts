@@ -2,6 +2,7 @@ import { FileListResponseSchema } from '@adrive/shared';
 import type { FileListResponse } from '@adrive/shared';
 import { Effect, Schema } from 'effect';
 import { supportsDashboardThumbnail } from '$lib/file-thumbnail';
+import { listingMode } from '$lib/listing';
 import { AppConfig } from '$lib/server/config';
 import { runWorkerProgram } from '$lib/server/edge';
 import { GrantSecrets } from '$lib/server/services/grant-secrets';
@@ -127,24 +128,24 @@ export const load: PageServerLoad = async ({
 	url
 }) => {
 	depends('adrive:files');
-	const trashed = url.searchParams.get('view') === 'trash';
+	const mode = listingMode(
+		url.searchParams.get('view'),
+		url.searchParams.get('q') ?? '',
+		tagIds(url)
+	);
 	const params = new URLSearchParams();
-	if (trashed) {
+	if (mode.kind === 'list' && mode.trashed) {
 		params.set('trashed', 'true');
-	} else {
-		const query = url.searchParams.get('q')?.trim();
-		if (query) params.set('q', query);
-		for (const tag of tagIds(url).slice(0, 20)) {
+	} else if (mode.kind === 'search') {
+		params.set('q', mode.query);
+		for (const tag of mode.tags.slice(0, 20)) {
 			params.append('tag', tag);
 		}
 	}
-	// Plain browsing pages through /api/files (mirroring the client resource);
-	// queries and tag filters go to relevance-bounded search.
-	const path = trashed
-		? `/api/files?${params}`
-		: params.size > 0
-			? `/api/search?${params}`
-			: '/api/files';
+	const path =
+		mode.kind === 'list'
+			? `/api/files${params.size > 0 ? `?${params}` : ''}`
+			: `/api/search?${params}`;
 	let response: Response;
 	try {
 		response = await fetch(path);
