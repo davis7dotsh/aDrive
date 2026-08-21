@@ -132,7 +132,7 @@
 				return { source: url.href, text: '' };
 			}
 			if (isText) {
-				const preview = await getFilePreview(auth, id, signal);
+				const preview = await getFilePreview(auth, id, version, signal);
 				signal.throwIfAborted();
 				return { source: '', text: preview.text.slice(0, 360) };
 			}

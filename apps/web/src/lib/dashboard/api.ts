@@ -192,20 +192,41 @@ export const getFile = async (
 	return json(parseFileDetailResponse, response);
 };
 
+// Preview text is immutable per (file, version), and dashboard grids fetch
+// it for every visible text file on every visit, so memoize it in memory for
+// the session. Bounded so a session with many or large text files cannot
+// balloon: entries are skipped past a size cap and evicted oldest-first.
+const MAX_PREVIEW_CACHE_BYTES = 128 * 1024;
+const MAX_PREVIEW_CACHE_ENTRIES = 200;
+const previewCache = new Map<`${string}\u0000${number}`, { text: string }>();
+
 export const getFilePreview = async (
 	token: string,
 	id: string,
+	version?: number,
 	signal?: AbortSignal
 ) => {
+	const cacheKey =
+		version === undefined ? null : (`${id}\u0000${version}` as const);
+	if (cacheKey !== null) {
+		const cached = previewCache.get(cacheKey);
+		if (cached) return { kind: 'text', text: cached.text };
+	}
 	const response = await request(
 		`/api/files/${encodeURIComponent(id)}/preview`,
 		token,
 		{ signal }
 	);
-	return {
-		kind: response.headers.get('X-Adrive-Preview-Kind') ?? 'text',
-		text: await response.text()
-	};
+	const kind = response.headers.get('X-Adrive-Preview-Kind') ?? 'text';
+	const text = await response.text();
+	if (cacheKey !== null && text.length <= MAX_PREVIEW_CACHE_BYTES) {
+		previewCache.set(cacheKey, { text });
+		if (previewCache.size > MAX_PREVIEW_CACHE_ENTRIES) {
+			const oldest = previewCache.keys().next().value;
+			if (oldest !== undefined) previewCache.delete(oldest);
+		}
+	}
+	return { kind, text };
 };
 
 // Signed private content links are expensive to mint (auth + D1 lookup +

@@ -36,9 +36,9 @@
 	);
 	const preview = resource(
 		() => [token, file.id, file.version, textLike] as const,
-		async ([auth, id, _version, shouldLoad], _previous, { signal }) => {
+		async ([auth, id, version, shouldLoad], _previous, { signal }) => {
 			const result = shouldLoad
-				? await getFilePreview(auth, id, signal)
+				? await getFilePreview(auth, id, version, signal)
 				: { kind: '', text: '' };
 			signal.throwIfAborted();
 			return result;

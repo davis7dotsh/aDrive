@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getContentLink } from './api';
+import { getContentLink, getFilePreview } from './api';
 
 const fetchMock = vi.hoisted(() => vi.fn());
 
@@ -74,6 +74,53 @@ describe('content link memoization', () => {
 
 		await getContentLink('token', 'id-d', 3);
 		await getContentLink('token', 'id-d', 3);
+
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+	});
+});
+
+describe('preview memoization', () => {
+	const stubPreview = (text: string) => {
+		vi.stubGlobal(
+			'fetch',
+			fetchMock.mockImplementation(
+				async () =>
+					new Response(text, {
+						status: 200,
+						headers: { 'X-Adrive-Preview-Kind': 'text' }
+					})
+			)
+		);
+	};
+
+	it('reuses preview text for the same file version', async () => {
+		stubPreview('line one\nline two');
+
+		await expect(getFilePreview('token', 'id-p', 3)).resolves.toMatchObject({
+			kind: 'text',
+			text: 'line one\nline two'
+		});
+		await getFilePreview('token', 'id-p', 3);
+
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
+
+	it('refetches when the version changes or the version is unknown', async () => {
+		stubPreview('v3 text');
+
+		await getFilePreview('token', 'id-v', 3);
+		await getFilePreview('token', 'id-v', 4);
+		await getFilePreview('token', 'id-v');
+
+		expect(fetchMock).toHaveBeenCalledTimes(3);
+	});
+
+	it('skips caching very large previews', async () => {
+		const large = 'x'.repeat(200 * 1024);
+		stubPreview(large);
+
+		await getFilePreview('token', 'id-x', 1);
+		await getFilePreview('token', 'id-x', 1);
 
 		expect(fetchMock).toHaveBeenCalledTimes(2);
 	});
