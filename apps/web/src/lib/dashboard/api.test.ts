@@ -117,6 +117,9 @@ describe('preview memoization', () => {
 		await getFilePreview('token', 'id-p', 3);
 
 		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+			'/api/files/id-p/preview?v=3'
+		);
 	});
 
 	it('refetches when the version changes or the version is unknown', async () => {
@@ -127,6 +130,9 @@ describe('preview memoization', () => {
 		await getFilePreview('token', 'id-v');
 
 		expect(fetchMock).toHaveBeenCalledTimes(3);
+		expect(String(fetchMock.mock.calls[0]?.[0])).toContain('preview?v=3');
+		expect(String(fetchMock.mock.calls[1]?.[0])).toContain('preview?v=4');
+		expect(String(fetchMock.mock.calls[2]?.[0])).toMatch(/\/preview$/);
 	});
 
 	it('preserves markdown kind on a cached preview', async () => {

@@ -215,8 +215,10 @@ export const getFilePreview = async (
 		const cached = previewCache.get(cacheKey);
 		if (cached) return { kind: cached.kind, text: cached.text };
 	}
+	const params = new URLSearchParams();
+	if (version !== undefined) params.set('v', String(version));
 	const response = await request(
-		`/api/files/${encodeURIComponent(id)}/preview`,
+		`/api/files/${encodeURIComponent(id)}/preview${params.size > 0 ? `?${params}` : ''}`,
 		token,
 		{ signal }
 	);
