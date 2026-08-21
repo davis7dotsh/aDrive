@@ -2,8 +2,9 @@
 
 ## First-time setup (once)
 
-Wrangler commands run from `apps/web`; `bun release` and the backup
-installer run from the repository root.
+App Worker commands run from `apps/web`. Landing-site commands run from
+`apps/site` (no `--env`). `bun release` and the backup installer run from
+the repository root.
 
 1. From `apps/web`: `wrangler d1 create adrive-production` — paste the id
    into `wrangler.jsonc` `env.production.d1_databases[0].database_id`.
@@ -60,10 +61,13 @@ Semantic search notes for the first deploy:
 bun release
 ```
 
-The script refuses a dirty tree or placeholder ids, then runs format
-check → type/lint checks → tests → audit → build → deploy dry run → D1
-migrations → deploy, and appends the deployed commit to
-`.release-history`.
+The script refuses a dirty tree or placeholder ids in the target env,
+then runs format check → type/lint checks → tests → audit → build →
+app deploy dry run → landing-site dry run → D1 migrations → app deploy →
+landing-site deploy, and appends the deployed commit to
+`.release-history`. If the landing site fails after the app Worker is
+live, the script still records the app commit and prints rollback
+commands for `apps/site`.
 
 A release is **complete** only after the production verification skill
 passes against the live deployment (the script prints the reminder).
