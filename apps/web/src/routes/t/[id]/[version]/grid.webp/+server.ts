@@ -31,11 +31,11 @@ const thumbnailResponse = (
 	body: BodyInit | null,
 	size: number,
 	etag: string,
-	privateResponse: boolean
+	cacheControl: string
 ) =>
 	new Response(body, {
 		headers: {
-			'Cache-Control': thumbnailCacheControl(privateResponse),
+			'Cache-Control': cacheControl,
 			'Content-Length': String(size),
 			'Content-Security-Policy': contentSecurityPolicy('image/webp'),
 			'Content-Type': 'image/webp',
@@ -45,8 +45,8 @@ const thumbnailResponse = (
 		}
 	});
 
-const thumbnailNotModified = (etag: string, privateResponse: boolean) =>
-	notModifiedResponse(etag, thumbnailCacheControl(privateResponse));
+const thumbnailNotModified = (etag: string, cacheControl: string) =>
+	notModifiedResponse(etag, cacheControl);
 
 const publicThumbnailRedirect = (url: URL) => {
 	const location = new URL(url);
@@ -70,6 +70,7 @@ export const GET: RequestHandler = ({ params, platform, request, url }) =>
 			const config = yield* AppConfig;
 			const files = yield* Files;
 			const grantSecrets = yield* GrantSecrets;
+			const expiresAtSeconds = Number(url.searchParams.get('e'));
 			const hasGrant = url.searchParams.has('e') && url.searchParams.has('g');
 			const resolved = yield* files.findContent(params.id, version).pipe(
 				Effect.map((content) => ({ content, unavailable: false }) as const),
@@ -100,11 +101,15 @@ export const GET: RequestHandler = ({ params, platform, request, url }) =>
 					requestOrigin: url.origin,
 					fileId: params.id,
 					version: content.file.version,
-					expiresAtSeconds: Number(url.searchParams.get('e')),
+					expiresAtSeconds,
 					signature: url.searchParams.get('g') ?? ''
 				});
 				if (!granted) return yield* new NotFound({ id: params.id });
 			}
+			const cacheControl = thumbnailCacheControl(
+				privateResponse,
+				expiresAtSeconds
+			);
 
 			const cacheRequest = pathCacheRequest(url);
 			if (!privateResponse && !redirectPublicGrant) {
@@ -112,7 +117,7 @@ export const GET: RequestHandler = ({ params, platform, request, url }) =>
 				const cachedEtag = cachedResponse?.headers.get('ETag');
 				if (cachedResponse && cachedEtag) {
 					if (matchesEtag(request.headers.get('if-none-match'), cachedEtag)) {
-						return thumbnailNotModified(cachedEtag, privateResponse);
+						return thumbnailNotModified(cachedEtag, cacheControl);
 					}
 					return cachedResponse;
 				}
@@ -136,13 +141,13 @@ export const GET: RequestHandler = ({ params, platform, request, url }) =>
 						cached.object.httpEtag
 					)
 				) {
-					return thumbnailNotModified(cached.object.httpEtag, privateResponse);
+					return thumbnailNotModified(cached.object.httpEtag, cacheControl);
 				}
 				const response = thumbnailResponse(
 					cached.object.body,
 					cached.object.size,
 					cached.object.httpEtag,
-					privateResponse
+					cacheControl
 				);
 				if (!privateResponse) storeEdgeCache(platform, cacheRequest, response);
 				return response;
@@ -203,13 +208,13 @@ export const GET: RequestHandler = ({ params, platform, request, url }) =>
 				if (
 					matchesEtag(request.headers.get('if-none-match'), existing.httpEtag)
 				) {
-					return thumbnailNotModified(existing.httpEtag, privateResponse);
+					return thumbnailNotModified(existing.httpEtag, cacheControl);
 				}
 				const response = thumbnailResponse(
 					existing.body,
 					existing.size,
 					existing.httpEtag,
-					privateResponse
+					cacheControl
 				);
 				if (!privateResponse) storeEdgeCache(platform, cacheRequest, response);
 				return response;
@@ -217,14 +222,14 @@ export const GET: RequestHandler = ({ params, platform, request, url }) =>
 			const stored = result.blob;
 			if (redirectPublicGrant) return publicThumbnailRedirect(url);
 			if (matchesEtag(request.headers.get('if-none-match'), stored.etag)) {
-				return thumbnailNotModified(stored.etag, privateResponse);
+				return thumbnailNotModified(stored.etag, cacheControl);
 			}
 
 			const response = thumbnailResponse(
 				bytes,
 				stored.size,
 				stored.etag,
-				privateResponse
+				cacheControl
 			);
 			if (!privateResponse) storeEdgeCache(platform, cacheRequest, response);
 			return response;

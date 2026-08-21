@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from 'vitest';
 import {
 	EDGE_CACHE_MAX_BYTES,
 	PRIVATE_CACHE_CONTROL,
-	PRIVATE_IMMUTABLE_CACHE_CONTROL,
 	PUBLIC_IMMUTABLE_CACHE_CONTROL,
 	PUBLIC_REVALIDATE_CACHE_CONTROL,
 	PUBLIC_SITE_ASSET_CACHE_CONTROL,
@@ -26,9 +25,21 @@ describe('content cache policy', () => {
 		expect(fileCacheControl(true)).toBe(PRIVATE_CACHE_CONTROL);
 	});
 
-	it('lets browsers cache private thumbnails immutably', () => {
-		expect(thumbnailCacheControl(false)).toBe(PUBLIC_IMMUTABLE_CACHE_CONTROL);
-		expect(thumbnailCacheControl(true)).toBe(PRIVATE_IMMUTABLE_CACHE_CONTROL);
+	it('caps private thumbnail freshness to the remaining grant', () => {
+		const nowMs = 1_700_000_000_000;
+		const expiresAtSeconds = Math.floor(nowMs / 1_000) + 120;
+		expect(thumbnailCacheControl(false, expiresAtSeconds, nowMs)).toBe(
+			PUBLIC_IMMUTABLE_CACHE_CONTROL
+		);
+		expect(thumbnailCacheControl(true, expiresAtSeconds, nowMs)).toBe(
+			'private, max-age=120, must-revalidate'
+		);
+		expect(thumbnailCacheControl(true, expiresAtSeconds - 200, nowMs)).toBe(
+			'private, max-age=0, must-revalidate'
+		);
+		expect(thumbnailCacheControl(true, Number.NaN, nowMs)).toBe(
+			'private, max-age=0, must-revalidate'
+		);
 	});
 
 	it('revalidates published HTML and briefly caches other site assets', () => {
