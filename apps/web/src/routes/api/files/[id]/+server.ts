@@ -28,26 +28,35 @@ export const GET: RequestHandler = ({ cookies, params, request, url }) =>
 			const indexing = yield* Indexing;
 			const config = yield* AppConfig;
 			yield* authorizeRequest(auth, request, url, cookies);
-			const detail = yield* files.detail(params.id, {
-				cursor: url.searchParams.get('versionsCursor'),
-				limit: yield* Effect.try({
-					try: () =>
-						parsePageSize(url.searchParams.get('versionsLimit'), 50, 200),
-					catch: (cause) =>
-						cause instanceof InvalidRequest
-							? cause
-							: new InvalidRequest({
-									status: 400,
-									message: 'Page size is invalid'
-								})
-				})
-			});
+			// File detail, tag list, and indexing status are independent D1
+			// reads; run them concurrently like the list and search routes.
+			const [detail, tagList, semantic] = yield* Effect.all(
+				[
+					files.detail(params.id, {
+						cursor: url.searchParams.get('versionsCursor'),
+						limit: yield* Effect.try({
+							try: () =>
+								parsePageSize(url.searchParams.get('versionsLimit'), 50, 200),
+							catch: (cause) =>
+								cause instanceof InvalidRequest
+									? cause
+									: new InvalidRequest({
+											status: 400,
+											message: 'Page size is invalid'
+										})
+						})
+					}),
+					tags.list,
+					indexing.status
+				],
+				{ concurrency: 'unbounded' }
+			);
 			return Response.json({
 				...detail,
-				availableTags: yield* tags.list,
+				availableTags: tagList,
 				contentOrigin: config.contentOrigin,
 				maxUploadBytes: config.maxUploadBytes,
-				semanticEnabled: (yield* indexing.status).enabled
+				semanticEnabled: semantic.enabled
 			});
 		})
 	);

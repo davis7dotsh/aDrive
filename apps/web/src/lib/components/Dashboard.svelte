@@ -116,7 +116,9 @@
 					: listFiles(token, false, signal);
 		},
 		{
-			debounce: 200,
+			// The search input already debounces keystrokes (useSearchParams
+			// above), so another debounce here only double-delays tag toggles,
+			// refetches after mutations, and the first hydrate. Run promptly.
 			initialValue: ssrList ?? emptyList
 		}
 	);

@@ -306,6 +306,7 @@
 				src={linkUrl}
 				alt={file.displayName}
 				decoding="async"
+				fetchpriority="high"
 				class="max-h-[70vh] max-w-full object-contain"
 			/>
 		</div>
