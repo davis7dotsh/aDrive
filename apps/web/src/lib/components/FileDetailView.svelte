@@ -31,13 +31,22 @@
 	const id = $derived(page.params.id);
 	const from = $derived(page.url.searchParams.get('from') ?? '');
 	const backHref = $derived(from.startsWith('?') ? `/${from}` : '/');
+	const ssrDetail = untrack(() => initialDetail);
+	let hydratedFromServer = false;
 	const detail = resource(
 		() => [session.ready, session.token, id] as const,
-		([ready, token, fileId], _previous, { signal }) =>
-			ready && token && fileId
-				? getFile(token, fileId, signal)
-				: Promise.resolve(null),
-		{ initialValue: untrack(() => initialDetail) }
+		([ready, token, fileId], _previous, { signal }) => {
+			if (!ready || !token || !fileId) return Promise.resolve(null);
+			// The detail page was already rendered server-side for this exact
+			// file; skip the duplicate fetch on hydration. Explicit refetch()
+			// after mutations and version restores still hits the API.
+			if (ssrDetail && !hydratedFromServer) {
+				hydratedFromServer = true;
+				return Promise.resolve(ssrDetail);
+			}
+			return getFile(token, fileId, signal);
+		},
+		{ initialValue: ssrDetail }
 	);
 	let busy = $state(false);
 	let operation = 0;

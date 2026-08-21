@@ -9,11 +9,11 @@ import {
 } from '$lib/file-thumbnail';
 import { contentSecurityPolicy } from '$lib/server/content-headers';
 import {
-	fileCacheControl,
 	matchEdgeCache,
 	notModifiedResponse,
 	pathCacheRequest,
-	storeEdgeCache
+	storeEdgeCache,
+	thumbnailCacheControl
 } from '$lib/server/content-cache';
 import { AppConfig } from '$lib/server/config';
 import { runEdge } from '$lib/server/edge';
@@ -35,7 +35,7 @@ const thumbnailResponse = (
 ) =>
 	new Response(body, {
 		headers: {
-			'Cache-Control': fileCacheControl(privateResponse),
+			'Cache-Control': thumbnailCacheControl(privateResponse),
 			'Content-Length': String(size),
 			'Content-Security-Policy': contentSecurityPolicy('image/webp'),
 			'Content-Type': 'image/webp',
@@ -45,8 +45,8 @@ const thumbnailResponse = (
 		}
 	});
 
-const publicNotModified = (etag: string) =>
-	notModifiedResponse(etag, fileCacheControl(false));
+const thumbnailNotModified = (etag: string, privateResponse: boolean) =>
+	notModifiedResponse(etag, thumbnailCacheControl(privateResponse));
 
 const publicThumbnailRedirect = (url: URL) => {
 	const location = new URL(url);
@@ -112,7 +112,7 @@ export const GET: RequestHandler = ({ params, platform, request, url }) =>
 				const cachedEtag = cachedResponse?.headers.get('ETag');
 				if (cachedResponse && cachedEtag) {
 					if (matchesEtag(request.headers.get('if-none-match'), cachedEtag)) {
-						return publicNotModified(cachedEtag);
+						return thumbnailNotModified(cachedEtag, privateResponse);
 					}
 					return cachedResponse;
 				}
@@ -131,13 +131,12 @@ export const GET: RequestHandler = ({ params, platform, request, url }) =>
 			if (cached.found) {
 				if (redirectPublicGrant) return publicThumbnailRedirect(url);
 				if (
-					!privateResponse &&
 					matchesEtag(
 						request.headers.get('if-none-match'),
 						cached.object.httpEtag
 					)
 				) {
-					return publicNotModified(cached.object.httpEtag);
+					return thumbnailNotModified(cached.object.httpEtag, privateResponse);
 				}
 				const response = thumbnailResponse(
 					cached.object.body,
@@ -202,10 +201,9 @@ export const GET: RequestHandler = ({ params, platform, request, url }) =>
 				if (redirectPublicGrant) return publicThumbnailRedirect(url);
 				const existing = yield* blobs.get(result.r2Key);
 				if (
-					!privateResponse &&
 					matchesEtag(request.headers.get('if-none-match'), existing.httpEtag)
 				) {
-					return publicNotModified(existing.httpEtag);
+					return thumbnailNotModified(existing.httpEtag, privateResponse);
 				}
 				const response = thumbnailResponse(
 					existing.body,
@@ -218,11 +216,8 @@ export const GET: RequestHandler = ({ params, platform, request, url }) =>
 			}
 			const stored = result.blob;
 			if (redirectPublicGrant) return publicThumbnailRedirect(url);
-			if (
-				!privateResponse &&
-				matchesEtag(request.headers.get('if-none-match'), stored.etag)
-			) {
-				return publicNotModified(stored.etag);
+			if (matchesEtag(request.headers.get('if-none-match'), stored.etag)) {
+				return thumbnailNotModified(stored.etag, privateResponse);
 			}
 
 			const response = thumbnailResponse(

@@ -175,30 +175,44 @@ const makeSearch = Effect.gen(function* () {
 
 			const trigramMatch = sanitizeTrigramQuery(trimmedQuery);
 			const now = new Date().toISOString();
-			const keyword = yield* runRanked(
-				rankedSearchCommand('files_fts', keywordMatch, now, selectedTagIds)
-			);
-			const trigram = trigramMatch
-				? yield* runRanked(
-						rankedSearchCommand('files_trgm', trigramMatch, now, selectedTagIds)
-					)
-				: [];
-			const semanticCandidates = shouldEmbedSearchQuery(trimmedQuery)
-				? yield* embedder.query(trimmedQuery).pipe(
-						Effect.flatMap((embedding) => vectorIndex.search(embedding)),
-						Effect.catch((failure) =>
-							Effect.sync(() => {
-								console.error(
-									JSON.stringify({
-										message: 'semantic search degraded to keyword search',
-										operation: failure.operation
+			// The index reads (FTS, trigram) and the optional embedding +
+			// vector query are independent; run them concurrently so search
+			// latency is the slowest source, not their sum. Workers AI
+			// embeddings are usually the slowest leg, so they start now.
+			const [keyword, trigram, semanticCandidates] = yield* Effect.all(
+				[
+					runRanked(
+						rankedSearchCommand('files_fts', keywordMatch, now, selectedTagIds)
+					),
+					trigramMatch
+						? runRanked(
+								rankedSearchCommand(
+									'files_trgm',
+									trigramMatch,
+									now,
+									selectedTagIds
+								)
+							)
+						: Effect.succeed<ReadonlyArray<RankedRow>>([]),
+					shouldEmbedSearchQuery(trimmedQuery)
+						? embedder.query(trimmedQuery).pipe(
+								Effect.flatMap((embedding) => vectorIndex.search(embedding)),
+								Effect.catch((failure) =>
+									Effect.sync(() => {
+										console.error(
+											JSON.stringify({
+												message: 'semantic search degraded to keyword search',
+												operation: failure.operation
+											})
+										);
+										return [];
 									})
-								);
-								return [];
-							})
-						)
-					)
-				: [];
+								)
+							)
+						: Effect.succeed<ReadonlyArray<{ fileId: string }>>([])
+				],
+				{ concurrency: 'unbounded' }
+			);
 			const semantic = yield* filterSemantic(
 				semanticCandidates.map((candidate) => candidate.fileId),
 				selectedTagIds,

@@ -1,6 +1,34 @@
 import { FileListResponseSchema } from '@adrive/shared';
+import type { FileListResponse } from '@adrive/shared';
 import { Schema } from 'effect';
+import { supportsDashboardThumbnail } from '$lib/file-thumbnail';
 import type { PageServerLoad } from './$types';
+
+// Preload the first-viewport public thumbnails so the grid's first images are
+// fetched in parallel with the page's JavaScript instead of waiting for the
+// IntersectionObserver to see them after hydration. Served URLs are immutable
+// per (id, version), so the browser caches them across visits.
+const THUMBNAIL_PRELOAD_LIMIT = 12;
+
+const thumbnailPreloads = (list: FileListResponse) => {
+	if (!list.contentOrigin) return [];
+	const preloads: Array<string> = [];
+	for (const file of list.files) {
+		if (preloads.length >= THUMBNAIL_PRELOAD_LIMIT) break;
+		if (
+			file.kind === 'file' &&
+			file.public &&
+			file.deletedAt === null &&
+			file.expiresAt === null &&
+			supportsDashboardThumbnail(file.contentType)
+		) {
+			preloads.push(
+				`${list.contentOrigin}/t/${encodeURIComponent(file.id)}/${file.version}/grid.webp`
+			);
+		}
+	}
+	return preloads;
+};
 
 const readError = async (response: Response) => {
 	try {
@@ -58,26 +86,38 @@ export const load: PageServerLoad = async ({ depends, fetch, url }) => {
 	} catch {
 		return {
 			initialList: null,
-			initialError: 'Could not load files'
+			initialError: 'Could not load files',
+			thumbnailPreloads: []
 		};
 	}
 	if (response.status === 401) {
-		return { initialList: null, initialError: '' };
+		return {
+			initialList: null,
+			initialError: '',
+			thumbnailPreloads: []
+		};
 	}
 	if (!response.ok) {
-		return { initialList: null, initialError: await readError(response) };
+		return {
+			initialList: null,
+			initialError: await readError(response),
+			thumbnailPreloads: []
+		};
 	}
 	try {
+		const initialList = await Schema.decodeUnknownPromise(
+			FileListResponseSchema
+		)(await response.json());
 		return {
-			initialList: await Schema.decodeUnknownPromise(FileListResponseSchema)(
-				await response.json()
-			),
-			initialError: ''
+			initialList,
+			initialError: '',
+			thumbnailPreloads: thumbnailPreloads(initialList)
 		};
 	} catch {
 		return {
 			initialList: null,
-			initialError: 'The server returned invalid file data'
+			initialError: 'The server returned invalid file data',
+			thumbnailPreloads: []
 		};
 	}
 };

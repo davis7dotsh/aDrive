@@ -3,6 +3,12 @@ import { Effect } from 'effect';
 export const PRIVATE_CACHE_CONTROL = 'private, no-store';
 export const PUBLIC_IMMUTABLE_CACHE_CONTROL =
 	'public, max-age=31536000, immutable';
+// Thumbnail bytes are content-addressed by (file id, version) like public
+// files, so a private thumbnail is safe for the browser to cache for the same
+// lifetime. The URL is only reachable with a short-lived grant, but once the
+// browser holds the bytes the grant expiry does not matter.
+export const PRIVATE_IMMUTABLE_CACHE_CONTROL =
+	'private, max-age=31536000, immutable';
 export const PUBLIC_REVALIDATE_CACHE_CONTROL =
 	'public, max-age=0, must-revalidate';
 export const PUBLIC_SITE_ASSET_CACHE_CONTROL =
@@ -11,6 +17,11 @@ export const EDGE_CACHE_MAX_BYTES = 512 * 1024;
 
 export const fileCacheControl = (privateResponse: boolean) =>
 	privateResponse ? PRIVATE_CACHE_CONTROL : PUBLIC_IMMUTABLE_CACHE_CONTROL;
+
+export const thumbnailCacheControl = (privateResponse: boolean) =>
+	privateResponse
+		? PRIVATE_IMMUTABLE_CACHE_CONTROL
+		: PUBLIC_IMMUTABLE_CACHE_CONTROL;
 
 export const siteCacheControl = (
 	privateResponse: boolean,

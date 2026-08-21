@@ -209,6 +209,27 @@ export const getFilePreview = async (
 	};
 };
 
+// Signed private content links are expensive to mint (auth + D1 lookup +
+// HMAC per call) and identical across calls for the same file version, so
+// memoize them by scope with a safety margin. A dashboard grid can request
+// dozens of private thumbnails at once; without this every one of them fires
+// a separate /link request on every visit, which is the main pop-in source
+// for private files. Links are short-lived, so entries are reused only until
+// shortly before the server-side grant expires.
+const PRIVATE_LINK_RENEW_MS = 60_000;
+interface CachedPrivateLink {
+	readonly expiresAt: number;
+	readonly payload: FileContentLinkResponse;
+}
+const privateLinkCache = new Map<string, CachedPrivateLink>();
+const privateLinkKey = (
+	id: string,
+	version: number | undefined,
+	includeUnavailable: boolean,
+	requireGrant: boolean
+) =>
+	`${id}\u0000${version ?? ''}\u0000${includeUnavailable ? 1 : 0}\u0000${requireGrant ? 1 : 0}`;
+
 export const getContentLink = async (
 	token: string,
 	id: string,
@@ -217,6 +238,11 @@ export const getContentLink = async (
 	includeUnavailable = false,
 	requireGrant = false
 ) => {
+	const key = privateLinkKey(id, version, includeUnavailable, requireGrant);
+	const cached = privateLinkCache.get(key);
+	if (cached && cached.expiresAt - Date.now() > PRIVATE_LINK_RENEW_MS) {
+		return cached.payload;
+	}
 	const params = new URLSearchParams();
 	if (version !== undefined) params.set('v', String(version));
 	if (includeUnavailable) params.set('unavailable', 'true');
@@ -226,10 +252,23 @@ export const getContentLink = async (
 		token,
 		{ signal }
 	);
-	return json(
+	const payload = json(
 		FileContentLinkResponseSchema,
 		response
 	) satisfies Promise<FileContentLinkResponse>;
+	if (!includeUnavailable) {
+		// Only memoize still-available private grants; unavailable/trashed
+		// links are always checked against the server.
+		const link = await payload;
+		if (!link.public && link.expiresAt !== null) {
+			const expiresAt = new Date(link.expiresAt).getTime();
+			if (Number.isFinite(expiresAt)) {
+				privateLinkCache.set(key, { expiresAt, payload: link });
+			}
+		}
+		return link;
+	}
+	return payload;
 };
 
 type UploadOptions = {

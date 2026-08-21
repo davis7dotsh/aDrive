@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
 	EDGE_CACHE_MAX_BYTES,
 	PRIVATE_CACHE_CONTROL,
+	PRIVATE_IMMUTABLE_CACHE_CONTROL,
 	PUBLIC_IMMUTABLE_CACHE_CONTROL,
 	PUBLIC_REVALIDATE_CACHE_CONTROL,
 	PUBLIC_SITE_ASSET_CACHE_CONTROL,
@@ -15,13 +16,19 @@ import {
 	notModifiedResponse,
 	pathCacheRequest,
 	siteCacheControl,
-	storeEdgeCache
+	storeEdgeCache,
+	thumbnailCacheControl
 } from './content-cache';
 
 describe('content cache policy', () => {
 	it('makes versioned public files immutable and keeps grants private', () => {
 		expect(fileCacheControl(false)).toBe(PUBLIC_IMMUTABLE_CACHE_CONTROL);
 		expect(fileCacheControl(true)).toBe(PRIVATE_CACHE_CONTROL);
+	});
+
+	it('lets browsers cache private thumbnails immutably', () => {
+		expect(thumbnailCacheControl(false)).toBe(PUBLIC_IMMUTABLE_CACHE_CONTROL);
+		expect(thumbnailCacheControl(true)).toBe(PRIVATE_IMMUTABLE_CACHE_CONTROL);
 	});
 
 	it('revalidates published HTML and briefly caches other site assets', () => {
@@ -125,7 +132,10 @@ describe('content cache policy', () => {
 	it('hands back a mutable copy so hooks can add security headers', async () => {
 		const immutable = new Response('cached-bytes', {
 			status: 200,
-			headers: { 'Cache-Control': PUBLIC_IMMUTABLE_CACHE_CONTROL, ETag: '"abc"' }
+			headers: {
+				'Cache-Control': PUBLIC_IMMUTABLE_CACHE_CONTROL,
+				ETag: '"abc"'
+			}
 		});
 		// Mirror the Workers Cache API, whose responses reject header writes.
 		immutable.headers.set = () => {
