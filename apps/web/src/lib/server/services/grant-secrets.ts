@@ -1,5 +1,6 @@
 import { Context, Effect, Layer, Schema } from 'effect';
 import { StorageError } from '../errors';
+import { createObjectTtlCache } from '../isolate-cache';
 import {
 	mintPrivateGrant,
 	verifyPrivateGrant,
@@ -14,6 +15,17 @@ const PersistedSecretRow = Schema.Struct({
 });
 
 const KEY_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+
+// The grant signing key is seeded once per instance and never rewritten, so
+// reading it from D1 on every request that mints or verifies a private link
+// (each /link call plus each /t grant check) is wasted round trips. Cache it
+// per isolate like the tag list and indexing status. If the database is ever
+// reseeded, mint+verify stay consistent within an isolate, and a stale key
+// on a handful of isolates self-heals on the next cache expiry.
+const SIGNING_KEY_CACHE_TTL_MS = 5 * 60_000;
+const signingKeyCache = createObjectTtlCache<D1Database, string>(
+	SIGNING_KEY_CACHE_TTL_MS
+);
 
 type MintGrantInput = Omit<MintPrivateGrantOptions, 'signingKey'>;
 type VerifyGrantInput = Omit<VerifyPrivateGrantOptions, 'signingKey'>;
@@ -46,6 +58,8 @@ const makeGrantSecrets = Effect.gen(function* () {
 
 	const signingKey = Effect.tryPromise({
 		try: async () => {
+			const cached = signingKeyCache.get(db);
+			if (cached) return cached;
 			const candidate = randomSigningKey();
 			await db
 				.prepare(
@@ -69,6 +83,7 @@ const makeGrantSecrets = Effect.gen(function* () {
 			) {
 				throw new Error('The persisted content grant key is unavailable');
 			}
+			signingKeyCache.set(db, decoded.value.content_grant_signing_key);
 			return decoded.value.content_grant_signing_key;
 		},
 		catch: (cause) =>

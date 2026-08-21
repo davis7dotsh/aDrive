@@ -109,6 +109,28 @@ describe('persisted content grant secrets', () => {
 		database.close();
 	});
 
+	it('caches the signing key per isolate within the TTL', async () => {
+		const database = new DatabaseSync(':memory:');
+		database.exec(migration);
+		const db = d1FromSqlite(database);
+		const prepared = db.prepare.bind(db);
+		let secretReads = 0;
+		db.prepare = (query: string) => {
+			if (/FROM instance_secrets/.test(query)) secretReads += 1;
+			return prepared(query);
+		};
+
+		await mintFromRequest(db);
+		const readsAfterFirst = secretReads;
+		await mintFromRequest(db);
+
+		// The first request seeds and reads the key; the second reuses the
+		// isolate cache instead of querying D1 again.
+		expect(readsAfterFirst).toBeGreaterThan(0);
+		expect(secretReads).toBe(readsAfterFirst);
+		database.close();
+	});
+
 	it('does not let a raw PASSCODE guess validate a persisted-key grant', async () => {
 		const database = new DatabaseSync(':memory:');
 		database.exec(migration);
