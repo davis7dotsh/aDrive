@@ -12,7 +12,7 @@
 	"scripts": {
 		"adrive": "node --experimental-strip-types src/main.ts",
 		"build": "node scripts/build.mjs",
-		"check": "pnpm check:types && pnpm check:effect",
+		"check": "bun run check:types && bun run check:effect",
 		"check:effect": "effect-tsgo diagnostics --project tsconfig.json --format pretty",
 		"check:types": "tsc --noEmit",
 		"test": "vitest run"

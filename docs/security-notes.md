@@ -13,6 +13,6 @@
   reachable.
 - Action: keep SvelteKit current and pick up the transitive fix
   (`cookie >= 0.7.0`) when a compatible SvelteKit release lands. Re-check
-  with `pnpm audit --prod` during each release.
+  with `bun audit --prod` during each release.
 
 Accepted: 2026-07-31.

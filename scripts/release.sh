@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # a-drive release: validate -> check -> test -> build -> dry-run ->
-# migrate -> deploy -> record. Run from the repo root: pnpm release
+# migrate -> deploy -> record. Run from the repo root: bun release
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -25,23 +25,23 @@ if grep -q "replace-with-${ENV_NAME}" "${WEB}/wrangler.jsonc"; then
 fi
 
 step "Format check"
-pnpm format:check
+bun run format:check
 
 step "Type and lint checks"
-pnpm check
+bun run check
 
 step "Tests"
-pnpm test
+bun run test
 
 step "Dependency audit (informational)"
-pnpm audit --prod || echo "Review advisories against docs/security-notes.md"
+bun audit --prod || echo "Review advisories against docs/security-notes.md"
 
 step "Build"
 cd "${WEB}"
-pnpm exec vite build
+bun x vite build
 
 step "Deploy dry run"
-pnpm exec wrangler deploy --dry-run --env "${ENV_NAME}"
+bun x wrangler deploy --dry-run --env "${ENV_NAME}"
 
 step "D1 migrations"
 # Migrations run before the new Worker so both old and new code briefly run
@@ -49,10 +49,10 @@ step "D1 migrations"
 # for at least one release (additive columns/tables; no drops or renames
 # until the release after the code stops using them) so wrangler rollback
 # stays safe.
-pnpm exec wrangler d1 migrations apply DB --env "${ENV_NAME}" --remote
+bun x wrangler d1 migrations apply DB --env "${ENV_NAME}" --remote
 
 step "Deploy"
-pnpm exec wrangler deploy --env "${ENV_NAME}"
+bun x wrangler deploy --env "${ENV_NAME}"
 
 step "Record"
 cd "${ROOT}"

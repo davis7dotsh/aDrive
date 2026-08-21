@@ -2,7 +2,7 @@
 
 ## First-time setup (once)
 
-Wrangler commands run from `apps/web`; `pnpm release` and the backup
+Wrangler commands run from `apps/web`; `bun release` and the backup
 installer run from the repository root.
 
 1. From `apps/web`: `wrangler d1 create adrive-production` — paste the id
@@ -36,7 +36,7 @@ installer run from the repository root.
    CNAME records for `drive.davis7.space` and `files.davis7.space` before
    deployment; the custom-domain routes in `wrangler.jsonc` create the
    required DNS records automatically.
-8. From the repo root: `pnpm release`
+8. From the repo root: `bun release`
 9. From the repo root: set up backups on your backup host
    (`scripts/backup/install-backup-host.sh`) and complete the restore drill
    in `docs/backup-restore.md`.
@@ -55,7 +55,7 @@ Semantic search notes for the first deploy:
 ## Releasing
 
 ```
-pnpm release
+bun release
 ```
 
 The script refuses a dirty tree or placeholder ids, then runs format
@@ -82,8 +82,8 @@ column until the release _after_ the last code that used it is gone.
 
 ```
 cd apps/web
-pnpm exec wrangler deployments list --env production   # find the previous version
-pnpm exec wrangler rollback --env production           # interactive picker
+bun x wrangler deployments list --env production   # find the previous version
+bun x wrangler rollback --env production           # interactive picker
 ```
 
 Rollback redeploys the previous Worker bundle. It does not touch D1, R2,

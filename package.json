@@ -3,21 +3,27 @@
 	"version": "0.1.0",
 	"private": true,
 	"type": "module",
-	"packageManager": "pnpm@11.10.0",
+	"packageManager": "bun@1.4.0",
 	"engines": {
-		"node": ">=26"
+		"node": ">=26",
+		"bun": ">=1.4.0"
 	},
+	"workspaces": [
+		"apps/*",
+		"packages/*"
+	],
 	"scripts": {
-		"adrive": "pnpm --filter @adrive/cli adrive",
-		"check": "pnpm -r --if-present check && pnpm check:forbidden",
-		"check:forbidden": "node scripts/check-forbidden.mjs",
-		"db:migrate:local": "pnpm --filter @adrive/web exec wrangler d1 migrations apply DB --local",
+		"adrive": "bun --filter @adrive/cli adrive",
+		"check": "bun run --filter '@adrive/*' --if-present check && bun run check:forbidden",
+		"check:forbidden": "bun scripts/check-forbidden.mjs",
+		"db:migrate:local": "cd apps/web && bun x wrangler d1 migrations apply DB --local",
 		"format": "prettier --write .",
 		"format:check": "prettier --check .",
-		"key:create:local": "node scripts/create-local-key.mjs",
+		"key:create:local": "bun scripts/create-local-key.mjs",
+		"postinstall": "find node_modules -path '*/@effect/tsgo*/lib/tsc' -exec chmod +x {} +",
 		"release": "bash scripts/release.sh",
-		"search:rebuild:local": "pnpm --filter @adrive/web search:rebuild:local",
-		"test": "pnpm -r --if-present test"
+		"search:rebuild:local": "bun --filter @adrive/web search:rebuild:local",
+		"test": "bun run --filter '@adrive/*' --if-present test"
 	},
 	"devDependencies": {
 		"prettier": "^3.9.6",

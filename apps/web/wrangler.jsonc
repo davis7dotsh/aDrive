@@ -132,5 +132,5 @@
 	// bindings above). Production declares both bindings and uses
 	// SEMANTIC_SEARCH=required. To enable semantic search locally, create a
 	// 384-dimension cosine index and add the same two bindings to the top
-	// level, then run `pnpm types:worker`. See README.md.
+	// level, then run `bun --filter @adrive/web types:worker`. See README.md.
 }

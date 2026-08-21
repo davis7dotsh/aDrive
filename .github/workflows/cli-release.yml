@@ -21,27 +21,20 @@ jobs:
           # must not see a persisted token.
           persist-credentials: false
 
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 26
-          cache: pnpm
 
       - name: Install
-        run: pnpm install --frozen-lockfile
-
-      - name: Restore toolchain exec bits
-        # @effect/tsgo's platform packages ship lib/tsc without the exec
-        # bit on Linux (it isn't a package "bin", so pnpm doesn't restore
-        # the mode). effect-tsgo spawns it directly, so chmod before checks.
-        run: find node_modules/.pnpm -path '*/@effect/tsgo-*/lib/tsc' -exec chmod +x {} +
+        run: bun install --frozen-lockfile
 
       - name: Full gate
         run: |
-          pnpm format:check
-          pnpm check
-          pnpm test
+          bun run format:check
+          bun run check
+          bun run test
 
       - name: Derive version from tag
         id: version
@@ -59,7 +52,7 @@ jobs:
         working-directory: packages/cli
         env:
           ADRIVE_CLI_VERSION: ${{ steps.version.outputs.version }}
-        run: pnpm build
+        run: bun run build
 
       - name: Smoke the bundle
         working-directory: packages/cli
@@ -71,7 +64,7 @@ jobs:
             exit 1
           fi
           # Run the full contract suite against the built artifact.
-          ADRIVE_TEST_BUNDLE="$PWD/dist/adrive.mjs" pnpm test
+          ADRIVE_TEST_BUNDLE="$PWD/dist/adrive.mjs" bun run test
 
       - name: Checksums
         working-directory: packages/cli/dist
