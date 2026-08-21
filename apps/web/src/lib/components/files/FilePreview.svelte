@@ -2,7 +2,6 @@
 	import type { DashboardFile } from '@adrive/shared';
 	import { getContentLink, getFilePreview } from '$lib/dashboard/api';
 	import { formatBytes } from '$lib/dashboard/format';
-	import { renderMarkdown } from '$lib/dashboard/markdown';
 	import Button from '$lib/components/ui/Button.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { resource } from 'runed';
@@ -223,14 +222,36 @@
 		if (preview.error) void preview.refetch();
 		if (linkError) linkRefresh += 1;
 	};
-	const markdown = $derived(
-		preview.current?.kind === 'markdown'
-			? renderMarkdown(preview.current.text)
-			: ''
-	);
-	const renderMarkdownPreview: Attachment<HTMLElement> = (node) => {
-		node.innerHTML = markdown;
+	// markdown-it is the largest client library after Svelte/runed, so it is
+	// loaded on demand only when a markdown file is actually shown instead of
+	// paying its download+parse cost on every file detail page.
+	let renderedMarkdown = $state('');
+	let markdownNode = $state<HTMLElement>();
+	const attachMarkdownPreview: Attachment<HTMLElement> = (node) => {
+		markdownNode = node;
+		return () => {
+			if (markdownNode === node) markdownNode = undefined;
+		};
 	};
+	$effect(() => {
+		const source =
+			preview.current?.kind === 'markdown' ? preview.current.text : '';
+		if (!source) {
+			renderedMarkdown = '';
+			return;
+		}
+		let cancelled = false;
+		void import('$lib/dashboard/markdown').then(({ renderMarkdown }) => {
+			if (!cancelled) renderedMarkdown = renderMarkdown(source);
+		});
+		return () => {
+			cancelled = true;
+		};
+	});
+	$effect(() => {
+		const node = markdownNode;
+		if (node && renderedMarkdown) node.innerHTML = renderedMarkdown;
+	});
 </script>
 
 <section
@@ -272,7 +293,7 @@
 		</div>
 	{:else if preview.current?.kind === 'markdown'}
 		<article
-			{@attach renderMarkdownPreview}
+			{@attach attachMarkdownPreview}
 			class="markdown-preview p-6 sm:p-10"
 		></article>
 	{:else if preview.current?.kind === 'text'}
@@ -284,6 +305,7 @@
 			<img
 				src={linkUrl}
 				alt={file.displayName}
+				decoding="async"
 				class="max-h-[70vh] max-w-full object-contain"
 			/>
 		</div>
