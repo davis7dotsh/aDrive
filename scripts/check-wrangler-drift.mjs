@@ -108,7 +108,12 @@ const main = () => {
 			: 'production';
 	const placeholdersOnly = process.argv.includes('--placeholders-only');
 	const config = JSON.parse(stripComments(readFileSync(configPath, 'utf8')));
-	const prod = config.env?.[envName] ?? {};
+	const prod = config.env?.[envName];
+	if (!prod || typeof prod !== 'object' || Array.isArray(prod)) {
+		console.error(`wrangler.jsonc does not define env.${envName}.`);
+		process.exitCode = 1;
+		return;
+	}
 	const drift = [];
 
 	placeholderIds(prod, `env.${envName}`, drift);
