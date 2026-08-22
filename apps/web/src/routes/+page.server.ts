@@ -1,7 +1,10 @@
 import { FileListResponseSchema } from '@adrive/shared';
 import type { FileListResponse } from '@adrive/shared';
 import { Effect, Schema } from 'effect';
-import { supportsDashboardThumbnail } from '$lib/file-thumbnail';
+import {
+	supportsDashboardThumbnail,
+	supportsRenderedDashboardThumbnail
+} from '$lib/file-thumbnail';
 import { listingMode } from '$lib/listing';
 import { AppConfig } from '$lib/server/config';
 import { runWorkerProgram } from '$lib/server/edge';
@@ -15,11 +18,11 @@ import type { PageServerLoad } from './$types';
 const THUMBNAIL_PRELOAD_LIMIT = 12;
 
 const eligibleForThumbnailPreload = (file: FileListResponse['files'][number]) =>
-	file.kind === 'file' &&
 	file.public &&
 	file.deletedAt === null &&
 	file.expiresAt === null &&
-	supportsDashboardThumbnail(file.contentType);
+	(supportsDashboardThumbnail(file.contentType) ||
+		supportsRenderedDashboardThumbnail(file.kind, file.contentType));
 
 const thumbnailPreloadTargets = (list: FileListResponse) => {
 	if (!list.contentOrigin) return [];

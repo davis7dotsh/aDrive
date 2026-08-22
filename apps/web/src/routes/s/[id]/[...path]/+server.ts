@@ -48,6 +48,10 @@ const serveSite: RequestHandler = ({ params, request, url }) =>
 			const grant = siteGrant(params.path ?? '');
 			if (grant === false) return yield* new NotFound({ id: params.id });
 			const hasGrant = grant !== null;
+			const thumbnailSource = url.searchParams.get('purpose') === 'thumbnail';
+			if (thumbnailSource && !hasGrant) {
+				return yield* new NotFound({ id: params.id });
+			}
 			if (
 				!hasGrant &&
 				!isSiteVersionRequestServable(url.searchParams.get('v'))
@@ -108,6 +112,7 @@ const serveSite: RequestHandler = ({ params, request, url }) =>
 				: firstIfNoneMatchEtag(ifNoneMatch);
 			const countHtmlDownload =
 				asset.contentType === 'text/html' &&
+				!thumbnailSource &&
 				shouldCountDownload(request.headers.get('range'));
 
 			if (conditionalEtag === '*') {

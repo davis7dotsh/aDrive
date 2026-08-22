@@ -11,6 +11,7 @@ const FileContentRow = Schema.Struct({
 	version: Schema.Int,
 	size_bytes: Schema.Int,
 	is_public: Schema.Int,
+	is_site: Schema.Int,
 	r2_key: Schema.String,
 	thumbnail_r2_key: Schema.NullOr(Schema.String),
 	created_at: Schema.String
@@ -130,7 +131,8 @@ export interface FilesShape {
 	readonly findContent: (
 		id: string,
 		version?: number,
-		includeUnavailable?: boolean
+		includeUnavailable?: boolean,
+		includeSites?: boolean
 	) => Effect.Effect<FileContent, InvalidRequest | NotFound | StorageError>;
 }
 

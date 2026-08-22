@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Schema } from 'effect';
 import { FileListResponseSchema } from '@adrive/shared';
+import { dashboardThumbnailUrl } from '$lib/file-thumbnail';
 
 vi.mock('$app/server', async () => {
 	const { mockGetRequestEvent } = await import('../test/route-context.js');
@@ -21,6 +22,29 @@ import {
 } from '../test/helpers';
 
 const SESSION_COOKIE = '__Host-adrive-session';
+
+const mockBrowserScreenshot = (env: Env, body: string) => {
+	const original = env.BROWSER;
+	const screenshot = vi.fn(
+		async (_action: 'screenshot', _options: BrowserRunScreenshotOptions) =>
+			new Response(body, { headers: { 'content-type': 'image/webp' } })
+	);
+	Object.defineProperty(env, 'BROWSER', {
+		value: { quickAction: screenshot },
+		configurable: true,
+		writable: true
+	});
+	return {
+		screenshot,
+		restore: () => {
+			Object.defineProperty(env, 'BROWSER', {
+				value: original,
+				configurable: true,
+				writable: true
+			});
+		}
+	};
+};
 
 describe('route integration (local platform)', () => {
 	let shared: RouteTestContext | undefined;
@@ -211,6 +235,151 @@ describe('route integration (local platform)', () => {
 		expect(page.status).toBe(200);
 		expect(page.headers.get('content-type')).toContain('text/html');
 		expect(await page.text()).toBe('<h1>promo</h1>ok');
+
+		const { screenshot, restore } = mockBrowserScreenshot(ctx.env, 'site-webp');
+		const { GET: linkGET } =
+			await import('../../../routes/api/files/[id]/link/+server.js');
+		const linked = await call(
+			linkGET,
+			ctx.event({
+				path: `/api/files/${session.fileId}/link?v=1&grant=true`,
+				params: { id: session.fileId }
+			})
+		);
+		const link = (await linked.json()) as { url: string };
+		const thumbnailUrl = new URL(
+			dashboardThumbnailUrl(link.url, session.fileId, 1)
+		);
+		const { GET: thumbnailGET } =
+			await import('../../../routes/t/[id]/[version]/grid.webp/+server.js');
+		const signedEvent = ctx.event({
+			path: `${thumbnailUrl.pathname}${thumbnailUrl.search}`,
+			params: { id: session.fileId, version: '1' }
+		});
+		const generated = await call(thumbnailGET, {
+			...signedEvent,
+			url: thumbnailUrl,
+			request: new Request(thumbnailUrl)
+		});
+		expect(generated.status).toBe(307);
+		expect(screenshot).toHaveBeenCalledOnce();
+		const [action, screenshotOptions] = screenshot.mock.calls[0] ?? [];
+		expect(action).toBe('screenshot');
+		expect(screenshotOptions).toMatchObject({
+			viewport: { width: 1_200, height: 900 },
+			screenshotOptions: { type: 'webp', quality: 75 }
+		});
+		expect(screenshotOptions && 'url' in screenshotOptions).toBe(true);
+		const sourceUrl = new URL(
+			screenshotOptions && 'url' in screenshotOptions
+				? screenshotOptions.url
+				: 'http://invalid.example'
+		);
+		expect(sourceUrl.pathname).toContain(`/s/${session.fileId}/@grant/1/`);
+		expect(sourceUrl.searchParams.get('purpose')).toBe('thumbnail');
+
+		const downloadCount = async () =>
+			(
+				await ctx.env.DB.prepare(
+					'SELECT download_count FROM files WHERE id = ?'
+				)
+					.bind(session.fileId)
+					.first<{ download_count: number }>()
+			)?.download_count;
+		const countBefore = await downloadCount();
+		const sourceEvent = ctx.event({
+			path: `${sourceUrl.pathname}${sourceUrl.search}`,
+			params: {
+				id: session.fileId,
+				path: sourceUrl.pathname.slice(`/s/${session.fileId}/`.length)
+			}
+		});
+		const screenshotSource = await call(serveSiteGET, {
+			...sourceEvent,
+			url: sourceUrl,
+			request: new Request(sourceUrl)
+		});
+		expect(screenshotSource.status).toBe(200);
+		expect(await downloadCount()).toBe(countBefore);
+
+		const cachedUrl = new URL(generated.headers.get('location') ?? '');
+		const cachedEvent = ctx.event({
+			path: cachedUrl.pathname,
+			params: { id: session.fileId, version: '1' }
+		});
+		const cached = await call(thumbnailGET, {
+			...cachedEvent,
+			url: cachedUrl,
+			request: new Request(cachedUrl)
+		});
+		expect(cached.status).toBe(200);
+		expect(cached.headers.get('content-type')).toBe('image/webp');
+		expect(cached.headers.get('cache-control')).toContain('immutable');
+		expect(await cached.text()).toBe('site-webp');
+		expect(screenshot).toHaveBeenCalledOnce();
+		const stored = await ctx.env.DB.prepare(
+			'SELECT thumbnail_r2_key FROM file_versions WHERE file_id = ? AND version = 1'
+		)
+			.bind(session.fileId)
+			.first<{ thumbnail_r2_key: string }>();
+		expect(stored?.thumbnail_r2_key).toContain(
+			`thumbnail/${session.fileId}/1/`
+		);
+		await ctx.drainWaitUntil();
+		await mutateFile(ctx, session.fileId, { action: 'trash' });
+		await mutateFile(ctx, session.fileId, { action: 'purge' });
+		await ctx.drainWaitUntil();
+		expect(
+			stored?.thumbnail_r2_key
+				? await ctx.env.BUCKET.head(stored.thumbnail_r2_key)
+				: undefined
+		).toBeNull();
+		restore();
+	});
+
+	it('screenshots HTML file previews without serving the original document', async () => {
+		const ctx = await setup();
+		await login(ctx);
+		const file = await uploadFile(ctx, {
+			name: 'dashboard-preview.html',
+			content: '<h1>lightweight preview</h1>',
+			contentType: 'text/html',
+			isPublic: true
+		});
+		const { screenshot, restore } = mockBrowserScreenshot(ctx.env, 'html-webp');
+		const { GET: linkGET } =
+			await import('../../../routes/api/files/[id]/link/+server.js');
+		const linked = await call(
+			linkGET,
+			ctx.event({
+				path: `/api/files/${file.id}/link?v=1&grant=true`,
+				params: { id: file.id }
+			})
+		);
+		const link = (await linked.json()) as { url: string };
+		const thumbnailUrl = new URL(dashboardThumbnailUrl(link.url, file.id, 1));
+		const { GET: thumbnailGET } =
+			await import('../../../routes/t/[id]/[version]/grid.webp/+server.js');
+		const event = ctx.event({
+			path: `${thumbnailUrl.pathname}${thumbnailUrl.search}`,
+			params: { id: file.id, version: '1' }
+		});
+		const response = await call(thumbnailGET, {
+			...event,
+			url: thumbnailUrl,
+			request: new Request(thumbnailUrl)
+		});
+		expect(response.status).toBe(307);
+		const options = screenshot.mock.calls[0]?.[1];
+		expect(options && 'url' in options).toBe(true);
+		const source = new URL(
+			options && 'url' in options ? options.url : 'http://invalid.example'
+		);
+		expect(source.pathname).toBe(`/f/${file.id}`);
+		expect(source.searchParams.get('purpose')).toBe('thumbnail');
+		expect(screenshot).toHaveBeenCalledOnce();
+		restore();
+		await ctx.drainWaitUntil();
 	});
 
 	it('rejects credentials on a foreign origin with 421', async () => {

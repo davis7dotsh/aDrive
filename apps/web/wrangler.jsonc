@@ -37,6 +37,9 @@
 			"bucket_name": "adrive"
 		}
 	],
+	"browser": {
+		"binding": "BROWSER"
+	},
 	"kv_namespaces": [
 		{
 			"binding": "AUTH_GUARD",
@@ -110,6 +113,9 @@
 					"bucket_name": "adrive-production"
 				}
 			],
+			"browser": {
+				"binding": "BROWSER"
+			},
 			"kv_namespaces": [
 				{
 					"binding": "AUTH_GUARD",

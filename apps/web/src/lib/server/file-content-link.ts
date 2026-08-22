@@ -59,7 +59,7 @@ export const resolveFileContentLink = (
 		const config = yield* AppConfig;
 		const files = yield* Files;
 		const grantSecrets = yield* GrantSecrets;
-		if (includeUnavailable) {
+		if (includeUnavailable || requireGrant) {
 			const detail = yield* files.detail(id);
 			if (detail.file.kind === 'site') {
 				if (version !== undefined && version !== detail.file.version) {
