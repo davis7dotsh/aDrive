@@ -20,7 +20,6 @@ export type {
 	MutationResult,
 	UploadResult
 } from './files/types';
-export type { UploadInput, VersionUploadInput } from './files/types';
 
 export class Files extends Context.Service<Files, FilesShape>()('app/Files') {}
 

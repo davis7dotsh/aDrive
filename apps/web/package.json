@@ -39,6 +39,7 @@
 		"@types/node": "^26.1.1",
 		"@typescript/native": "npm:typescript@^7.0.2",
 		"concurrently": "^10.0.4",
+		"happy-dom": "^20.11.6",
 		"svelte": "5.56.8",
 		"svelte-check": "4.7.4",
 		"tailwindcss": "^4.3.3",

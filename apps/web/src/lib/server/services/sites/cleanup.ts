@@ -1,21 +1,13 @@
 import { Effect } from 'effect';
 import type { SiteInternals } from './internals';
+import type { SitesShape } from './types';
 
-export const cleanupOps = (internals: SiteInternals) => {
-	const {
-		drainDeletes,
-		cleanupStaged,
-		pendingDeleteCount,
-		sweepExpiredSessions,
-		sweepPendingDeletes
-	} = internals;
+export const cleanupOps = (
+	internals: SiteInternals
+): Pick<SitesShape, 'sweepLifecycle'> => {
+	const { sweepExpiredSessions, sweepPendingDeletes } = internals;
 
 	return {
-		drainDeletes,
-		cleanupStaged,
-		pendingDeleteCount,
-		sweepExpiredSessions,
-		sweepPendingDeletes,
 		sweepLifecycle: Effect.fn('Sites.sweepLifecycle')(function* (
 			limit: number
 		) {

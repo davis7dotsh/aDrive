@@ -9,12 +9,7 @@ import { validateUploadLength } from '../../upload-stream';
 import { forgetTagListCache } from '../tags';
 import { Effect } from 'effect';
 import type { FileInternals } from './internals';
-import type {
-	FilesShape,
-	MutationResult,
-	UploadInput,
-	VersionUploadInput
-} from './types';
+import type { FilesShape } from './types';
 import { decodeContentRows } from './types';
 
 export const uploadOps = (

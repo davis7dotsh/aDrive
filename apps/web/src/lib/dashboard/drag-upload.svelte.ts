@@ -12,6 +12,7 @@ type DragUploadDeps = {
 	readonly maxUploadBytes: () => number;
 	readonly uploadOpen: () => boolean;
 	readonly closeUpload: () => void;
+	readonly trashed: () => boolean;
 };
 
 export const createDragUpload = ({
@@ -20,7 +21,8 @@ export const createDragUpload = ({
 	uploads,
 	maxUploadBytes,
 	uploadOpen,
-	closeUpload
+	closeUpload,
+	trashed
 }: DragUploadDeps) => {
 	let dragging = $state(false);
 	let draggingFolder = $state(false);
@@ -87,7 +89,10 @@ export const createDragUpload = ({
 		if (dragDepth === 0) dragging = false;
 	};
 	const available = () =>
-		Boolean(session.token) && !session.connecting && maxUploadBytes() > 0;
+		Boolean(session.token) &&
+		!session.connecting &&
+		!trashed() &&
+		maxUploadBytes() > 0;
 
 	return {
 		get dragging() {
@@ -108,5 +113,3 @@ export const createDragUpload = ({
 		available
 	};
 };
-
-export type DragUpload = ReturnType<typeof createDragUpload>;

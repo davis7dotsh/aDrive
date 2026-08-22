@@ -2,8 +2,8 @@ import { Effect, Schema } from 'effect';
 import { FileListResponseSchema, type FileListResponse } from '@adrive/shared';
 import { call, type RouteTestContext } from './route-context';
 
-// The proxy loads .dev.vars, so the passcode under test is the real local
-// dev passcode, not a fixture value.
+// Use the real local dev passcode when present, otherwise the isolated
+// route context supplies a safe test-only fallback for clean checkouts.
 const passcode = (ctx: RouteTestContext) => {
 	const value = ctx.env.PASSCODE;
 	if (!value) throw new Error('PASSCODE missing from platform proxy env');

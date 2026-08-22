@@ -62,7 +62,11 @@ export const call = async <E, R>(
 export const createRouteContext = async (): Promise<RouteTestContext> => {
 	const { getTestPlatform } = await import('./platform');
 	const proxy = await getTestPlatform();
-	const env = proxy.env as unknown as Env;
+	const platformEnv = proxy.env as Env;
+	const env = {
+		...platformEnv,
+		PASSCODE: platformEnv.PASSCODE ?? 'adrive-route-test-passcode'
+	};
 	const cookies = new TestCookieStore();
 
 	const build = ({

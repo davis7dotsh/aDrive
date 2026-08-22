@@ -16,6 +16,7 @@ import {
 import {
 	eligibleSemanticCommand,
 	rankedSearchCommand,
+	SEARCH_CANDIDATE_LIMIT,
 	type SearchCommand
 } from '../search-candidates';
 import { Db } from './bindings';
@@ -274,30 +275,35 @@ const makeSearch = Effect.gen(function* () {
 					})
 				)
 			);
-			const fused = reciprocalRankFusion({
-				keyword: {
-					results: keyword.map((row) => ({ fileId: row.file_id })),
-					weight: 1
+			// Fuse the full candidate pool on every page so page 0 and
+			// page 1 slice the same ranking instead of two different
+			// prefixes (offset+51 vs offset+101).
+			const fused = reciprocalRankFusion(
+				{
+					keyword: {
+						results: keyword.map((row) => ({ fileId: row.file_id })),
+						weight: 1
+					},
+					trigram: {
+						results: trigram.map((row) => ({ fileId: row.file_id })),
+						weight: 0.5
+					},
+					semantic: {
+						results: semantic,
+						weight: 1
+					}
 				},
-				trigram: {
-					results: trigram.map((row) => ({ fileId: row.file_id })),
-					weight: 0.5
-				},
-				semantic: {
-					results: semantic,
-					weight: 1
-				}
-			});
-			// One extra id tells us whether another page exists without a
-			// second ranking pass.
-			const pageIds = fused
-				.slice(offset, offset + PAGE_SIZE + 1)
-				.map((entry) => entry.fileId);
-			const hydrated = yield* hydrate(pageIds, selectedTagIds);
+				SEARCH_CANDIDATE_LIMIT
+			);
+			const visible = fused.slice(offset, offset + PAGE_SIZE);
+			const hydrated = yield* hydrate(
+				visible.map((entry) => entry.fileId),
+				selectedTagIds
+			);
 			return {
-				files: pinExactName(trimmedQuery, hydrated).slice(0, PAGE_SIZE),
+				files: pinExactName(trimmedQuery, hydrated),
 				nextCursor:
-					fused.length > offset + PAGE_SIZE && page + 1 < MAX_PAGE
+					offset + PAGE_SIZE < fused.length && page + 1 < MAX_PAGE
 						? `o:${page + 1}`
 						: null
 			};

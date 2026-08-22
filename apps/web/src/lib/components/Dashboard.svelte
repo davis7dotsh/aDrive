@@ -1,7 +1,6 @@
 <script lang="ts">
 	import type { DashboardFile } from '@adrive/shared';
 	import { page } from '$app/state';
-	import { mutateFile } from '$lib/dashboard/api';
 	import type { FileListPayload } from '$lib/dashboard/api';
 	import {
 		createFileList,
@@ -107,7 +106,13 @@
 		uploads,
 		maxUploadBytes: () => files.list.current.maxUploadBytes,
 		uploadOpen: () => uploadOpen,
-		closeUpload: () => (uploadOpen = false)
+		closeUpload: () => (uploadOpen = false),
+		trashed: () => showTrash
+	});
+
+	$effect(() => () => {
+		params.cleanup();
+		uploads.dispose();
 	});
 
 	let searchInput = $state<HTMLInputElement>();
@@ -299,7 +304,6 @@
 			token={session.token}
 			contentOrigin={files.list.current.contentOrigin}
 			{showTrash}
-			loading={files.list.loading || files.initialListLoading}
 			initialLoading={files.initialListLoading}
 			queryActive={Boolean(params.q || params.tags.length)}
 			{layout}
