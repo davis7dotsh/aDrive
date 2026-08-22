@@ -163,11 +163,16 @@ export const searchFiles = async (
 	token: string,
 	query: string,
 	tagIds: ReadonlyArray<string>,
-	signal?: AbortSignal
+	signal?: AbortSignal,
+	cursor?: string
 ) => {
 	const params = new URLSearchParams();
 	if (query.trim()) params.set('q', query);
 	for (const tagId of tagIds.slice(0, 20)) params.append('tag', tagId);
+	if (cursor) {
+		params.set('cursor', cursor);
+		params.set('omitMeta', '1');
+	}
 	const response = await request(`/api/search?${params.toString()}`, token, {
 		signal
 	});

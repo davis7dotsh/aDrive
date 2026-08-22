@@ -201,19 +201,23 @@ const registerReadTools = (server: McpServer, input: McpServerInput) => {
 			description: 'Search live files by query and optional tag ids',
 			inputSchema: z.object({
 				query: z.string(),
-				tag_ids: z.array(z.string()).optional()
+				tag_ids: z.array(z.string()).optional(),
+				cursor: z.string().optional()
 			})
 		},
-		async ({ query, tag_ids }) =>
+		async ({ query, tag_ids, cursor }) =>
 			toolValue(
 				env,
 				Effect.gen(function* () {
 					const search = yield* Search;
+					const page = yield* search.files({
+						query,
+						tagIds: (tag_ids ?? []).slice(0, 20),
+						cursor: cursor ?? null
+					});
 					return {
-						files: yield* search.files({
-							query,
-							tagIds: (tag_ids ?? []).slice(0, 20)
-						})
+						files: page.files,
+						nextCursor: page.nextCursor
 					};
 				})
 			)

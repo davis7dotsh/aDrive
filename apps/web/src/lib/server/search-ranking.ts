@@ -60,7 +60,7 @@ export const reciprocalRankFusion = (
 	>();
 
 	for (const [sourceName, source] of Object.entries(sources)) {
-		source.results.slice(0, 50).forEach((result, index) => {
+		source.results.forEach((result, index) => {
 			const rank = index + 1;
 			const entry = accumulated.get(result.fileId) ?? {
 				score: 0,

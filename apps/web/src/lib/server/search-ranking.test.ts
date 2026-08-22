@@ -70,6 +70,31 @@ describe('reciprocal rank fusion', () => {
 		expect(result[0]?.ranks).toEqual({ keyword: 2, semantic: 2 });
 	});
 
+	it('returns more than 50 rows when the caller asks for a deeper page window', () => {
+		const keyword = {
+			results: Array.from({ length: 60 }, (_, index) => ({
+				fileId: `k${String(index).padStart(2, '0')}`
+			})),
+			weight: 1
+		};
+		expect(reciprocalRankFusion({ keyword }, 55)).toHaveLength(55);
+	});
+
+	it('keeps page slices disjoint when the fusion window stays fixed', () => {
+		const keyword = {
+			results: Array.from({ length: 60 }, (_, index) => ({
+				fileId: `k${String(index).padStart(2, '0')}`
+			})),
+			weight: 1
+		};
+		const fused = reciprocalRankFusion({ keyword }, 200);
+		const page0 = fused.slice(0, 50).map((entry) => entry.fileId);
+		const page1 = fused.slice(50, 100).map((entry) => entry.fileId);
+		expect(page0).toHaveLength(50);
+		expect(page1).toHaveLength(10);
+		expect(page0.some((id) => page1.includes(id))).toBe(false);
+	});
+
 	it('keeps keyword-only ordering and scores identical with an empty semantic source', () => {
 		const sources = {
 			keyword: {

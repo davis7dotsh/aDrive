@@ -18,8 +18,9 @@ if [[ -n "$(git status --porcelain)" ]]; then
 fi
 COMMIT="$(git rev-parse HEAD)"
 echo "Releasing ${COMMIT} to env ${ENV_NAME}"
-if grep -q "replace-with-${ENV_NAME}" "${WEB}/wrangler.jsonc"; then
-	echo "wrangler.jsonc still has placeholder ids for env ${ENV_NAME}." >&2
+# Only the target env's resource ids must be real. The top-level D1 id is
+# an intentional local-dev placeholder and is ignored here.
+if ! bun "${ROOT}/scripts/check-wrangler-drift.mjs" --placeholders-only --env "${ENV_NAME}"; then
 	echo "Create the D1 database / KV namespace and paste their ids first." >&2
 	exit 1
 fi
@@ -42,6 +43,7 @@ bun x vite build
 
 step "Deploy dry run"
 bun x wrangler deploy --dry-run --env "${ENV_NAME}"
+(cd "${ROOT}/apps/site" && bun x wrangler deploy --dry-run)
 
 step "D1 migrations"
 # Migrations run before the new Worker so both old and new code briefly run
@@ -53,6 +55,19 @@ bun x wrangler d1 migrations apply DB --env "${ENV_NAME}" --remote
 
 step "Deploy"
 bun x wrangler deploy --env "${ENV_NAME}"
+
+step "Deploy landing site"
+# Static assets-only Worker (apps/site/wrangler.jsonc). No build step.
+if ! (cd "${ROOT}/apps/site" && bun x wrangler deploy); then
+	echo "Landing site deploy failed. The app Worker is already live at this commit." >&2
+	echo "Roll back the site with: cd apps/site && bun x wrangler rollback" >&2
+	echo "The app Worker is unchanged by a site rollback; see docs/release.md." >&2
+	cd "${ROOT}"
+	printf '%s %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${ENV_NAME}" "${COMMIT}" \
+		>>"${RECORD_FILE}"
+	echo "Recorded the app deploy in ${RECORD_FILE}" >&2
+	exit 1
+fi
 
 step "Record"
 cd "${ROOT}"

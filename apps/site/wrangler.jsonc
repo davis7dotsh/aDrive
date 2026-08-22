@@ -1,0 +1,12 @@
+{
+	// Static landing page. Assets-only Worker: no script, no build.
+	// Deployed by scripts/release.sh after the main app Worker.
+	// Serve it locally with: cd apps/site && bunx wrangler dev
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "adrive-site",
+	"compatibility_date": "2026-07-27",
+	"assets": {
+		"directory": "./public"
+	},
+	"routes": [{ "pattern": "adrive.davis7.space", "custom_domain": true }]
+}

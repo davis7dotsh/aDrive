@@ -16,27 +16,32 @@ export const GET: RequestHandler = ({ cookies, request, url }) =>
 			const indexing = yield* Indexing;
 			const config = yield* AppConfig;
 			yield* authorizeRequest(auth, request, url, cookies);
-			// Run the relevance search and the small dashboard reads
-			// (tags, indexing status) concurrently.
-			const [files, tagList, semantic] = yield* Effect.all(
-				[
-					search.files({
-						query: url.searchParams.get('q') ?? '',
-						tagIds: url.searchParams.getAll('tag').slice(0, 20)
-					}),
-					tags.list,
-					indexing.status
-				],
-				{ concurrency: 'unbounded' }
-			);
+			const omitMeta = url.searchParams.get('omitMeta') === '1';
+			const searchInput = {
+				query: url.searchParams.get('q') ?? '',
+				tagIds: url.searchParams.getAll('tag').slice(0, 20),
+				cursor: url.searchParams.get('cursor')
+			};
+			// Load-more sends omitMeta=1; skip tags and indexing on extra pages.
+			const [page, tagList, semantic] = omitMeta
+				? [yield* search.files(searchInput), null, null]
+				: yield* Effect.all(
+						[search.files(searchInput), tags.list, indexing.status],
+						{ concurrency: 'unbounded' }
+					);
 			return Response.json({
-				files,
-				// Search results are relevance-bounded rather than paginated.
-				nextCursor: null,
-				tags: tagList,
+				files: page.files,
+				nextCursor: page.nextCursor,
+				tags: tagList ?? [],
 				contentOrigin: config.contentOrigin,
 				maxUploadBytes: config.maxUploadBytes,
-				semantic
+				semantic: semantic ?? {
+					enabled: false,
+					indexedChunks: 0,
+					dimensions: 384,
+					model: '',
+					costNotice: ''
+				}
 			});
 		})
 	);

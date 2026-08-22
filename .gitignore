@@ -11,5 +11,6 @@ scripts/backup/backup.env
 .env.*
 !.env.example
 *.tsbuildinfo
+.pnpm-store/
 
 .release-history

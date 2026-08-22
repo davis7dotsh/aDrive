@@ -2,8 +2,9 @@
 
 ## First-time setup (once)
 
-Wrangler commands run from `apps/web`; `bun release` and the backup
-installer run from the repository root.
+App Worker commands run from `apps/web`. Landing-site commands run from
+`apps/site` (no `--env`). `bun release` and the backup installer run from
+the repository root.
 
 1. From `apps/web`: `wrangler d1 create adrive-production` — paste the id
    into `wrangler.jsonc` `env.production.d1_databases[0].database_id`.
@@ -33,9 +34,11 @@ installer run from the repository root.
 6. From `apps/web`: `wrangler secret put PASSCODE --env production`
    (12+ characters).
 7. The `davis7.space` zone must be active in Cloudflare. Remove existing
-   CNAME records for `drive.davis7.space` and `files.davis7.space` before
-   deployment; the custom-domain routes in `wrangler.jsonc` create the
-   required DNS records automatically.
+   CNAME records for `drive.davis7.space`, `files.davis7.space`, and
+   `adrive.davis7.space` before deployment; the custom-domain routes in
+   the `wrangler.jsonc` files create the required DNS records
+   automatically. `adrive.davis7.space` serves the static landing page
+   (`apps/site`, an assets-only Worker with no build step).
 8. From the repo root: `bun release`
 9. From the repo root: set up backups on your backup host
    (`scripts/backup/install-backup-host.sh`) and complete the restore drill
@@ -58,10 +61,13 @@ Semantic search notes for the first deploy:
 bun release
 ```
 
-The script refuses a dirty tree or placeholder ids, then runs format
-check → type/lint checks → tests → audit → build → deploy dry run → D1
-migrations → deploy, and appends the deployed commit to
-`.release-history`.
+The script refuses a dirty tree or placeholder ids in the target env,
+then runs format check → type/lint checks → tests → audit → build →
+app deploy dry run → landing-site dry run → D1 migrations → app deploy →
+landing-site deploy, and appends the deployed commit to
+`.release-history`. If the landing site fails after the app Worker is
+live, the script still records the app commit and prints rollback
+commands for `apps/site`.
 
 A release is **complete** only after the production verification skill
 passes against the live deployment (the script prints the reminder).
@@ -88,6 +94,17 @@ bun x wrangler rollback --env production           # interactive picker
 
 Rollback redeploys the previous Worker bundle. It does not touch D1, R2,
 KV, or secrets — which is why the migration rule above matters.
+
+### Landing site
+
+The landing page is a separate assets-only Worker (`apps/site`). Roll it
+back the same way:
+
+```
+cd apps/site
+bun x wrangler deployments list
+bun x wrangler rollback
+```
 
 ### D1
 
