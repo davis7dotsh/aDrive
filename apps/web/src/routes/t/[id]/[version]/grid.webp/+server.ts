@@ -168,30 +168,39 @@ export const GET: RequestHandler = ({ params, platform, request, url }) =>
 				contentOrigin: config.contentOrigin,
 				fileId: params.id,
 				version: content.file.version,
-				...(content.file.kind === 'site'
-					? {}
-					: { purpose: 'thumbnail-source' as const })
+				purpose: 'thumbnail-source'
 			});
-			const sourceUrl =
+			const siteGrant =
 				content.file.kind === 'site'
-					? dashboardSiteThumbnailSourceUrl(
-							config.contentOrigin,
-							params.id,
-							content.file.version,
-							{
-								expires: String(sourceGrant.expiresAtSeconds),
-								signature: sourceGrant.signature
-							}
-						)
-					: dashboardThumbnailSourceUrl(
-							config.contentOrigin,
-							params.id,
-							content.file.version,
-							{
-								expires: String(sourceGrant.expiresAtSeconds),
-								signature: sourceGrant.signature
-							}
-						);
+					? yield* grantSecrets.mint({
+							contentOrigin: config.contentOrigin,
+							fileId: params.id,
+							version: content.file.version
+						})
+					: null;
+			const sourceUrl = siteGrant
+				? dashboardSiteThumbnailSourceUrl(
+						config.contentOrigin,
+						params.id,
+						content.file.version,
+						{
+							expires: String(siteGrant.expiresAtSeconds),
+							signature: siteGrant.signature
+						},
+						{
+							expires: String(sourceGrant.expiresAtSeconds),
+							signature: sourceGrant.signature
+						}
+					)
+				: dashboardThumbnailSourceUrl(
+						config.contentOrigin,
+						params.id,
+						content.file.version,
+						{
+							expires: String(sourceGrant.expiresAtSeconds),
+							signature: sourceGrant.signature
+						}
+					);
 			const bytes = yield* Effect.tryPromise({
 				try: async () => {
 					const response = rendered

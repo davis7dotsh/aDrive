@@ -59,33 +59,40 @@ export const resolveFileContentLink = (
 		const config = yield* AppConfig;
 		const files = yield* Files;
 		const grantSecrets = yield* GrantSecrets;
-		if (includeUnavailable || requireGrant) {
-			const detail = yield* files.detail(id);
-			if (detail.file.kind === 'site') {
-				if (version !== undefined && version !== detail.file.version) {
-					return yield* new InvalidRequest({
-						status: 400,
-						message: 'Only the current site version can be previewed'
-					});
-				}
-				const grant = yield* grantSecrets.mint({
-					contentOrigin: config.contentOrigin,
-					fileId: detail.file.id,
-					version: detail.file.version
+		const includeSites = includeUnavailable || requireGrant;
+		const resolved = yield* files.findContent(
+			id,
+			includeSites ? undefined : version,
+			includeUnavailable,
+			includeSites
+		);
+		if (resolved.file.kind === 'site') {
+			if (version !== undefined && version !== resolved.file.version) {
+				return yield* new InvalidRequest({
+					status: 400,
+					message: 'Only the current site version can be previewed'
 				});
-				const url = new URL(
-					`/s/${encodeURIComponent(detail.file.id)}/@grant/${detail.file.version}/${grant.expiresAtSeconds}/${grant.signature}/`,
-					config.contentOrigin
-				);
-				return {
-					url: url.href,
-					expiresAt: new Date(grant.expiresAtSeconds * 1_000).toISOString(),
-					version: detail.file.version,
-					public: false
-				};
 			}
+			const grant = yield* grantSecrets.mint({
+				contentOrigin: config.contentOrigin,
+				fileId: resolved.file.id,
+				version: resolved.file.version
+			});
+			const url = new URL(
+				`/s/${encodeURIComponent(resolved.file.id)}/@grant/${resolved.file.version}/${grant.expiresAtSeconds}/${grant.signature}/`,
+				config.contentOrigin
+			);
+			return {
+				url: url.href,
+				expiresAt: new Date(grant.expiresAtSeconds * 1_000).toISOString(),
+				version: resolved.file.version,
+				public: false
+			};
 		}
-		const content = yield* files.findContent(id, version, includeUnavailable);
+		const content =
+			includeSites && version !== undefined && version !== resolved.file.version
+				? yield* files.findContent(id, version, includeUnavailable)
+				: resolved;
 		const grant =
 			content.file.public && !includeUnavailable && !requireGrant
 				? undefined

@@ -111,12 +111,15 @@ describe('dashboard thumbnails', () => {
 
 	it('builds a signed site URL that marks screenshot-only navigation', () => {
 		expect(
-			dashboardSiteThumbnailSourceUrl('https://files.example', 'site id', 3, {
-				expires: '123',
-				signature: 'signed'
-			}).href
+			dashboardSiteThumbnailSourceUrl(
+				'https://files.example',
+				'site id',
+				3,
+				{ expires: '123', signature: 'signed' },
+				{ expires: '456', signature: 'thumbnail-signed' }
+			).href
 		).toBe(
-			'https://files.example/s/site%20id/@grant/3/123/signed/?purpose=thumbnail'
+			'https://files.example/s/site%20id/@grant/3/123/signed/?purpose=thumbnail&e=456&g=thumbnail-signed'
 		);
 	});
 });

@@ -118,12 +118,15 @@ export const dashboardSiteThumbnailSourceUrl = (
 	contentOrigin: string,
 	id: string,
 	version: number,
-	grant: { readonly expires: string; readonly signature: string }
+	grant: { readonly expires: string; readonly signature: string },
+	thumbnailGrant: { readonly expires: string; readonly signature: string }
 ) => {
 	const url = new URL(
 		`/s/${encodeURIComponent(id)}/@grant/${version}/${grant.expires}/${grant.signature}/`,
 		contentOrigin
 	);
 	url.searchParams.set('purpose', 'thumbnail');
+	url.searchParams.set('e', thumbnailGrant.expires);
+	url.searchParams.set('g', thumbnailGrant.signature);
 	return url;
 };

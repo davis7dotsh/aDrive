@@ -73,6 +73,18 @@ const serveSite: RequestHandler = ({ params, request, url }) =>
 					signature: grant.signature
 				});
 				if (!granted) return yield* new NotFound({ id: params.id });
+				if (thumbnailSource) {
+					const thumbnailGranted = yield* grantSecrets.verify({
+						contentOrigin: config.contentOrigin,
+						requestOrigin: url.origin,
+						fileId: params.id,
+						version: grant.version,
+						expiresAtSeconds: Number(url.searchParams.get('e')),
+						signature: url.searchParams.get('g') ?? '',
+						purpose: 'thumbnail-source'
+					});
+					if (!thumbnailGranted) return yield* new NotFound({ id: params.id });
+				}
 			}
 			const asset = yield* sites.findAsset(
 				params.id,

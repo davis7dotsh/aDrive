@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { Schema } from 'effect';
 import { FileListResponseSchema } from '@adrive/shared';
 import { dashboardThumbnailUrl } from '$lib/file-thumbnail';
@@ -34,16 +34,14 @@ const mockBrowserScreenshot = (env: Env, body: string) => {
 		configurable: true,
 		writable: true
 	});
-	return {
-		screenshot,
-		restore: () => {
-			Object.defineProperty(env, 'BROWSER', {
-				value: original,
-				configurable: true,
-				writable: true
-			});
-		}
-	};
+	onTestFinished(() => {
+		Object.defineProperty(env, 'BROWSER', {
+			value: original,
+			configurable: true,
+			writable: true
+		});
+	});
+	return screenshot;
 };
 
 describe('route integration (local platform)', () => {
@@ -236,7 +234,7 @@ describe('route integration (local platform)', () => {
 		expect(page.headers.get('content-type')).toContain('text/html');
 		expect(await page.text()).toBe('<h1>promo</h1>ok');
 
-		const { screenshot, restore } = mockBrowserScreenshot(ctx.env, 'site-webp');
+		const screenshot = mockBrowserScreenshot(ctx.env, 'site-webp');
 		const { GET: linkGET } =
 			await import('../../../routes/api/files/[id]/link/+server.js');
 		const linked = await call(
@@ -277,6 +275,8 @@ describe('route integration (local platform)', () => {
 		);
 		expect(sourceUrl.pathname).toContain(`/s/${session.fileId}/@grant/1/`);
 		expect(sourceUrl.searchParams.get('purpose')).toBe('thumbnail');
+		expect(sourceUrl.searchParams.get('e')).not.toBeNull();
+		expect(sourceUrl.searchParams.get('g')).not.toBeNull();
 
 		const downloadCount = async () =>
 			(
@@ -300,6 +300,24 @@ describe('route integration (local platform)', () => {
 			request: new Request(sourceUrl)
 		});
 		expect(screenshotSource.status).toBe(200);
+		expect(await downloadCount()).toBe(countBefore);
+
+		const forgedSource = new URL(link.url);
+		forgedSource.searchParams.set('purpose', 'thumbnail');
+		const forgedEvent = ctx.event({
+			path: `${forgedSource.pathname}${forgedSource.search}`,
+			params: {
+				id: session.fileId,
+				path: forgedSource.pathname.slice(`/s/${session.fileId}/`.length)
+			}
+		});
+		await expect(
+			call(serveSiteGET, {
+				...forgedEvent,
+				url: forgedSource,
+				request: new Request(forgedSource)
+			})
+		).rejects.toMatchObject({ status: 404 });
 		expect(await downloadCount()).toBe(countBefore);
 
 		const cachedUrl = new URL(generated.headers.get('location') ?? '');
@@ -334,7 +352,6 @@ describe('route integration (local platform)', () => {
 				? await ctx.env.BUCKET.head(stored.thumbnail_r2_key)
 				: undefined
 		).toBeNull();
-		restore();
 	});
 
 	it('screenshots HTML file previews without serving the original document', async () => {
@@ -346,7 +363,7 @@ describe('route integration (local platform)', () => {
 			contentType: 'text/html',
 			isPublic: true
 		});
-		const { screenshot, restore } = mockBrowserScreenshot(ctx.env, 'html-webp');
+		const screenshot = mockBrowserScreenshot(ctx.env, 'html-webp');
 		const { GET: linkGET } =
 			await import('../../../routes/api/files/[id]/link/+server.js');
 		const linked = await call(
@@ -378,7 +395,6 @@ describe('route integration (local platform)', () => {
 		expect(source.pathname).toBe(`/f/${file.id}`);
 		expect(source.searchParams.get('purpose')).toBe('thumbnail');
 		expect(screenshot).toHaveBeenCalledOnce();
-		restore();
 		await ctx.drainWaitUntil();
 	});
 
