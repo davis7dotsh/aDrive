@@ -1,13 +1,16 @@
 import { getPlatformProxy } from 'wrangler';
 
 // One proxy for the whole run: getPlatformProxy spawns a workerd instance
-// and the local D1/R2/KV state persists in .wrangler/state, so suites share
-// the database the globalSetup migrated. Vitest runs these files with
-// fileParallelism: false (see vitest.routes.config.ts).
+// and persists D1/R2/KV in isolated test state, so suites share the database
+// globalSetup migrated without touching the normal local development state.
+// Vitest runs these files with fileParallelism: false.
 let proxyPromise: ReturnType<typeof getPlatformProxy> | undefined;
 
 export const getTestPlatform = async () => {
-	proxyPromise ??= getPlatformProxy({ configPath: 'wrangler.jsonc' });
+	proxyPromise ??= getPlatformProxy({
+		configPath: 'wrangler.jsonc',
+		persist: { path: '.wrangler/test-state/v3' }
+	});
 	return proxyPromise;
 };
 
