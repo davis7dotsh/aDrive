@@ -3,7 +3,8 @@
 	import { getContentLink, getFilePreview } from '$lib/dashboard/api';
 	import {
 		dashboardThumbnailUrl,
-		supportsDashboardThumbnail
+		supportsDashboardThumbnail,
+		supportsRenderedDashboardThumbnail
 	} from '$lib/file-thumbnail';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { resource, useIntersectionObserver } from 'runed';
@@ -30,11 +31,11 @@
 	};
 	const image = $derived(file.contentType.startsWith('image/'));
 	const resizableImage = $derived(supportsDashboardThumbnail(file.contentType));
-	const frame = $derived(
-		file.kind === 'site' || file.contentType.startsWith('text/html')
+	const rendered = $derived(
+		supportsRenderedDashboardThumbnail(file.kind, file.contentType)
 	);
 	const textLike = $derived(
-		!frame &&
+		!rendered &&
 			(file.contentType.startsWith('text/') ||
 				/(json|javascript|typescript|xml|yaml|csv)/i.test(file.contentType))
 	);
@@ -65,7 +66,7 @@
 				file.public,
 				image,
 				resizableImage,
-				frame,
+				rendered,
 				textLike,
 				unavailable,
 				contentOrigin
@@ -80,7 +81,7 @@
 				isPublic,
 				isImage,
 				isResizableImage,
-				isFrame,
+				isRendered,
 				isText,
 				isUnavailable,
 				origin
@@ -89,10 +90,12 @@
 			{ signal }
 		) => {
 			if (!shouldLoad) return { source: '', text: '' };
-			if (isImage) {
+			if (isImage || isRendered) {
 				const source =
 					isPublic && !isUnavailable
-						? `${origin}/f/${id}?v=${version}`
+						? kind === 'site'
+							? `${origin}/s/${id}/`
+							: `${origin}/f/${id}?v=${version}`
 						: (
 								await getContentLink(
 									auth,
@@ -100,36 +103,17 @@
 									version,
 									signal,
 									isUnavailable,
-									isResizableImage
+									isResizableImage || isRendered
 								)
 							).url;
 				signal.throwIfAborted();
 				return {
-					source: isResizableImage
-						? dashboardThumbnailUrl(source, id, version)
-						: source,
+					source:
+						isResizableImage || isRendered
+							? dashboardThumbnailUrl(source, id, version)
+							: source,
 					text: ''
 				};
-			}
-			if (isFrame) {
-				if (kind === 'site') {
-					const source =
-						isPublic && !isUnavailable
-							? `${origin}/s/${id}/`
-							: (await getContentLink(auth, id, version, signal, isUnavailable))
-									.url;
-					signal.throwIfAborted();
-					return { source, text: '' };
-				}
-				const url = new URL(
-					isPublic && !isUnavailable
-						? `${origin}/f/${id}?v=${version}`
-						: (await getContentLink(auth, id, version, signal, isUnavailable))
-								.url
-				);
-				signal.throwIfAborted();
-				url.searchParams.set('preview', 'dashboard');
-				return { source: url.href, text: '' };
 			}
 			if (isText) {
 				const preview = await getFilePreview(auth, id, version, signal);
@@ -153,7 +137,7 @@
 			failed !== primary ||
 			!file.public ||
 			unavailable ||
-			!resizableImage ||
+			(!resizableImage && !rendered) ||
 			retryingSource === primary ||
 			retriedThumbnail.primary === primary
 		) {
@@ -183,7 +167,7 @@
 		}
 	};
 	const previewLoading = $derived(
-		(image || frame || textLike) &&
+		(image || rendered || textLike) &&
 			(!visible ||
 				thumbnail.loading ||
 				(Boolean(source) && loadedSource !== source && failedSource !== source))
@@ -194,22 +178,7 @@
 	{@attach attachElement}
 	class="relative flex aspect-[4/3] overflow-hidden rounded-xl bg-zinc-100 transition group-hover:bg-zinc-200/70"
 >
-	{#if frame && source && failedSource !== source}
-		<!-- A scaled-down live render: pointer-events stay on the card link. -->
-		<div class="pointer-events-none absolute inset-0" aria-hidden="true">
-			<iframe
-				src={source}
-				title={file.displayName}
-				tabindex="-1"
-				loading="lazy"
-				sandbox="allow-scripts allow-same-origin"
-				class="h-[400%] w-[400%] origin-top-left scale-[0.25] border-0 bg-white transition-opacity duration-200 {previewLoading
-					? 'opacity-0'
-					: 'opacity-100'}"
-				onload={() => (loadedSource = source)}
-			></iframe>
-		</div>
-	{:else if source && failedSource !== source}
+	{#if source && failedSource !== source}
 		<img
 			src={source}
 			alt=""
@@ -240,7 +209,7 @@
 			</span>
 		</div>
 	{/if}
-	{#if previewLoading && (image || frame || textLike)}
+	{#if previewLoading && (image || rendered || textLike)}
 		<div
 			class="absolute inset-0 animate-pulse bg-zinc-100 motion-reduce:animate-none"
 			aria-hidden="true"

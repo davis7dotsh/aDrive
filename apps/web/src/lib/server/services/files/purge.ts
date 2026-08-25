@@ -93,9 +93,9 @@ export const purgeOps = (
 								.prepare(
 									`SELECT version, r2_key
 									FROM file_versions
-									WHERE file_id = ? AND r2_key NOT LIKE ?`
+									WHERE file_id = ?`
 								)
-								.bind(row.id, 'site-version/%')
+								.bind(row.id)
 								.all<{ version: number; r2_key: string }>(),
 							db
 								.prepare('SELECT r2_key FROM site_assets WHERE file_id = ?')
@@ -109,7 +109,9 @@ export const purgeOps = (
 						}
 						return {
 							keys: [
-								...versions.results.map((item) => item.r2_key),
+								...versions.results
+									.filter((item) => !item.r2_key.startsWith('site-version/'))
+									.map((item) => item.r2_key),
 								...assets.results.map((item) => item.r2_key)
 							],
 							thumbnailPrefixes: versions.results.map((item) =>

@@ -48,6 +48,10 @@ const serveSite: RequestHandler = ({ params, request, url }) =>
 			const grant = siteGrant(params.path ?? '');
 			if (grant === false) return yield* new NotFound({ id: params.id });
 			const hasGrant = grant !== null;
+			const thumbnailSource = url.searchParams.get('purpose') === 'thumbnail';
+			if (thumbnailSource && !hasGrant) {
+				return yield* new NotFound({ id: params.id });
+			}
 			if (
 				!hasGrant &&
 				!isSiteVersionRequestServable(url.searchParams.get('v'))
@@ -69,6 +73,18 @@ const serveSite: RequestHandler = ({ params, request, url }) =>
 					signature: grant.signature
 				});
 				if (!granted) return yield* new NotFound({ id: params.id });
+				if (thumbnailSource) {
+					const thumbnailGranted = yield* grantSecrets.verify({
+						contentOrigin: config.contentOrigin,
+						requestOrigin: url.origin,
+						fileId: params.id,
+						version: grant.version,
+						expiresAtSeconds: Number(url.searchParams.get('e')),
+						signature: url.searchParams.get('g') ?? '',
+						purpose: 'thumbnail-source'
+					});
+					if (!thumbnailGranted) return yield* new NotFound({ id: params.id });
+				}
 			}
 			const asset = yield* sites.findAsset(
 				params.id,
@@ -108,6 +124,7 @@ const serveSite: RequestHandler = ({ params, request, url }) =>
 				: firstIfNoneMatchEtag(ifNoneMatch);
 			const countHtmlDownload =
 				asset.contentType === 'text/html' &&
+				!thumbnailSource &&
 				shouldCountDownload(request.headers.get('range'));
 
 			if (conditionalEtag === '*') {

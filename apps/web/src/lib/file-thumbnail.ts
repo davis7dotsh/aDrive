@@ -8,6 +8,31 @@ export const DASHBOARD_THUMBNAIL = {
 	metadata: 'none'
 } as const;
 
+export const DASHBOARD_RENDERED_THUMBNAIL = {
+	viewport: {
+		width: 1_200,
+		height: 900,
+		deviceScaleFactor: 1
+	},
+	screenshotOptions: {
+		type: 'webp',
+		quality: DASHBOARD_THUMBNAIL.quality,
+		clip: {
+			x: 0,
+			y: 0,
+			width: 1_200,
+			height: 900,
+			scale: DASHBOARD_THUMBNAIL.width / 1_200
+		}
+	},
+	gotoOptions: {
+		waitUntil: 'networkidle2',
+		timeout: 15_000
+	},
+	bestAttempt: true,
+	rejectResourceTypes: ['media', 'websocket', 'eventsource']
+} as const satisfies Omit<BrowserRunScreenshotOptions, 'url' | 'html'>;
+
 export const dashboardThumbnailPrefix = (id: string, version: number) =>
 	`thumbnail/${id}/${version}/`;
 
@@ -24,6 +49,13 @@ export const supportsDashboardThumbnail = (contentType: string) => {
 	const normalized = contentType.split(';', 1)[0]?.trim().toLowerCase();
 	return normalized !== undefined && TRANSFORMABLE_IMAGE_TYPES.has(normalized);
 };
+
+export const supportsRenderedDashboardThumbnail = (
+	kind: 'file' | 'site',
+	contentType: string
+) =>
+	kind === 'site' ||
+	contentType.split(';', 1)[0]?.trim().toLowerCase() === 'text/html';
 
 export const isWebpContentType = (contentType: string | null) =>
 	contentType?.split(';', 1)[0]?.trim().toLowerCase() === 'image/webp';
@@ -53,6 +85,13 @@ export const dashboardThumbnailUrl = (
 	version: number
 ) => {
 	const url = new URL(contentUrl);
+	const siteGrant = url.pathname.match(
+		/\/@grant\/\d+\/(?<expires>\d+)\/(?<signature>[A-Za-z0-9_-]{43})(?:\/|$)/
+	);
+	if (siteGrant?.groups) {
+		url.searchParams.set('e', siteGrant.groups.expires ?? '');
+		url.searchParams.set('g', siteGrant.groups.signature ?? '');
+	}
 	url.pathname = `/t/${encodeURIComponent(id)}/${version}/grid.webp`;
 	url.searchParams.delete('v');
 	url.searchParams.delete('preview');
@@ -72,5 +111,22 @@ export const dashboardThumbnailSourceUrl = (
 		url.searchParams.set('e', grant.expires);
 		url.searchParams.set('g', grant.signature);
 	}
+	return url;
+};
+
+export const dashboardSiteThumbnailSourceUrl = (
+	contentOrigin: string,
+	id: string,
+	version: number,
+	grant: { readonly expires: string; readonly signature: string },
+	thumbnailGrant: { readonly expires: string; readonly signature: string }
+) => {
+	const url = new URL(
+		`/s/${encodeURIComponent(id)}/@grant/${version}/${grant.expires}/${grant.signature}/`,
+		contentOrigin
+	);
+	url.searchParams.set('purpose', 'thumbnail');
+	url.searchParams.set('e', thumbnailGrant.expires);
+	url.searchParams.set('g', thumbnailGrant.signature);
 	return url;
 };

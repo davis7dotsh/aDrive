@@ -119,7 +119,8 @@ export const queryOps = (
 		findContent: Effect.fn('Files.findContent')(function* (
 			id,
 			version,
-			includeUnavailable = false
+			includeUnavailable = false,
+			includeSites = false
 		) {
 			if (
 				version !== undefined &&
@@ -135,7 +136,7 @@ export const queryOps = (
 					? yield* sql`
 							SELECT
 								f.id, f.display_name, v.content_type, v.version, v.size_bytes,
-				f.public AS is_public, v.r2_key, v.thumbnail_r2_key, v.created_at
+				f.public AS is_public, f.is_site, v.r2_key, v.thumbnail_r2_key, v.created_at
 							FROM files f
 							JOIN file_versions v
 								ON v.file_id = f.id AND v.version = f.current_version
@@ -150,7 +151,7 @@ export const queryOps = (
 										)
 									)
 								)
-								AND f.is_site = 0
+								AND (${includeSites ? 1 : 0} = 1 OR f.is_site = 0)
 							LIMIT 1
 						`.pipe(
 							Effect.mapError(
@@ -160,7 +161,7 @@ export const queryOps = (
 					: yield* sql`
 							SELECT
 								f.id, f.display_name, v.content_type, v.version, v.size_bytes,
-				f.public AS is_public, v.r2_key, v.thumbnail_r2_key, v.created_at
+				f.public AS is_public, f.is_site, v.r2_key, v.thumbnail_r2_key, v.created_at
 							FROM files f
 							JOIN file_versions v ON v.file_id = f.id
 							WHERE f.id = ${id} AND v.version = ${version}
@@ -174,7 +175,8 @@ export const queryOps = (
 										)
 									)
 								)
-								AND f.is_site = 0
+								AND (${includeSites ? 1 : 0} = 1 OR f.is_site = 0)
+								AND (f.is_site = 0 OR v.version = f.current_version)
 							LIMIT 1
 						`.pipe(
 							Effect.mapError(
@@ -189,7 +191,7 @@ export const queryOps = (
 					id: row.id,
 					displayName: row.display_name,
 					contentType: row.content_type,
-					kind: 'file',
+					kind: row.is_site === 1 ? 'site' : 'file',
 					version: row.version,
 					sizeBytes: row.size_bytes,
 					public: row.is_public === 1,

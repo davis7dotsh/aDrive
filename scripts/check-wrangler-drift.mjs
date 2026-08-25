@@ -160,7 +160,7 @@ const main = () => {
 			);
 		}
 
-		for (const key of ['triggers', 'observability']) {
+		for (const key of ['browser', 'triggers', 'observability']) {
 			if (!sameJson(config[key], prod[key])) {
 				drift.push(
 					`${key}: local=${JSON.stringify(config[key])} production=${JSON.stringify(prod[key])}`

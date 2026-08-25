@@ -1,11 +1,15 @@
 import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
 import {
+	DASHBOARD_RENDERED_THUMBNAIL,
 	DASHBOARD_THUMBNAIL,
+	dashboardSiteThumbnailSourceUrl,
 	dashboardThumbnailSourceUrl,
 	isTransformedWebpResponse,
+	isWebpContentType,
 	matchesEtag,
-	supportsDashboardThumbnail
+	supportsDashboardThumbnail,
+	supportsRenderedDashboardThumbnail
 } from '$lib/file-thumbnail';
 import { contentSecurityPolicy } from '$lib/server/content-headers';
 import {
@@ -72,22 +76,28 @@ export const GET: RequestHandler = ({ params, platform, request, url }) =>
 			const grantSecrets = yield* GrantSecrets;
 			const expiresAtSeconds = Number(url.searchParams.get('e'));
 			const hasGrant = url.searchParams.has('e') && url.searchParams.has('g');
-			const resolved = yield* files.findContent(params.id, version).pipe(
-				Effect.map((content) => ({ content, unavailable: false }) as const),
-				Effect.catchTag('NotFound', () =>
-					hasGrant
-						? files
-								.findContent(params.id, version, true)
-								.pipe(
-									Effect.map(
-										(content) => ({ content, unavailable: true }) as const
+			const resolved = yield* files
+				.findContent(params.id, version, false, true)
+				.pipe(
+					Effect.map((content) => ({ content, unavailable: false }) as const),
+					Effect.catchTag('NotFound', () =>
+						hasGrant
+							? files
+									.findContent(params.id, version, true, true)
+									.pipe(
+										Effect.map(
+											(content) => ({ content, unavailable: true }) as const
+										)
 									)
-								)
-						: Effect.fail(new NotFound({ id: params.id }))
-				)
-			);
+							: Effect.fail(new NotFound({ id: params.id }))
+					)
+				);
 			const { content } = resolved;
-			if (!supportsDashboardThumbnail(content.file.contentType)) {
+			const rendered = supportsRenderedDashboardThumbnail(
+				content.file.kind,
+				content.file.contentType
+			);
+			if (!rendered && !supportsDashboardThumbnail(content.file.contentType)) {
 				return yield* new NotFound({ id: params.id });
 			}
 
@@ -160,28 +170,62 @@ export const GET: RequestHandler = ({ params, platform, request, url }) =>
 				version: content.file.version,
 				purpose: 'thumbnail-source'
 			});
-			const sourceUrl = dashboardThumbnailSourceUrl(
-				config.contentOrigin,
-				params.id,
-				content.file.version,
-				{
-					expires: String(sourceGrant.expiresAtSeconds),
-					signature: sourceGrant.signature
-				}
-			);
+			const siteGrant =
+				content.file.kind === 'site'
+					? yield* grantSecrets.mint({
+							contentOrigin: config.contentOrigin,
+							fileId: params.id,
+							version: content.file.version
+						})
+					: null;
+			const sourceUrl = siteGrant
+				? dashboardSiteThumbnailSourceUrl(
+						config.contentOrigin,
+						params.id,
+						content.file.version,
+						{
+							expires: String(siteGrant.expiresAtSeconds),
+							signature: siteGrant.signature
+						},
+						{
+							expires: String(sourceGrant.expiresAtSeconds),
+							signature: sourceGrant.signature
+						}
+					)
+				: dashboardThumbnailSourceUrl(
+						config.contentOrigin,
+						params.id,
+						content.file.version,
+						{
+							expires: String(sourceGrant.expiresAtSeconds),
+							signature: sourceGrant.signature
+						}
+					);
 			const bytes = yield* Effect.tryPromise({
 				try: async () => {
-					const response = await fetch(sourceUrl, {
-						cf: { image: DASHBOARD_THUMBNAIL }
-					});
+					const response = rendered
+						? await platform?.env.BROWSER.quickAction('screenshot', {
+								url: sourceUrl.href,
+								...DASHBOARD_RENDERED_THUMBNAIL
+							})
+						: await fetch(sourceUrl, {
+								cf: { image: DASHBOARD_THUMBNAIL }
+							});
+					if (!response) {
+						throw new Error('Browser rendering binding is unavailable');
+					}
 					if (!response.ok) {
-						throw new Error(`Image transform returned ${response.status}`);
+						throw new Error(
+							`${rendered ? 'Screenshot' : 'Image transform'} returned ${response.status}`
+						);
 					}
 					if (
-						!isTransformedWebpResponse(
-							response.headers.get('content-type'),
-							response.headers.get('cf-resized')
-						)
+						rendered
+							? !isWebpContentType(response.headers.get('content-type'))
+							: !isTransformedWebpResponse(
+									response.headers.get('content-type'),
+									response.headers.get('cf-resized')
+								)
 					) {
 						throw new Error('Image transform did not return transformed WebP');
 					}
