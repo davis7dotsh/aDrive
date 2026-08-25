@@ -88,7 +88,7 @@
 	const selection = createSelection({
 		session,
 		toasts,
-		files: () => files.list.current.files,
+		files: () => files.currentFiles,
 		visible: () => files.visibleFiles,
 		view: () => showTrash,
 		refetch: () => files.list.refetch()
@@ -258,7 +258,7 @@
 
 		<DashboardHeader
 			{showTrash}
-			filesCount={files.list.current.files.length}
+			filesCount={files.currentFiles.length}
 			uploadsAvailable={drag.available()}
 			onview={(view) => (params.view = view)}
 			onupload={() => (uploadOpen = true)}
@@ -309,7 +309,9 @@
 			{layout}
 			listError={files.listError}
 			listLoading={files.list.loading}
-			nextCursor={files.list.current.nextCursor}
+			nextCursor={files.initialListLoading
+				? null
+				: files.list.current.nextCursor}
 			loadingMore={files.loadingMore}
 			selectedIds={selection.selectedIds}
 			onselect={selection.selectFile}

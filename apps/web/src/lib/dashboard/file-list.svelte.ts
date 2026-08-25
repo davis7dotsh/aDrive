@@ -62,9 +62,11 @@ export const createFileList = ({
 	let hydratedFromServer = false;
 	// The mode that produced the current listing, so "load more" follows the
 	// same route (list vs search) instead of always paging the plain list.
-	let lastMode: ListingMode | null = ssrList
-		? listingMode(trashed() ? 'trash' : null, query(), [...tags()])
-		: null;
+	let lastMode = $state<ListingMode | null>(
+		ssrList
+			? listingMode(trashed() ? 'trash' : null, query(), [...tags()])
+			: null
+	);
 	const list = resource(
 		() =>
 			[session.ready, session.token, trashed(), query(), [...tags()]] as const,
@@ -86,6 +88,7 @@ export const createFileList = ({
 			}
 			const mode = listingMode(isTrashed ? 'trash' : null, value, selectedTags);
 			const payload = await matchListing(mode, token, signal);
+			signal.throwIfAborted();
 			lastMode = mode;
 			return payload;
 		},
@@ -98,8 +101,13 @@ export const createFileList = ({
 	);
 	let serverLoadError = $state(untrack(() => initialError));
 	const listError = $derived(list.error?.message ?? serverLoadError);
+	const matchesView = $derived(
+		lastMode !== null &&
+			(lastMode.kind === 'search' ? !trashed() : lastMode.trashed === trashed())
+	);
+	const currentFiles = $derived(matchesView ? list.current.files : []);
 	const initialListLoading = $derived(
-		!list.current.contentOrigin && !listError
+		(!list.current.contentOrigin || !matchesView) && !listError
 	);
 	let loadingMore = $state(false);
 
@@ -144,9 +152,9 @@ export const createFileList = ({
 		const value = query().trim().toLowerCase();
 		const selectedTags = [...tags()];
 		const showTrash = trashed();
-		if (!showTrash && value) return list.current.files;
+		if (!showTrash && value) return currentFiles;
 		const filtered = showTrash
-			? list.current.files.filter(
+			? currentFiles.filter(
 					(file) =>
 						(!value ||
 							file.displayName.toLowerCase().includes(value) ||
@@ -156,7 +164,7 @@ export const createFileList = ({
 						(selectedTags.length === 0 ||
 							file.tags.some((tag) => selectedTags.includes(tag.id)))
 				)
-			: list.current.files;
+			: currentFiles;
 		return [...filtered].sort((left, right) => {
 			if (sort() === 'name')
 				return left.displayName.localeCompare(right.displayName);
@@ -174,6 +182,9 @@ export const createFileList = ({
 
 	return {
 		list,
+		get currentFiles() {
+			return currentFiles;
+		},
 		get listError() {
 			return listError;
 		},
