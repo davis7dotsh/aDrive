@@ -4,6 +4,7 @@ import type {
 	FileListResponse,
 	FileMutation,
 	FileShareCreate,
+	SitePublish,
 	Tag,
 	TagCreate,
 	TagUpdate
@@ -19,6 +20,7 @@ import {
 	parseFileShareListResponse,
 	parseFileTagsResponse,
 	parseSessionsRevokedResponse,
+	parseSiteCommitResponse,
 	parseTagResponse,
 	parseUploadResponse
 } from './parse';
@@ -469,6 +471,15 @@ export const revokeShare = async (
 		token,
 		{ method: 'DELETE' }
 	);
+};
+
+export const publishSite = async (token: string, input: SitePublish) => {
+	const response = await request('/api/sites/publish', token, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(input)
+	});
+	return json(parseSiteCommitResponse, response);
 };
 
 export const createTag = async (token: string, input: TagCreate) => {

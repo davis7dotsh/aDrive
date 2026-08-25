@@ -199,7 +199,79 @@ export const sitePut = Command.make(
 	)
 );
 
+const splitIds = (value: Option.Option<string>): ReadonlyArray<string> =>
+	Option.match(value, {
+		onNone: () => [],
+		onSome: (raw) =>
+			raw
+				.split(/[\s,]+/)
+				.map((entry) => entry.trim())
+				.filter((entry) => entry !== '')
+	});
+
+export const sitePublish = Command.make(
+	'publish',
+	{
+		files: Flag.string('files').pipe(
+			Flag.optional,
+			Flag.withDescription('File IDs to publish (comma or space separated)')
+		),
+		tag: Flag.string('tag').pipe(
+			Flag.optional,
+			Flag.withDescription('Publish every file carrying this tag ID')
+		),
+		name: Flag.string('name').pipe(
+			Flag.optional,
+			Flag.withDescription('Display name for a new site')
+		),
+		id: Flag.string('id').pipe(
+			Flag.optional,
+			Flag.withDescription('Existing site UUID to republish')
+		)
+	},
+	({ files, tag, name, id }) =>
+		Effect.gen(function* () {
+			const config = yield* loadConfig;
+			const client = yield* HttpClient.HttpClient;
+			const fileIds = splitIds(files);
+			if (fileIds.length === 0 && Option.isNone(tag)) {
+				return yield* new CliFailure({
+					message: 'Provide --files and/or --tag to choose what to publish'
+				});
+			}
+			const body: Record<string, unknown> = {};
+			if (Option.isSome(name)) body.displayName = name.value;
+			if (Option.isSome(id)) body.fileId = id.value;
+			if (fileIds.length > 0) body.fileIds = fileIds;
+			if (Option.isSome(tag)) body.tagId = tag.value;
+			const response = yield* client
+				.execute(
+					apiRequest(
+						'POST',
+						`${config.endpoint}/api/sites/publish`,
+						config.apiKey,
+						{ body: HttpBody.jsonUnsafe(body) }
+					)
+				)
+				.pipe(Effect.flatMap(ensureOk));
+			const result = yield* decodeBody(SiteCommitResponseSchema, response);
+			if (wantsJson()) {
+				yield* emit(result);
+			} else {
+				yield* Console.log(`Published ${result.file.displayName}`);
+				yield* Console.log(result.url);
+				yield* Console.log(
+					`${result.file.id} · ${result.assetCount} assets · v${result.file.version} · public`
+				);
+			}
+		})
+).pipe(
+	Command.withDescription(
+		'Publish existing drive files as a site (by file IDs and/or a tag)'
+	)
+);
+
 export const site = Command.make('site').pipe(
 	Command.withDescription('Publish static sites'),
-	Command.withSubcommands([sitePut])
+	Command.withSubcommands([sitePut, sitePublish])
 );

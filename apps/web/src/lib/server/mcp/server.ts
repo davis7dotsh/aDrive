@@ -52,6 +52,7 @@ export const WRITE_TOOL_NAMES = [
 	'delete_tag',
 	'set_file_tags',
 	'publish_site',
+	'publish_files_site',
 	'create_share',
 	'revoke_share'
 ] as const;
@@ -619,6 +620,45 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 			scheduleIndex(env, ctx, published.value.file.id);
 			const { kind: _kind, ...value } = published.value;
 			return jsonResult(value);
+		}
+	);
+
+	server.registerTool(
+		'publish_files_site',
+		{
+			description:
+				'Publish files already in the drive as a site without re-uploading bytes. Provide file_ids and/or a tag_id; when no index.html is among them a gallery/listing is generated. Pass file_id to republish an existing site.',
+			inputSchema: z.object({
+				display_name: z.string().optional(),
+				file_id: z.string().optional(),
+				file_ids: z.array(z.string()).optional(),
+				tag_id: z.string().optional()
+			})
+		},
+		async ({ display_name, file_id, file_ids, tag_id }) => {
+			const published = await runMcp(
+				env,
+				Effect.gen(function* () {
+					const sites = yield* Sites;
+					const config = yield* AppConfig;
+					yield* assertUnrestricted(credential);
+					const result = yield* sites.publishFromFiles({
+						...(display_name !== undefined ? { displayName: display_name } : {}),
+						...(file_id !== undefined ? { fileId: file_id } : {}),
+						...(file_ids !== undefined ? { fileIds: file_ids } : {}),
+						...(tag_id !== undefined ? { tagId: tag_id } : {})
+					});
+					return {
+						file: result.file,
+						url: `${config.contentOrigin}/s/${result.file.id}/`,
+						assetCount: result.assetCount,
+						cleanupPending: result.cleanupPending
+					};
+				})
+			);
+			if (!published.ok) return errorResult(published.message, published.status);
+			scheduleIndex(env, ctx, published.value.file.id);
+			return jsonResult(published.value);
 		}
 	);
 

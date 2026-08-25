@@ -4,6 +4,7 @@ import { Blobs } from './blobs';
 import { Db } from './bindings';
 import { cleanupOps } from './sites/cleanup';
 import { createInternals } from './sites/internals';
+import { publishOps } from './sites/publish';
 import { readOps } from './sites/read';
 import { sessionOps } from './sites/sessions';
 import type { SitesShape } from './sites/types';
@@ -23,11 +24,13 @@ const makeSites = Effect.gen(function* () {
 	const config = yield* AppConfig;
 
 	const internals = createInternals({ db, blobs, config });
+	const session = sessionOps(internals);
 
 	return Sites.of({
-		...sessionOps(internals),
+		...session,
 		...cleanupOps(internals),
-		...readOps(internals)
+		...readOps(internals),
+		...publishOps(internals, session)
 	});
 });
 

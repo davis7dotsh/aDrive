@@ -17,6 +17,7 @@ import type {
 	FileShareCreateResponse,
 	FileShareListResponse,
 	FileSummary,
+	SiteCommitResponse,
 	FileTagsResponse,
 	FileVersion,
 	Tag,
@@ -218,6 +219,18 @@ export const parseFileTagsResponse = (value: unknown): FileTagsResponse => {
 	const record = requireRecord(value, 'tags');
 	return {
 		file: parseDashboardFile(record.file, 'tags.file')
+	};
+};
+
+export const parseSiteCommitResponse = (
+	value: unknown
+): SiteCommitResponse => {
+	const record = requireRecord(value, 'site');
+	return {
+		file: parseFileSummary(record.file, 'site.file'),
+		url: text(record.url, 'site.url'),
+		assetCount: integer(record.assetCount, 'site.assetCount'),
+		cleanupPending: flag(record.cleanupPending, 'site.cleanupPending')
 	};
 };
 

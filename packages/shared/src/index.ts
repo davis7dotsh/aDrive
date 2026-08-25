@@ -274,6 +274,19 @@ export const SiteSessionCreateSchema = Schema.Struct({
 
 export type SiteSessionCreate = typeof SiteSessionCreateSchema.Type;
 
+// Publish files that already live in the drive as a site, without a separate
+// re-upload. Provide file IDs and/or a tag; the server copies the current
+// version of each into a new site and, when no index.html is among them,
+// generates a gallery/listing.
+export const SitePublishSchema = Schema.Struct({
+	displayName: Schema.optionalKey(Schema.String),
+	fileId: Schema.optionalKey(Schema.String),
+	fileIds: Schema.optionalKey(Schema.Array(Schema.String)),
+	tagId: Schema.optionalKey(Schema.String)
+});
+
+export type SitePublish = typeof SitePublishSchema.Type;
+
 export const SiteSessionResponseSchema = Schema.Struct({
 	sessionId: Schema.String,
 	fileId: Schema.String,
