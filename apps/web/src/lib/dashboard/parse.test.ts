@@ -166,9 +166,16 @@ describe('dashboard response parsing', () => {
 			createdAt: '2026-07-30T12:00:00.000Z',
 			expiresAt: null,
 			lastUsedAt: null,
-			revokedAt: null
+			revokedAt: null,
+			allowedTagIds: null,
+			allowedFileIds: null
 		};
 		expect(parseApiKeyListResponse({ keys: [key] }).keys[0]?.name).toBe('cli');
+		expect(
+			parseApiKeyListResponse({
+				keys: [{ ...key, allowedTagIds: ['tag-a'], allowedFileIds: null }]
+			}).keys[0]?.allowedTagIds
+		).toEqual(['tag-a']);
 		expect(parseApiKeyCreateResponse({ key, token: 'adr_secret' }).token).toBe(
 			'adr_secret'
 		);
