@@ -3,10 +3,12 @@ import {
 	FileListResponseSchema,
 	FileMutationResponseSchema,
 	FileTagsResponseSchema,
-	UploadResponseSchema
+	UploadPartResponseSchema,
+	UploadResponseSchema,
+	UploadSessionResponseSchema
 } from '@adrive/shared';
 import { createWriteStream } from 'node:fs';
-import { mkdtemp, rm, stat } from 'node:fs/promises';
+import { mkdtemp, open, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
@@ -102,6 +104,7 @@ export const status = Command.make('status', {}, () =>
 				totalBytes,
 				tags: firstPage.tags.length,
 				maxUploadBytes: firstPage.maxUploadBytes,
+				maxStagedUploadBytes: firstPage.maxStagedUploadBytes,
 				semantic: firstPage.semantic
 			});
 		} else {
@@ -117,7 +120,7 @@ export const status = Command.make('status', {}, () =>
 			yield* Console.log(`Storage     ${formatBytes(totalBytes)}`);
 			yield* Console.log(`Tags        ${firstPage.tags.length}`);
 			yield* Console.log(
-				`Max upload  ${formatBytes(firstPage.maxUploadBytes)}`
+				`Max upload  ${formatBytes(firstPage.maxUploadBytes)} (staged ${formatBytes(firstPage.maxStagedUploadBytes)})`
 			);
 			yield* Console.log(`Semantic    ${semantic}`);
 		}
@@ -149,6 +152,166 @@ const prepareUpload = (file: string, suppliedName: Option.Option<string>) =>
 			new CliFailure({ message: 'Could not prepare the upload', cause })
 	});
 
+type UploadResult = typeof UploadResponseSchema.Type;
+
+const printUpload = (result: UploadResult) =>
+	Effect.gen(function* () {
+		if (wantsJson()) {
+			yield* emit(result);
+		} else {
+			yield* Console.log(`Uploaded ${result.file.displayName}`);
+			yield* Console.log(result.url);
+			yield* Console.log(
+				`${result.file.id} · ${result.file.sizeBytes} bytes · ${result.file.public ? 'public' : 'private'}${result.forcedPublic ? ' (HTML forced public)' : ''}${result.file.expiresAt ? ` · expires ${result.file.expiresAt}` : ''}`
+			);
+		}
+	});
+
+const uploadCaps = (
+	client: HttpClient.HttpClient,
+	endpoint: string,
+	apiKey: string
+) =>
+	client.execute(apiRequest('GET', `${endpoint}/api/files`, apiKey)).pipe(
+		Effect.flatMap(ensureOk),
+		Effect.flatMap((response) => decodeBody(FileListResponseSchema, response))
+	);
+
+const oneShotUpload = (
+	client: HttpClient.HttpClient,
+	config: { endpoint: string; apiKey: string },
+	prepared: { path: string; displayName: string },
+	contentType: string,
+	isPrivate: boolean,
+	expires: Option.Option<string>
+) =>
+	Effect.gen(function* () {
+		const body = yield* HttpBody.file(prepared.path, { contentType });
+		const response = yield* client
+			.execute(
+				apiRequest('PUT', `${config.endpoint}/api/files`, config.apiKey, {
+					body,
+					headers: {
+						'content-type': contentType,
+						'x-adrive-file-name': encodeURIComponent(prepared.displayName),
+						'x-adrive-public': String(!isPrivate),
+						...(Option.isSome(expires)
+							? { 'x-adrive-expires-at': expires.value }
+							: {})
+					}
+				})
+			)
+			.pipe(Effect.flatMap(ensureOk));
+		return yield* decodeBody(UploadResponseSchema, response);
+	});
+
+// Files larger than the one-shot cap go through the staged multipart flow:
+// open a session, PUT each part read straight off disk, then finalize. A
+// failure aborts the session so no partial upload lingers.
+const stagedUpload = (
+	client: HttpClient.HttpClient,
+	config: { endpoint: string; apiKey: string },
+	prepared: { path: string; displayName: string },
+	contentType: string,
+	size: number,
+	isPrivate: boolean,
+	expires: Option.Option<string>
+) =>
+	Effect.gen(function* () {
+		const createResponse = yield* client
+			.execute(
+				apiRequest('POST', `${config.endpoint}/api/uploads`, config.apiKey, {
+					body: HttpBody.jsonUnsafe({
+						name: prepared.displayName,
+						sizeBytes: size,
+						contentType,
+						public: !isPrivate,
+						...(Option.isSome(expires) ? { expiresAt: expires.value } : {})
+					})
+				})
+			)
+			.pipe(Effect.flatMap(ensureOk));
+		const session = yield* decodeBody(
+			UploadSessionResponseSchema,
+			createResponse
+		);
+		const sendParts = Effect.gen(function* () {
+			const handle = yield* Effect.tryPromise({
+				try: () => open(prepared.path, 'r'),
+				catch: (cause) =>
+					new CliFailure({ message: 'Could not read the file', cause })
+			});
+			yield* Effect.gen(function* () {
+				for (
+					let partNumber = 1;
+					partNumber <= session.partCount;
+					partNumber += 1
+				) {
+					const start = (partNumber - 1) * session.partSize;
+					const length = Math.min(session.partSize, size - start);
+					const bytes = yield* Effect.tryPromise({
+						try: async () => {
+							const buffer = Buffer.alloc(length);
+							await handle.read(buffer, 0, length, start);
+							return buffer;
+						},
+						catch: (cause) =>
+							new CliFailure({ message: 'Could not read a file part', cause })
+					});
+					yield* client
+						.execute(
+							apiRequest(
+								'PUT',
+								`${config.endpoint}/api/uploads/${encodeURIComponent(session.sessionId)}/parts/${partNumber}`,
+								config.apiKey,
+								{ body: HttpBody.uint8Array(bytes, contentType) }
+							)
+						)
+						.pipe(
+							Effect.flatMap(ensureOk),
+							Effect.flatMap((response) =>
+								decodeBody(UploadPartResponseSchema, response)
+							)
+						);
+				}
+			}).pipe(
+				Effect.ensuring(
+					Effect.tryPromise({
+						try: () => handle.close(),
+						catch: () => undefined
+					}).pipe(Effect.ignore)
+				)
+			);
+		});
+		yield* sendParts.pipe(
+			Effect.catch((failure) =>
+				client
+					.execute(
+						apiRequest(
+							'DELETE',
+							`${config.endpoint}/api/uploads/${encodeURIComponent(session.sessionId)}`,
+							config.apiKey
+						)
+					)
+					.pipe(
+						Effect.flatMap(ensureOk),
+						Effect.catchCause(() => Effect.void),
+						Effect.andThen(Effect.fail(failure))
+					)
+			)
+		);
+		const completeResponse = yield* client
+			.execute(
+				apiRequest(
+					'POST',
+					`${config.endpoint}/api/uploads/${encodeURIComponent(session.sessionId)}/complete`,
+					config.apiKey
+				)
+			)
+			.pipe(Effect.flatMap(ensureOk));
+		return yield* decodeBody(UploadResponseSchema, completeResponse);
+	});
+
 export const put = Command.make(
 	'put',
 	{
@@ -173,32 +336,37 @@ export const put = Command.make(
 			const upload = Effect.gen(function* () {
 				const contentType =
 					mime.getType(prepared.displayName) ?? 'application/octet-stream';
-				const body = yield* HttpBody.file(prepared.path, { contentType });
-				const response = yield* client
-					.execute(
-						apiRequest('PUT', `${config.endpoint}/api/files`, config.apiKey, {
-							body,
-							headers: {
-								'content-type': contentType,
-								'x-adrive-file-name': encodeURIComponent(prepared.displayName),
-								'x-adrive-public': String(!isPrivate),
-								...(Option.isSome(expires)
-									? { 'x-adrive-expires-at': expires.value }
-									: {})
-							}
-						})
-					)
-					.pipe(Effect.flatMap(ensureOk));
-				const result = yield* decodeBody(UploadResponseSchema, response);
-				if (wantsJson()) {
-					yield* emit(result);
-				} else {
-					yield* Console.log(`Uploaded ${result.file.displayName}`);
-					yield* Console.log(result.url);
-					yield* Console.log(
-						`${result.file.id} · ${result.file.sizeBytes} bytes · ${result.file.public ? 'public' : 'private'}${result.forcedPublic ? ' (HTML forced public)' : ''}${result.file.expiresAt ? ` · expires ${result.file.expiresAt}` : ''}`
-					);
+				const size = yield* Effect.tryPromise({
+					try: () => stat(prepared.path).then((details) => details.size),
+					catch: (cause) =>
+						new CliFailure({ message: 'Could not size the file', cause })
+				});
+				const caps = yield* uploadCaps(client, config.endpoint, config.apiKey);
+				if (size > caps.maxStagedUploadBytes) {
+					return yield* new CliFailure({
+						message: 'That is too large for this drive.'
+					});
 				}
+				const result =
+					size > caps.maxUploadBytes
+						? yield* stagedUpload(
+								client,
+								config,
+								prepared,
+								contentType,
+								size,
+								isPrivate,
+								expires
+							)
+						: yield* oneShotUpload(
+								client,
+								config,
+								prepared,
+								contentType,
+								isPrivate,
+								expires
+							);
+				yield* printUpload(result);
 			});
 			yield* upload.pipe(
 				Effect.ensuring(
@@ -215,7 +383,9 @@ export const put = Command.make(
 				)
 			);
 		})
-).pipe(Command.withDescription('Stream a file to adrive'));
+).pipe(
+	Command.withDescription('Upload a file (auto-stages files above the cap)')
+);
 
 export const list = Command.make('list', {}, () =>
 	Effect.gen(function* () {

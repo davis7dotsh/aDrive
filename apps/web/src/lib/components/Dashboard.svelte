@@ -2,7 +2,7 @@
 	import type { DashboardFile } from '@adrive/shared';
 	import { browser } from '$app/environment';
 	import { page } from '$app/state';
-	import type { FileListPayload } from '$lib/dashboard/api';
+	import { publishSite, type FileListPayload } from '$lib/dashboard/api';
 	import {
 		createFileList,
 		resolveFileLink
@@ -20,7 +20,9 @@
 	import DashboardHeader from './dashboard/DashboardHeader.svelte';
 	import FileListing from './dashboard/FileListing.svelte';
 	import SearchFilterBar from './dashboard/SearchFilterBar.svelte';
+	import Button from './ui/Button.svelte';
 	import Confirm from './ui/Confirm.svelte';
+	import Modal from './ui/Modal.svelte';
 	import TagManager from './tags/TagManager.svelte';
 	import DropOverlay from './upload/DropOverlay.svelte';
 	import UploadDialog from './upload/UploadDialog.svelte';
@@ -110,6 +112,7 @@
 		toasts,
 		uploads,
 		maxUploadBytes: () => files.list.current.maxUploadBytes,
+		maxStagedUploadBytes: () => files.list.current.maxStagedUploadBytes,
 		uploadOpen: () => uploadOpen,
 		closeUpload: () => (uploadOpen = false),
 		trashed: () => showTrash
@@ -187,6 +190,39 @@
 		);
 		if (!tag) return;
 		await selection.addSelectedTag(tag);
+	};
+
+	let publishOpen = $state(false);
+	let publishName = $state('');
+	let publishBusy = $state(false);
+
+	const openPublish = () => {
+		if (selection.selectedFiles.length === 0) return;
+		publishName = '';
+		publishOpen = true;
+	};
+
+	const publishSelectedSite = async () => {
+		const fileIds = selection.selectedFiles
+			.filter((file) => file.kind === 'file')
+			.map((file) => file.id);
+		if (fileIds.length === 0 || publishBusy) return;
+		publishBusy = true;
+		try {
+			const result = await publishSite(session.token, {
+				fileIds,
+				displayName: publishName.trim() || 'Published files'
+			});
+			toasts.success(`Published ${result.assetCount} files as a site`);
+			publishOpen = false;
+			selection.clear();
+			await files.list.refetch();
+			window.open(result.url, '_blank', 'noopener');
+		} catch (cause) {
+			toasts.error(cause, 'Could not publish the site');
+		} finally {
+			publishBusy = false;
+		}
 	};
 </script>
 
@@ -301,6 +337,7 @@
 			onmutate={(label, mutation) =>
 				void selection.mutateSelected(label, mutation)}
 			onbulkpurge={() => (trash.bulkPurgeOpen = true)}
+			onpublishsite={openPublish}
 			onclear={selection.clear}
 		/>
 
@@ -343,6 +380,7 @@
 		token={session.token}
 		tags={files.list.current.tags}
 		maxUploadBytes={files.list.current.maxUploadBytes}
+		maxStagedUploadBytes={files.list.current.maxStagedUploadBytes}
 	/>
 	<TagManager
 		bind:open={tagManagerOpen}
@@ -376,4 +414,32 @@
 		busy={trash.purging}
 		onconfirm={trash.purgeAllTrash}
 	/>
+	<Modal
+		bind:open={publishOpen}
+		title="Publish as site"
+		description="Turn the selected files into a live site. If none is an index.html, a simple gallery is generated. Bytes are copied on the server — no re-upload."
+	>
+		<form
+			class="space-y-3"
+			onsubmit={(event) => {
+				event.preventDefault();
+				void publishSelectedSite();
+			}}
+		>
+			<input
+				bind:value={publishName}
+				data-autofocus
+				placeholder="Site name"
+				class="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
+			/>
+			<div class="flex justify-end gap-2">
+				<Button
+					variant="ghost"
+					type="button"
+					onclick={() => (publishOpen = false)}>Cancel</Button
+				>
+				<Button type="submit" disabled={publishBusy}>Publish</Button>
+			</div>
+		</form>
+	</Modal>
 {/if}

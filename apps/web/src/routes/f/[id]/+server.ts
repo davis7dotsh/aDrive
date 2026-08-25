@@ -21,7 +21,10 @@ import { runEdge } from '$lib/server/edge';
 import { NotFound, StorageError } from '$lib/server/errors';
 import { Blobs } from '$lib/server/services/blobs';
 import { Files } from '$lib/server/services/files';
+import type { FileContent } from '$lib/server/services/files/types';
 import { GrantSecrets } from '$lib/server/services/grant-secrets';
+import { Shares } from '$lib/server/services/shares';
+import { sharePasswordPage } from '$lib/server/share-password-page';
 
 const requestedVersion = (url: URL) => {
 	const value = url.searchParams.get('v');
@@ -35,42 +38,73 @@ const serveFile: RequestHandler = ({ params, platform, request, url }) =>
 		Effect.gen(function* () {
 			const config = yield* AppConfig;
 			const files = yield* Files;
-			const grantSecrets = yield* GrantSecrets;
-			const version = requestedVersion(url);
-			if (version === null) return yield* new NotFound({ id: params.id });
-			const hasGrant = url.searchParams.has('e') && url.searchParams.has('g');
-			const thumbnailSource = url.searchParams.get('purpose') === 'thumbnail';
-			if (thumbnailSource && !hasGrant) {
-				return yield* new NotFound({ id: params.id });
-			}
-			const content = yield* files.findContent(params.id, version, hasGrant);
-			const privateResponse = hasGrant || !content.file.public;
-			const dashboardPreview =
-				(content.file.contentType === 'application/pdf' ||
-					content.file.contentType.startsWith('text/html')) &&
-				url.searchParams.get('preview') === 'dashboard';
+
+			// Resolve the content to serve and whether the response is private.
+			// A durable share token (`?s=`) is a self-contained, revocable link
+			// that follows the file's current version; otherwise fall back to the
+			// public/versioned/HMAC-grant path used by dashboards and previews.
+			const shareToken = url.searchParams.get('s');
+			let content: FileContent;
+			let privateResponse: boolean;
+			let pinnedVersion: boolean;
 			let verifiedThumbnailSource = false;
-			if (!content.file.public || hasGrant) {
-				const expiresAtSeconds = Number(url.searchParams.get('e'));
-				const signature = url.searchParams.get('g') ?? '';
-				const granted = yield* grantSecrets.verify({
-					contentOrigin: config.contentOrigin,
-					requestOrigin: url.origin,
-					fileId: params.id,
-					version: content.file.version,
-					expiresAtSeconds,
-					signature,
-					purpose: thumbnailSource ? 'thumbnail-source' : undefined
-				});
-				if (!granted) return yield* new NotFound({ id: params.id });
-				verifiedThumbnailSource = thumbnailSource;
+			let dashboardPreview = false;
+
+			if (shareToken !== null) {
+				const shares = yield* Shares;
+				const share = yield* shares.resolve(shareToken);
+				if (!share || share.fileId !== params.id) {
+					return yield* new NotFound({ id: params.id });
+				}
+				if (share.passwordHash !== null) {
+					const supplied = url.searchParams.get('p');
+					const unlocked =
+						supplied !== null && (yield* shares.checkPassword(share, supplied));
+					if (!unlocked) {
+						return sharePasswordPage(url, supplied !== null);
+					}
+				}
+				content = yield* files.findContent(params.id);
+				privateResponse = true;
+				pinnedVersion = false;
+			} else {
+				const grantSecrets = yield* GrantSecrets;
+				const version = requestedVersion(url);
+				if (version === null) return yield* new NotFound({ id: params.id });
+				const hasGrant = url.searchParams.has('e') && url.searchParams.has('g');
+				const thumbnailSource = url.searchParams.get('purpose') === 'thumbnail';
+				if (thumbnailSource && !hasGrant) {
+					return yield* new NotFound({ id: params.id });
+				}
+				content = yield* files.findContent(params.id, version, hasGrant);
+				privateResponse = hasGrant || !content.file.public;
+				dashboardPreview =
+					(content.file.contentType === 'application/pdf' ||
+						content.file.contentType.startsWith('text/html')) &&
+					url.searchParams.get('preview') === 'dashboard';
+				if (!content.file.public || hasGrant) {
+					const expiresAtSeconds = Number(url.searchParams.get('e'));
+					const signature = url.searchParams.get('g') ?? '';
+					const granted = yield* grantSecrets.verify({
+						contentOrigin: config.contentOrigin,
+						requestOrigin: url.origin,
+						fileId: params.id,
+						version: content.file.version,
+						expiresAtSeconds,
+						signature,
+						purpose: thumbnailSource ? 'thumbnail-source' : undefined
+					});
+					if (!granted) return yield* new NotFound({ id: params.id });
+					verifiedThumbnailSource = thumbnailSource;
+				}
+				pinnedVersion = version !== undefined;
 			}
+
 			const blobs = yield* Blobs;
 			const range =
 				request.method === 'HEAD'
 					? null
 					: yield* decodeRangeHeader(request.headers.get('range'));
-			const pinnedVersion = version !== undefined;
 			const cacheControl = fileCacheControl(privateResponse, pinnedVersion);
 			const ifNoneMatch = request.headers.get('if-none-match');
 			const cacheRequest = fileContentCacheRequest(url);

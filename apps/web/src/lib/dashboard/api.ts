@@ -3,6 +3,8 @@ import type {
 	FileDetailResponse,
 	FileListResponse,
 	FileMutation,
+	FileShareCreate,
+	SitePublish,
 	Tag,
 	TagCreate,
 	TagUpdate
@@ -14,8 +16,11 @@ import {
 	parseFileDetailResponse,
 	parseFileListResponse,
 	parseFileMutationResponse,
+	parseFileShareCreateResponse,
+	parseFileShareListResponse,
 	parseFileTagsResponse,
 	parseSessionsRevokedResponse,
+	parseSiteCommitResponse,
 	parseTagResponse,
 	parseUploadResponse
 } from './parse';
@@ -103,12 +108,23 @@ export const listApiKeys = async (token: string, signal?: AbortSignal) => {
 export const createApiKey = async (
 	token: string,
 	name: string,
-	scope: 'read-only' | 'read-write' = 'read-write'
+	scope: 'read-only' | 'read-write' = 'read-write',
+	options: {
+		readonly expiresAt?: string | null;
+		readonly allowedTagIds?: ReadonlyArray<string> | null;
+		readonly allowedFileIds?: ReadonlyArray<string> | null;
+	} = {}
 ) => {
 	const response = await request('/api/auth/keys', token, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name, scope })
+		body: JSON.stringify({
+			name,
+			scope,
+			expiresAt: options.expiresAt ?? null,
+			allowedTagIds: options.allowedTagIds ?? null,
+			allowedFileIds: options.allowedFileIds ?? null
+		})
 	});
 	return json(parseApiKeyCreateResponse, response);
 };
@@ -383,6 +399,67 @@ export const uploadFile = async (
 	return parseUploadResponse(body);
 };
 
+// Staged/resumable upload for files above the one-shot cap. Opens a session,
+// PUTs each slice of the File (no full buffering), then finalizes. Progress is
+// reported per completed part; a failure or cancel aborts the session so no
+// partial upload lingers server-side.
+export const uploadFileStaged = async (
+	token: string,
+	file: File,
+	isPublic: boolean,
+	tagNames: ReadonlyArray<string> = [],
+	expiresAt: string | null = null,
+	options: UploadOptions = {}
+) => {
+	const created = await request('/api/uploads', token, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({
+			name: file.name,
+			sizeBytes: file.size,
+			contentType: file.type || 'application/octet-stream',
+			public: isPublic,
+			tags: tagNames,
+			expiresAt
+		}),
+		signal: options.signal
+	});
+	const session = (await created.json()) as {
+		sessionId: string;
+		partSize: number;
+		partCount: number;
+	};
+	try {
+		for (let partNumber = 1; partNumber <= session.partCount; partNumber += 1) {
+			const start = (partNumber - 1) * session.partSize;
+			const end = Math.min(start + session.partSize, file.size);
+			await request(
+				`/api/uploads/${encodeURIComponent(session.sessionId)}/parts/${partNumber}`,
+				token,
+				{ method: 'PUT', body: file.slice(start, end), signal: options.signal }
+			);
+			options.onProgress?.(end, file.size);
+		}
+	} catch (cause) {
+		try {
+			await request(
+				`/api/uploads/${encodeURIComponent(session.sessionId)}`,
+				token,
+				{ method: 'DELETE' }
+			);
+		} catch {
+			// Best-effort cleanup; the scheduled sweep aborts stale sessions.
+		}
+		throw cause;
+	}
+	const finished = await request(
+		`/api/uploads/${encodeURIComponent(session.sessionId)}/complete`,
+		token,
+		{ method: 'POST', signal: options.signal }
+	);
+	return json(parseUploadResponse, finished);
+};
+
 export const uploadVersion = async (token: string, id: string, file: File) => {
 	const response = await request(
 		`/api/files/${encodeURIComponent(id)}/versions`,
@@ -413,6 +490,57 @@ export const mutateFile = async (
 		}
 	);
 	return json(parseFileMutationResponse, response);
+};
+
+export const listShares = async (
+	token: string,
+	fileId: string,
+	signal?: AbortSignal
+) => {
+	const response = await request(
+		`/api/files/${encodeURIComponent(fileId)}/shares`,
+		token,
+		{ signal }
+	);
+	return json(parseFileShareListResponse, response);
+};
+
+export const createShare = async (
+	token: string,
+	fileId: string,
+	input: FileShareCreate
+) => {
+	const response = await request(
+		`/api/files/${encodeURIComponent(fileId)}/shares`,
+		token,
+		{
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(input)
+		}
+	);
+	return json(parseFileShareCreateResponse, response);
+};
+
+export const revokeShare = async (
+	token: string,
+	fileId: string,
+	shareId: string
+) => {
+	await request(
+		`/api/files/${encodeURIComponent(fileId)}/shares/${encodeURIComponent(shareId)}`,
+		token,
+		{ method: 'DELETE' }
+	);
+};
+
+export const publishSite = async (token: string, input: SitePublish) => {
+	const response = await request('/api/sites/publish', token, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(input)
+	});
+	return json(parseSiteCommitResponse, response);
 };
 
 export const createTag = async (token: string, input: TagCreate) => {

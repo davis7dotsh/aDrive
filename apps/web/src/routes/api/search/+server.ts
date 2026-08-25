@@ -3,6 +3,7 @@ import { Effect } from 'effect';
 import { AppConfig } from '$lib/server/config';
 import { runEdge } from '$lib/server/edge';
 import { Auth, authorizeRequest } from '$lib/server/services/auth';
+import { filterFilesByScope } from '$lib/server/token-scope';
 import { Search } from '$lib/server/services/search';
 import { Tags } from '$lib/server/services/tags';
 import { Indexing } from '$lib/server/services/indexing';
@@ -15,7 +16,7 @@ export const GET: RequestHandler = ({ cookies, request, url }) =>
 			const tags = yield* Tags;
 			const indexing = yield* Indexing;
 			const config = yield* AppConfig;
-			yield* authorizeRequest(auth, request, url, cookies);
+			const credential = yield* authorizeRequest(auth, request, url, cookies);
 			const omitMeta = url.searchParams.get('omitMeta') === '1';
 			const searchInput = {
 				query: url.searchParams.get('q') ?? '',
@@ -30,11 +31,12 @@ export const GET: RequestHandler = ({ cookies, request, url }) =>
 						{ concurrency: 'unbounded' }
 					);
 			return Response.json({
-				files: page.files,
+				files: filterFilesByScope(credential, page.files),
 				nextCursor: page.nextCursor,
 				tags: tagList ?? [],
 				contentOrigin: config.contentOrigin,
 				maxUploadBytes: config.maxUploadBytes,
+				maxStagedUploadBytes: config.maxStagedUploadBytes,
 				semantic: semantic ?? {
 					enabled: false,
 					indexedChunks: 0,

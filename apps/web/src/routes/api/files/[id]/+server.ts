@@ -15,6 +15,7 @@ import {
 import { Files } from '$lib/server/services/files';
 import { Tags } from '$lib/server/services/tags';
 import { Indexing } from '$lib/server/services/indexing';
+import { assertFileInScope } from '$lib/server/token-scope';
 
 const readMutation = (request: Request) =>
 	decodeJson(request, FileMutationSchema, 'File mutation is invalid');
@@ -27,7 +28,8 @@ export const GET: RequestHandler = ({ cookies, params, request, url }) =>
 			const tags = yield* Tags;
 			const indexing = yield* Indexing;
 			const config = yield* AppConfig;
-			yield* authorizeRequest(auth, request, url, cookies);
+			const credential = yield* authorizeRequest(auth, request, url, cookies);
+			yield* assertFileInScope(credential, params.id);
 			// File detail, tag list, and indexing status are independent D1
 			// reads; run them concurrently like the list and search routes.
 			const [detail, tagList, semantic] = yield* Effect.all(
@@ -69,7 +71,13 @@ export const PATCH: RequestHandler = async (event) => {
 			const auth = yield* Auth;
 			const files = yield* Files;
 			const indexing = yield* Indexing;
-			yield* authorizeWriteRequest(auth, request, url, cookies);
+			const credential = yield* authorizeWriteRequest(
+				auth,
+				request,
+				url,
+				cookies
+			);
+			yield* assertFileInScope(credential, params.id);
 			const mutation = yield* readMutation(request);
 			const result =
 				mutation.action === 'visibility'

@@ -8,6 +8,7 @@ import {
 	authorizeRequest,
 	authorizeWriteRequest
 } from '$lib/server/services/auth';
+import { assertUnrestricted } from '$lib/server/token-scope';
 import { Tags } from '$lib/server/services/tags';
 
 const readCreate = (request: Request) =>
@@ -28,7 +29,13 @@ export const POST: RequestHandler = ({ cookies, request, url }) =>
 		Effect.gen(function* () {
 			const auth = yield* Auth;
 			const tags = yield* Tags;
-			yield* authorizeWriteRequest(auth, request, url, cookies);
+			const credential = yield* authorizeWriteRequest(
+				auth,
+				request,
+				url,
+				cookies
+			);
+			yield* assertUnrestricted(credential);
 			const tag = yield* readCreate(request).pipe(
 				Effect.flatMap((input) => tags.create(input))
 			);

@@ -4,6 +4,7 @@ import { Effect } from 'effect';
 import { runEdge } from '$lib/server/edge';
 import { decodeJson } from '$lib/server/request-json';
 import { Auth, authorizeWriteRequest } from '$lib/server/services/auth';
+import { assertFileInScope } from '$lib/server/token-scope';
 import { Files } from '$lib/server/services/files';
 import { Tags } from '$lib/server/services/tags';
 
@@ -16,7 +17,13 @@ export const PUT: RequestHandler = ({ cookies, params, request, url }) =>
 			const auth = yield* Auth;
 			const tags = yield* Tags;
 			const files = yield* Files;
-			yield* authorizeWriteRequest(auth, request, url, cookies);
+			const credential = yield* authorizeWriteRequest(
+				auth,
+				request,
+				url,
+				cookies
+			);
+			yield* assertFileInScope(credential, params.id);
 			const input = yield* readNames(request);
 			yield* tags.setFileTags(params.id, input.names);
 			return Response.json({ file: (yield* files.detail(params.id)).file });

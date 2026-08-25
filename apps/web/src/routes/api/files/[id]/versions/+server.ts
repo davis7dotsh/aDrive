@@ -3,6 +3,7 @@ import { Effect } from 'effect';
 import { authRateLimitResponse } from '$lib/server/auth-rate-limit-response';
 import { runEdgeWithEvent, runWorkerProgram } from '$lib/server/edge';
 import { Auth, authorizeWriteRequest } from '$lib/server/services/auth';
+import { assertFileInScope } from '$lib/server/token-scope';
 import { AuthGuard } from '$lib/server/services/auth-guard';
 import { Files } from '$lib/server/services/files';
 import { Indexing } from '$lib/server/services/indexing';
@@ -21,6 +22,7 @@ export const PUT: RequestHandler = async (event) => {
 				url,
 				cookies
 			);
+			yield* assertFileInScope(credential, params.id);
 			const rateLimit = yield* authGuard.consume(
 				'upload',
 				credential.credentialId

@@ -4,6 +4,7 @@ import { InvalidRequest } from '$lib/server/errors';
 import { runEdge } from '$lib/server/edge';
 import { maxPreviewBytes, previewKind } from '$lib/server/file-preview';
 import { Auth, authorizeRequest } from '$lib/server/services/auth';
+import { assertFileInScope } from '$lib/server/token-scope';
 import { Blobs } from '$lib/server/services/blobs';
 import { Files } from '$lib/server/services/files';
 
@@ -26,7 +27,8 @@ export const GET: RequestHandler = ({ cookies, params, request, url }) =>
 			const auth = yield* Auth;
 			const blobs = yield* Blobs;
 			const files = yield* Files;
-			yield* authorizeRequest(auth, request, url, cookies);
+			const credential = yield* authorizeRequest(auth, request, url, cookies);
+			yield* assertFileInScope(credential, params.id);
 			const version = yield* Effect.try({
 				try: () => requestedVersion(url),
 				catch: (cause) =>

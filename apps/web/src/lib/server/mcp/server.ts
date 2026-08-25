@@ -8,11 +8,17 @@ import { InvalidRequest, validate } from '../errors';
 import { maxPreviewBytes, previewKind } from '../file-preview';
 import { resolveFileContentLink } from '../file-content-link';
 import type { AuthorizedCredential } from '../services/auth';
+import {
+	assertFileInScope,
+	assertUnrestricted,
+	filterFilesByScope
+} from '../token-scope';
 import { AuthGuard } from '../services/auth-guard';
 import { Blobs } from '../services/blobs';
 import { Files } from '../services/files';
 import { Indexing } from '../services/indexing';
 import { Search } from '../services/search';
+import { Shares } from '../services/shares';
 import { Sites } from '../services/sites';
 import { Tags } from '../services/tags';
 import type { AppServices } from '../edge';
@@ -34,7 +40,8 @@ export const READ_TOOL_NAMES = [
 	'list_files',
 	'search_files',
 	'get_file',
-	'list_tags'
+	'list_tags',
+	'list_shares'
 ] as const;
 
 export const WRITE_TOOL_NAMES = [
@@ -44,7 +51,10 @@ export const WRITE_TOOL_NAMES = [
 	'update_tag',
 	'delete_tag',
 	'set_file_tags',
-	'publish_site'
+	'publish_site',
+	'publish_files_site',
+	'create_share',
+	'revoke_share'
 ] as const;
 
 export interface McpServerInput {
@@ -102,6 +112,8 @@ const registerReadTools = (server: McpServer, input: McpServerInput) => {
 						kind: credential.kind,
 						scope: credential.scope,
 						credentialId: credential.credentialId,
+						allowedTagIds: credential.restriction.tagIds,
+						allowedFileIds: credential.restriction.fileIds,
 						dashboardOrigin: config.dashboardOrigin,
 						contentOrigin: config.contentOrigin
 					};
@@ -137,7 +149,7 @@ const registerReadTools = (server: McpServer, input: McpServerInput) => {
 							cursor,
 							limit: MCP_STATUS_PAGE_SIZE
 						});
-						for (const item of page.files) {
+						for (const item of filterFilesByScope(credential, page.files)) {
 							if (item.kind === 'site') {
 								siteCount += 1;
 							} else {
@@ -164,6 +176,7 @@ const registerReadTools = (server: McpServer, input: McpServerInput) => {
 						totalBytes,
 						tags: (yield* tags.list).length,
 						maxUploadBytes: config.maxUploadBytes,
+						maxStagedUploadBytes: config.maxStagedUploadBytes,
 						mcpMaxUploadBytes: MCP_MAX_UPLOAD_BYTES,
 						contentOrigin: config.contentOrigin,
 						semantic: yield* indexing.status
@@ -190,7 +203,11 @@ const registerReadTools = (server: McpServer, input: McpServerInput) => {
 						cursor: cursor ?? null,
 						limit: yield* validate(() => mcpPageLimit(limit))
 					};
-					return yield* files.list(false, page);
+					const listing = yield* files.list(false, page);
+					return {
+						files: filterFilesByScope(credential, listing.files),
+						nextCursor: listing.nextCursor
+					};
 				})
 			)
 	);
@@ -216,7 +233,7 @@ const registerReadTools = (server: McpServer, input: McpServerInput) => {
 						cursor: cursor ?? null
 					});
 					return {
-						files: page.files,
+						files: filterFilesByScope(credential, page.files),
 						nextCursor: page.nextCursor
 					};
 				})
@@ -240,6 +257,7 @@ const registerReadTools = (server: McpServer, input: McpServerInput) => {
 					const files = yield* Files;
 					const blobs = yield* Blobs;
 					const config = yield* AppConfig;
+					yield* assertFileInScope(credential, id);
 					const detail = yield* files.detail(id);
 					const now = new Date().toISOString();
 					if (!fileIsLive(detail.file, now)) {
@@ -299,6 +317,23 @@ const registerReadTools = (server: McpServer, input: McpServerInput) => {
 				})
 			)
 	);
+
+	server.registerTool(
+		'list_shares',
+		{
+			description: 'List durable private share links for a file',
+			inputSchema: z.object({ file_id: z.string() })
+		},
+		async ({ file_id }) =>
+			toolValue(
+				env,
+				Effect.gen(function* () {
+					const shares = yield* Shares;
+					yield* assertFileInScope(credential, file_id);
+					return { shares: yield* shares.list(file_id) };
+				})
+			)
+	);
 };
 
 const registerWriteTools = (server: McpServer, input: McpServerInput) => {
@@ -328,6 +363,7 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 					const authGuard = yield* AuthGuard;
 					const files = yield* Files;
 					const config = yield* AppConfig;
+					yield* assertUnrestricted(credential);
 					const rate = yield* authGuard.consume(
 						'upload',
 						credential.credentialId
@@ -388,6 +424,7 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 				env,
 				Effect.gen(function* () {
 					const files = yield* Files;
+					yield* assertFileInScope(credential, id);
 					return yield* files.rename(id, display_name);
 				})
 			);
@@ -411,6 +448,7 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 				env,
 				Effect.gen(function* () {
 					const tags = yield* Tags;
+					yield* assertUnrestricted(credential);
 					return { tag: yield* tags.create({ name, color }) };
 				})
 			)
@@ -431,6 +469,7 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 				env,
 				Effect.gen(function* () {
 					const tags = yield* Tags;
+					yield* assertUnrestricted(credential);
 					return { tag: yield* tags.update(id, { name, color }) };
 				})
 			)
@@ -449,6 +488,7 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 				env,
 				Effect.gen(function* () {
 					const tags = yield* Tags;
+					yield* assertUnrestricted(credential);
 					yield* tags.remove(id);
 					return { ok: true as const, id };
 				})
@@ -470,6 +510,7 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 				Effect.gen(function* () {
 					const tags = yield* Tags;
 					const files = yield* Files;
+					yield* assertFileInScope(credential, file_id);
 					yield* tags.setFileTags(file_id, names);
 					return { file: (yield* files.detail(file_id)).file };
 				})
@@ -525,6 +566,7 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 					const authGuard = yield* AuthGuard;
 					const sites = yield* Sites;
 					const config = yield* AppConfig;
+					yield* assertUnrestricted(credential);
 					const rate = yield* authGuard.consume(
 						'upload',
 						credential.credentialId
@@ -580,5 +622,93 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 			const { kind: _kind, ...value } = published.value;
 			return jsonResult(value);
 		}
+	);
+
+	server.registerTool(
+		'publish_files_site',
+		{
+			description:
+				'Publish files already in the drive as a site without re-uploading bytes. Provide file_ids and/or a tag_id; when no index.html is among them a gallery/listing is generated. Pass file_id to republish an existing site.',
+			inputSchema: z.object({
+				display_name: z.string().optional(),
+				file_id: z.string().optional(),
+				file_ids: z.array(z.string()).optional(),
+				tag_id: z.string().optional()
+			})
+		},
+		async ({ display_name, file_id, file_ids, tag_id }) => {
+			const published = await runMcp(
+				env,
+				Effect.gen(function* () {
+					const sites = yield* Sites;
+					const config = yield* AppConfig;
+					yield* assertUnrestricted(credential);
+					const result = yield* sites.publishFromFiles({
+						...(display_name !== undefined
+							? { displayName: display_name }
+							: {}),
+						...(file_id !== undefined ? { fileId: file_id } : {}),
+						...(file_ids !== undefined ? { fileIds: file_ids } : {}),
+						...(tag_id !== undefined ? { tagId: tag_id } : {})
+					});
+					return {
+						file: result.file,
+						url: `${config.contentOrigin}/s/${result.file.id}/`,
+						assetCount: result.assetCount,
+						cleanupPending: result.cleanupPending
+					};
+				})
+			);
+			if (!published.ok)
+				return errorResult(published.message, published.status);
+			scheduleIndex(env, ctx, published.value.file.id);
+			return jsonResult(published.value);
+		}
+	);
+
+	server.registerTool(
+		'create_share',
+		{
+			description:
+				'Create a durable private link for a file: a revocable URL that works on the content origin, follows the current version, and can carry a password and expiry (default 7 days).',
+			inputSchema: z.object({
+				file_id: z.string(),
+				password: z.string().nullable().optional(),
+				expires_in_days: z.number().nullable().optional(),
+				label: z.string().nullable().optional()
+			})
+		},
+		async ({ file_id, password, expires_in_days, label }) =>
+			toolValue(
+				env,
+				Effect.gen(function* () {
+					const shares = yield* Shares;
+					yield* assertFileInScope(credential, file_id);
+					const created = yield* shares.create(file_id, {
+						password: password ?? null,
+						expiresInDays: expires_in_days,
+						label: label ?? null
+					});
+					return { share: created.share, url: created.url };
+				})
+			)
+	);
+
+	server.registerTool(
+		'revoke_share',
+		{
+			description: 'Revoke a durable private link by share id',
+			inputSchema: z.object({ file_id: z.string(), share_id: z.string() })
+		},
+		async ({ file_id, share_id }) =>
+			toolValue(
+				env,
+				Effect.gen(function* () {
+					const shares = yield* Shares;
+					yield* assertFileInScope(credential, file_id);
+					yield* shares.revoke(file_id, share_id);
+					return { ok: true as const, id: share_id };
+				})
+			)
 	);
 };

@@ -25,6 +25,7 @@ const emptyList = {
 	tags: [] as ReadonlyArray<never>,
 	contentOrigin: '',
 	maxUploadBytes: 0,
+	maxStagedUploadBytes: 0,
 	semantic: {
 		enabled: false,
 		indexedChunks: 0,
@@ -139,7 +140,9 @@ export const createFileList = ({
 				tags: list.current.tags,
 				semantic: list.current.semantic,
 				contentOrigin: list.current.contentOrigin || next.contentOrigin,
-				maxUploadBytes: list.current.maxUploadBytes || next.maxUploadBytes
+				maxUploadBytes: list.current.maxUploadBytes || next.maxUploadBytes,
+				maxStagedUploadBytes:
+					list.current.maxStagedUploadBytes || next.maxStagedUploadBytes
 			});
 		} catch (cause) {
 			toasts.error(cause, 'Could not load more files');

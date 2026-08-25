@@ -38,6 +38,7 @@ const listing = (files: ReadonlyArray<DashboardFile>): FileListPayload => ({
 	tags: [],
 	contentOrigin: 'https://files.example',
 	maxUploadBytes: 1_024,
+	maxStagedUploadBytes: 524_288_000,
 	semantic: {
 		enabled: false,
 		indexedChunks: 0,

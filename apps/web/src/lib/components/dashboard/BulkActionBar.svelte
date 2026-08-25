@@ -11,6 +11,7 @@
 		onbulktag,
 		onmutate,
 		onbulkpurge,
+		onpublishsite,
 		onclear
 	}: {
 		selectedCount: number;
@@ -21,6 +22,7 @@
 		onbulktag: (tagId: string) => void;
 		onmutate: (label: string, mutation: FileMutation) => void;
 		onbulkpurge: () => void;
+		onpublishsite: () => void;
 		onclear: () => void;
 	} = $props();
 </script>
@@ -71,6 +73,9 @@
 					onmutate('Made private', { action: 'visibility', public: false })}
 			>
 				Private
+			</Button>
+			<Button variant="secondary" disabled={batchBusy} onclick={onpublishsite}>
+				Publish as site
 			</Button>
 			<Button
 				variant="danger"

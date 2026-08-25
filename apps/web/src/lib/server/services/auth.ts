@@ -33,8 +33,24 @@ const ApiKeyRow = Schema.Struct({
 	created_at: Schema.String,
 	expires_at: Schema.NullOr(Schema.String),
 	last_used_at: Schema.NullOr(Schema.String),
-	revoked_at: Schema.NullOr(Schema.String)
+	revoked_at: Schema.NullOr(Schema.String),
+	allowed_tag_ids: Schema.NullOr(Schema.String),
+	allowed_file_ids: Schema.NullOr(Schema.String)
 });
+
+// A stored token target is a JSON array of ids, or NULL for "no restriction
+// on this axis". Parse defensively: an unreadable value collapses to an empty
+// restriction so a corrupt row can never widen access.
+const parseIdList = (value: string | null): ReadonlyArray<string> | null => {
+	if (value === null) return null;
+	try {
+		const parsed: unknown = JSON.parse(value);
+		if (!Array.isArray(parsed)) return [];
+		return parsed.filter((entry): entry is string => typeof entry === 'string');
+	} catch {
+		return [];
+	}
+};
 
 const SessionRow = Schema.Struct({
 	token_hash: Schema.String,
@@ -71,10 +87,20 @@ export type DevicePollResult =
 	| { readonly status: 'authorization_pending' | 'slow_down' }
 	| { readonly status: 'complete'; readonly apiKey: string };
 
+// A scoped token narrows a full-drive key to a set of tags and/or file ids.
+// `null` on an axis means "not restricted on that axis"; a credential is
+// unrestricted (full drive) only when both are null. Sessions are always
+// unrestricted.
+export interface TokenRestriction {
+	readonly tagIds: ReadonlyArray<string> | null;
+	readonly fileIds: ReadonlyArray<string> | null;
+}
+
 export interface AuthorizedCredential {
 	readonly credentialId: string;
 	readonly kind: 'api-key' | 'session';
 	readonly scope: ApiKeyScope;
+	readonly restriction: TokenRestriction;
 }
 
 export interface AuthShape {
@@ -96,6 +122,8 @@ export interface AuthShape {
 		options?: {
 			readonly scope?: ApiKeyScope;
 			readonly expiresAt?: string | null;
+			readonly allowedTagIds?: ReadonlyArray<string> | null;
+			readonly allowedFileIds?: ReadonlyArray<string> | null;
 		}
 	) => Effect.Effect<
 		{ readonly key: ApiKey; readonly token: string },
@@ -246,8 +274,32 @@ const toApiKey = (row: typeof ApiKeyRow.Type): ApiKey => ({
 	createdAt: row.created_at,
 	expiresAt: row.expires_at,
 	lastUsedAt: row.last_used_at,
-	revokedAt: row.revoked_at
+	revokedAt: row.revoked_at,
+	allowedTagIds: parseIdList(row.allowed_tag_ids),
+	allowedFileIds: parseIdList(row.allowed_file_ids)
 });
+
+// Normalize a requested target list into a stored value: undefined/null means
+// no restriction on that axis (stored as NULL), an empty array is treated the
+// same as null, and duplicates are removed. Caps the count so a single key
+// cannot carry an unbounded target list.
+const MAX_TOKEN_TARGETS = 100;
+const normalizeTargets = (
+	value: ReadonlyArray<string> | null | undefined
+): ReadonlyArray<string> | null => {
+	if (value === undefined || value === null) return null;
+	const cleaned = [
+		...new Set(value.map((entry) => entry.trim()).filter((entry) => entry))
+	];
+	if (cleaned.length === 0) return null;
+	if (cleaned.length > MAX_TOKEN_TARGETS) {
+		throw new InvalidRequest({
+			status: 400,
+			message: `A scoped token may target at most ${MAX_TOKEN_TARGETS} ids`
+		});
+	}
+	return cleaned;
+};
 
 const makeAuth = Effect.gen(function* () {
 	const db = yield* Db;
@@ -275,7 +327,7 @@ const makeAuth = Effect.gen(function* () {
 
 	const listApiKeys = sql`
 		SELECT id, name, prefix, scope, secret_hash, created_at, expires_at,
-			last_used_at, revoked_at
+			last_used_at, revoked_at, allowed_tag_ids, allowed_file_ids
 		FROM api_keys
 		ORDER BY created_at DESC, id
 	`.pipe(
@@ -310,7 +362,7 @@ const makeAuth = Effect.gen(function* () {
 				}
 				const rows = yield* sql`
 					SELECT id, name, prefix, scope, secret_hash, created_at, expires_at,
-						last_used_at, revoked_at
+						last_used_at, revoked_at, allowed_tag_ids, allowed_file_ids
 					FROM api_keys
 					WHERE prefix = ${match[1]} AND revoked_at IS NULL
 					LIMIT 1
@@ -351,7 +403,11 @@ const makeAuth = Effect.gen(function* () {
 				return {
 					credentialId: row.id,
 					kind: 'api-key' as const,
-					scope: row.scope
+					scope: row.scope,
+					restriction: {
+						tagIds: parseIdList(row.allowed_tag_ids),
+						fileIds: parseIdList(row.allowed_file_ids)
+					}
 				};
 			}
 
@@ -402,7 +458,8 @@ const makeAuth = Effect.gen(function* () {
 			return {
 				credentialId: row.token_hash,
 				kind: 'session' as const,
-				scope: 'read-write' as const
+				scope: 'read-write' as const,
+				restriction: { tagIds: null, fileIds: null }
 			};
 		}),
 		createSession: Effect.fn('Auth.createSession')(function* (passcode) {
@@ -455,14 +512,23 @@ const makeAuth = Effect.gen(function* () {
 								message: 'Key expiration is invalid'
 							})
 			});
+			const allowedTagIds = yield* validate(() =>
+				normalizeTargets(options?.allowedTagIds)
+			);
+			const allowedFileIds = yield* validate(() =>
+				normalizeTargets(options?.allowedFileIds)
+			);
+			const tagJson = allowedTagIds ? JSON.stringify(allowedTagIds) : null;
+			const fileJson = allowedFileIds ? JSON.stringify(allowedFileIds) : null;
 			const generated = yield* makeApiKey(name);
 			yield* sql`
 				INSERT INTO api_keys (
-					id, name, prefix, scope, secret_hash, created_at, expires_at
+					id, name, prefix, scope, secret_hash, created_at, expires_at,
+					allowed_tag_ids, allowed_file_ids
 				) VALUES (
 					${generated.row.id}, ${generated.row.name}, ${generated.row.prefix},
 					${scope}, ${generated.secretHash}, ${generated.row.createdAt},
-					${expiresAt}
+					${expiresAt}, ${tagJson}, ${fileJson}
 				)
 			`.pipe(
 				Effect.mapError(
@@ -475,7 +541,9 @@ const makeAuth = Effect.gen(function* () {
 					scope,
 					expiresAt,
 					lastUsedAt: null,
-					revokedAt: null
+					revokedAt: null,
+					allowedTagIds,
+					allowedFileIds
 				},
 				token: generated.token
 			};

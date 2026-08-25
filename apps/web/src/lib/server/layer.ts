@@ -13,6 +13,8 @@ import { SemanticBindingsLive } from './services/semantic';
 import { IndexingLive } from './services/indexing';
 import { LifecycleLive } from './services/lifecycle';
 import { GrantSecretsLive } from './services/grant-secrets';
+import { SharesLive } from './services/shares';
+import { UploadsLive } from './services/uploads';
 
 const SqlLive = Layer.unwrap(Effect.map(Db, (db) => D1.layer({ db })));
 
@@ -30,11 +32,15 @@ export const requestLayer = (env: Env) => {
 	const auth = AuthLive.pipe(Layer.provide(infrastructure));
 	const authGuard = AuthGuardLive().pipe(Layer.provide(bindings));
 	const grantSecrets = GrantSecretsLive.pipe(Layer.provide(infrastructure));
+	const shares = SharesLive.pipe(Layer.provide(infrastructure));
 	const tags = TagsLive.pipe(Layer.provide(infrastructure));
 	const search = SearchLive.pipe(
 		Layer.provide(Layer.merge(infrastructure, semantic))
 	);
 	const sites = SitesLive.pipe(Layer.provide(infrastructure));
+	const uploads = UploadsLive.pipe(
+		Layer.provide(Layer.mergeAll(infrastructure, tags))
+	);
 	const files = FilesLive.pipe(
 		Layer.provide(Layer.mergeAll(infrastructure, tags))
 	);
@@ -42,7 +48,9 @@ export const requestLayer = (env: Env) => {
 		Layer.provide(Layer.mergeAll(infrastructure, semantic))
 	);
 	const lifecycle = LifecycleLive.pipe(
-		Layer.provide(Layer.mergeAll(infrastructure, auth, sites, files, indexing))
+		Layer.provide(
+			Layer.mergeAll(infrastructure, auth, sites, files, indexing, uploads)
+		)
 	);
 
 	return Layer.mergeAll(
@@ -51,9 +59,11 @@ export const requestLayer = (env: Env) => {
 		auth,
 		authGuard,
 		grantSecrets,
+		shares,
 		tags,
 		search,
 		sites,
+		uploads,
 		files,
 		indexing,
 		lifecycle

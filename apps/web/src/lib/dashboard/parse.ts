@@ -13,7 +13,11 @@ import type {
 	FileDetailResponse,
 	FileListResponse,
 	FileMutationResponse,
+	FileShare,
+	FileShareCreateResponse,
+	FileShareListResponse,
 	FileSummary,
+	SiteCommitResponse,
 	FileTagsResponse,
 	FileVersion,
 	Tag,
@@ -169,6 +173,10 @@ export const parseFileListResponse = (value: unknown): FileListResponse => {
 		tags: list(record.tags, parseTag, 'files.tags'),
 		contentOrigin: text(record.contentOrigin, 'files.contentOrigin'),
 		maxUploadBytes: integer(record.maxUploadBytes, 'files.maxUploadBytes'),
+		maxStagedUploadBytes: integer(
+			record.maxStagedUploadBytes,
+			'files.maxStagedUploadBytes'
+		),
 		semantic: parseSemanticStatus(record.semantic, 'files.semantic')
 	};
 };
@@ -218,6 +226,16 @@ export const parseFileTagsResponse = (value: unknown): FileTagsResponse => {
 	};
 };
 
+export const parseSiteCommitResponse = (value: unknown): SiteCommitResponse => {
+	const record = requireRecord(value, 'site');
+	return {
+		file: parseFileSummary(record.file, 'site.file'),
+		url: text(record.url, 'site.url'),
+		assetCount: integer(record.assetCount, 'site.assetCount'),
+		cleanupPending: flag(record.cleanupPending, 'site.cleanupPending')
+	};
+};
+
 export const parseUploadResponse = (value: unknown): UploadResponse => {
 	const record = requireRecord(value, 'upload');
 	return {
@@ -234,6 +252,12 @@ export const parseTagResponse = (value: unknown): TagResponse => {
 	};
 };
 
+const maybeStringList = (
+	value: unknown,
+	path: string
+): ReadonlyArray<string> | null =>
+	value === null ? null : list(value, text, path);
+
 const parseApiKey = (value: unknown, path = 'key'): ApiKey => {
 	const record = requireRecord(value, path);
 	return {
@@ -244,7 +268,15 @@ const parseApiKey = (value: unknown, path = 'key'): ApiKey => {
 		createdAt: text(record.createdAt, `${path}.createdAt`),
 		expiresAt: maybeString(record.expiresAt, `${path}.expiresAt`),
 		lastUsedAt: maybeString(record.lastUsedAt, `${path}.lastUsedAt`),
-		revokedAt: maybeString(record.revokedAt, `${path}.revokedAt`)
+		revokedAt: maybeString(record.revokedAt, `${path}.revokedAt`),
+		allowedTagIds: maybeStringList(
+			record.allowedTagIds,
+			`${path}.allowedTagIds`
+		),
+		allowedFileIds: maybeStringList(
+			record.allowedFileIds,
+			`${path}.allowedFileIds`
+		)
 	};
 };
 
@@ -271,5 +303,42 @@ export const parseSessionsRevokedResponse = (
 	const record = requireRecord(value, 'sessions');
 	return {
 		revoked: integer(record.revoked, 'sessions.revoked')
+	};
+};
+
+const parseFileShare = (value: unknown, path = 'share'): FileShare => {
+	const record = requireRecord(value, path);
+	return {
+		id: text(record.id, `${path}.id`),
+		fileId: text(record.fileId, `${path}.fileId`),
+		label: maybeString(record.label, `${path}.label`),
+		hasPassword: flag(record.hasPassword, `${path}.hasPassword`),
+		createdAt: text(record.createdAt, `${path}.createdAt`),
+		expiresAt: maybeString(record.expiresAt, `${path}.expiresAt`),
+		lastAccessedAt: maybeString(
+			record.lastAccessedAt,
+			`${path}.lastAccessedAt`
+		),
+		revokedAt: maybeString(record.revokedAt, `${path}.revokedAt`)
+	};
+};
+
+export const parseFileShareListResponse = (
+	value: unknown
+): FileShareListResponse => {
+	const record = requireRecord(value, 'shares');
+	return {
+		shares: list(record.shares, parseFileShare, 'shares.shares'),
+		contentOrigin: text(record.contentOrigin, 'shares.contentOrigin')
+	};
+};
+
+export const parseFileShareCreateResponse = (
+	value: unknown
+): FileShareCreateResponse => {
+	const record = requireRecord(value, 'share');
+	return {
+		share: parseFileShare(record.share, 'share.share'),
+		url: text(record.url, 'share.url')
 	};
 };

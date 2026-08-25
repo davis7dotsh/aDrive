@@ -117,7 +117,7 @@
 		</section>
 
 		<div class="mt-10 border-t border-zinc-200 pt-8">
-			<ApiKeys token={session.token} />
+			<ApiKeys token={session.token} tags={settings.current?.tags ?? []} />
 		</div>
 
 		<section class="mt-10 border-t border-zinc-200 pt-8">

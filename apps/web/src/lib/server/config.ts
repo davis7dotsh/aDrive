@@ -5,6 +5,7 @@ export interface AppConfigShape {
 	readonly dashboardOrigin: string;
 	readonly contentOrigin: string;
 	readonly maxUploadBytes: number;
+	readonly maxStagedUploadBytes: number;
 	readonly maxTotalBytes: number;
 	readonly passcode: string;
 	readonly semanticSearch: 'off' | 'auto' | 'required';
@@ -37,6 +38,23 @@ export const configFromEnv = (env: Env) => {
 	if (!Number.isSafeInteger(maxUploadBytes) || maxUploadBytes <= 0) {
 		throw new Error('MAX_UPLOAD_BYTES must be a positive safe integer');
 	}
+	// Per-file ceiling for the staged/resumable multipart flow. Defaults to
+	// 500 MiB and must be at least the one-shot cap so staged uploads are
+	// never smaller than a single PUT.
+	const rawMaxStagedUploadBytes = env.MAX_STAGED_UPLOAD_BYTES as
+		string | undefined;
+	const maxStagedUploadBytes =
+		rawMaxStagedUploadBytes === undefined || rawMaxStagedUploadBytes === ''
+			? 500 * 1024 * 1024
+			: Number(rawMaxStagedUploadBytes);
+	if (
+		!Number.isSafeInteger(maxStagedUploadBytes) ||
+		maxStagedUploadBytes < maxUploadBytes
+	) {
+		throw new Error(
+			'MAX_STAGED_UPLOAD_BYTES must be a safe integer at least MAX_UPLOAD_BYTES'
+		);
+	}
 	// Global cap on stored bytes across all live file versions. Defaults to
 	// 100 GiB when unset so a leaked credential cannot fill the bucket.
 	const rawMaxTotalBytes = env.MAX_TOTAL_BYTES as string | undefined;
@@ -63,6 +81,7 @@ export const configFromEnv = (env: Env) => {
 	return {
 		...origins,
 		maxUploadBytes,
+		maxStagedUploadBytes,
 		maxTotalBytes,
 		passcode: env.PASSCODE,
 		semanticSearch,

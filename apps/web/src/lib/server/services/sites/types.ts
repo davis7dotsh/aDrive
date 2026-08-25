@@ -1,4 +1,8 @@
-import { type FileSummary, type SiteSessionCreate } from '@adrive/shared';
+import {
+	type FileSummary,
+	type SitePublish,
+	type SiteSessionCreate
+} from '@adrive/shared';
 import { Effect, Schema } from 'effect';
 import { InvalidRequest, NotFound, StorageError } from '../../errors';
 
@@ -97,6 +101,12 @@ export interface SitesShape {
 	>;
 	readonly commit: (
 		sessionId: string
+	) => Effect.Effect<
+		SiteCommitResult,
+		InvalidRequest | NotFound | StorageError
+	>;
+	readonly publishFromFiles: (
+		input: SitePublish
 	) => Effect.Effect<
 		SiteCommitResult,
 		InvalidRequest | NotFound | StorageError

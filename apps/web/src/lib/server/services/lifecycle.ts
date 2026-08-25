@@ -3,6 +3,7 @@ import { Auth } from './auth';
 import { Files } from './files';
 import { Indexing } from './indexing';
 import { Sites } from './sites';
+import { Uploads } from './uploads';
 
 export interface LifecycleSummary {
 	readonly authentication: number;
@@ -67,6 +68,7 @@ const makeLifecycle = Effect.gen(function* () {
 	const files = yield* Files;
 	const indexing = yield* Indexing;
 	const sites = yield* Sites;
+	const uploads = yield* Uploads;
 
 	const run = runLifecycleTasks({
 		// Rotation and sweep are independent: a failed rotation check must
@@ -90,7 +92,14 @@ const makeLifecycle = Effect.gen(function* () {
 		).pipe(Effect.map(([revoked, swept]) => revoked + swept)),
 		sites: sites.sweepLifecycle(10),
 		indexing: indexing.runDue(5),
-		files: files.sweepPurges(5),
+		// Fold expired staged-upload cleanup into the file task so an
+		// abandoned multipart upload's R2 parts and quota reservation are
+		// released without changing the summary shape. The two counts are
+		// independent: an upload sweep failure cannot lose the purge count.
+		files: Effect.zip(
+			files.sweepPurges(5),
+			uploads.sweep(10).pipe(Effect.catchCause(() => Effect.succeed(0)))
+		).pipe(Effect.map(([purged, swept]) => purged + swept)),
 		vectors: indexing.retryVectorDeletes(100)
 	}).pipe(Effect.withSpan('Lifecycle.run'));
 

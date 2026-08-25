@@ -18,6 +18,7 @@
 		token,
 		tags,
 		maxUploadBytes,
+		maxStagedUploadBytes,
 		onqueued
 	}: {
 		open?: boolean;
@@ -25,6 +26,7 @@
 		token: string;
 		tags: ReadonlyArray<Tag>;
 		maxUploadBytes: number;
+		maxStagedUploadBytes: number;
 		onqueued?: () => void;
 	} = $props();
 
@@ -45,7 +47,8 @@
 	};
 	const hasHtml = $derived(
 		selected.some(
-			(file) => file.size <= maxUploadBytes && isHtmlFile(file.name, file.type)
+			(file) =>
+				file.size <= maxStagedUploadBytes && isHtmlFile(file.name, file.type)
 		)
 	);
 	const effectivePublic = $derived(hasHtml || isPublic);
@@ -73,7 +76,10 @@
 	const choose = (files: FileList | null) => {
 		if (!files) return;
 		folderError = '';
-		const result = partitionUploadFiles(Array.from(files), maxUploadBytes);
+		const result = partitionUploadFiles(
+			Array.from(files),
+			maxStagedUploadBytes
+		);
 		selected = result.accepted;
 		rejected = result.rejected;
 	};
@@ -96,7 +102,7 @@
 
 	const queue = () => {
 		if (selected.length === 0) return;
-		const result = partitionUploadFiles(selected, maxUploadBytes);
+		const result = partitionUploadFiles(selected, maxStagedUploadBytes);
 		selected = result.accepted;
 		rejected = [...rejected, ...result.rejected];
 		if (result.accepted.length === 0) return;
@@ -105,7 +111,8 @@
 			token,
 			public: effectivePublic,
 			tags: selectedTags,
-			expiresAt: expiresAt || null
+			expiresAt: expiresAt || null,
+			maxUploadBytes
 		});
 		reset();
 		open = false;
@@ -147,7 +154,9 @@
 				: 'Drop files here or browse'}
 		</span>
 		<span class="mt-1 text-xs text-zinc-400">
-			Up to {formatBytes(maxUploadBytes)} each · paste with ⌘V
+			Up to {formatBytes(maxStagedUploadBytes)} each · files over {formatBytes(
+				maxUploadBytes
+			)} upload in parts · paste with ⌘V
 		</span>
 	</button>
 	<input
@@ -179,8 +188,8 @@
 					: `${rejected.length} files are too large`}
 			</p>
 			<p class="mt-1 text-xs">
-				The limit is {formatBytes(maxUploadBytes)} per file. Choose smaller files
-				or reduce their size.
+				The limit is {formatBytes(maxStagedUploadBytes)} per file. Choose smaller
+				files or reduce their size.
 			</p>
 			<ul class="mt-1 space-y-0.5 text-xs">
 				{#each rejected.slice(0, 3) as file (file)}
