@@ -155,7 +155,9 @@
 			<Button type="submit" disabled={!name.trim() || busy}>Create key</Button>
 		</div>
 		<details class="max-w-xl text-sm text-zinc-600">
-			<summary class="cursor-pointer text-zinc-500">Limit scope (optional)</summary>
+			<summary class="cursor-pointer text-zinc-500"
+				>Limit scope (optional)</summary
+			>
 			<div class="mt-3 space-y-3">
 				{#if tags.length > 0}
 					<div class="flex flex-wrap gap-2">
@@ -180,7 +182,8 @@
 				/>
 				<p class="text-xs text-zinc-400">
 					A scoped token only reads and edits files that carry one of the chosen
-					tags or appear in the file list. Leave both empty for a full-drive key.
+					tags or appear in the file list. Leave both empty for a full-drive
+					key.
 				</p>
 			</div>
 		</details>

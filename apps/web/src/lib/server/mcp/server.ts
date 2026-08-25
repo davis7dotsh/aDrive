@@ -18,6 +18,7 @@ import { Blobs } from '../services/blobs';
 import { Files } from '../services/files';
 import { Indexing } from '../services/indexing';
 import { Search } from '../services/search';
+import { Shares } from '../services/shares';
 import { Sites } from '../services/sites';
 import { Tags } from '../services/tags';
 import type { AppServices } from '../edge';
@@ -39,7 +40,8 @@ export const READ_TOOL_NAMES = [
 	'list_files',
 	'search_files',
 	'get_file',
-	'list_tags'
+	'list_tags',
+	'list_shares'
 ] as const;
 
 export const WRITE_TOOL_NAMES = [
@@ -49,7 +51,9 @@ export const WRITE_TOOL_NAMES = [
 	'update_tag',
 	'delete_tag',
 	'set_file_tags',
-	'publish_site'
+	'publish_site',
+	'create_share',
+	'revoke_share'
 ] as const;
 
 export interface McpServerInput {
@@ -308,6 +312,23 @@ const registerReadTools = (server: McpServer, input: McpServerInput) => {
 				Effect.gen(function* () {
 					const tags = yield* Tags;
 					return { tags: yield* tags.list };
+				})
+			)
+	);
+
+	server.registerTool(
+		'list_shares',
+		{
+			description: 'List durable private share links for a file',
+			inputSchema: z.object({ file_id: z.string() })
+		},
+		async ({ file_id }) =>
+			toolValue(
+				env,
+				Effect.gen(function* () {
+					const shares = yield* Shares;
+					yield* assertFileInScope(credential, file_id);
+					return { shares: yield* shares.list(file_id) };
 				})
 			)
 	);
@@ -599,5 +620,51 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 			const { kind: _kind, ...value } = published.value;
 			return jsonResult(value);
 		}
+	);
+
+	server.registerTool(
+		'create_share',
+		{
+			description:
+				'Create a durable private link for a file: a revocable URL that works on the content origin, follows the current version, and can carry a password and expiry (default 7 days).',
+			inputSchema: z.object({
+				file_id: z.string(),
+				password: z.string().nullable().optional(),
+				expires_in_days: z.number().nullable().optional(),
+				label: z.string().nullable().optional()
+			})
+		},
+		async ({ file_id, password, expires_in_days, label }) =>
+			toolValue(
+				env,
+				Effect.gen(function* () {
+					const shares = yield* Shares;
+					yield* assertFileInScope(credential, file_id);
+					const created = yield* shares.create(file_id, {
+						password: password ?? null,
+						expiresInDays: expires_in_days,
+						label: label ?? null
+					});
+					return { share: created.share, url: created.url };
+				})
+			)
+	);
+
+	server.registerTool(
+		'revoke_share',
+		{
+			description: 'Revoke a durable private link by share id',
+			inputSchema: z.object({ file_id: z.string(), share_id: z.string() })
+		},
+		async ({ file_id, share_id }) =>
+			toolValue(
+				env,
+				Effect.gen(function* () {
+					const shares = yield* Shares;
+					yield* assertFileInScope(credential, file_id);
+					yield* shares.revoke(file_id, share_id);
+					return { ok: true as const, id: share_id };
+				})
+			)
 	);
 };

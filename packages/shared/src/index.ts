@@ -300,6 +300,48 @@ export const SiteCommitResponseSchema = Schema.Struct({
 
 export type SiteCommitResponse = typeof SiteCommitResponseSchema.Type;
 
+// Durable private links (shares). A share follows the file's current version,
+// works on the cookie-less content origin, is revocable, and can carry an
+// optional password and expiry.
+export const FileShareCreateSchema = Schema.Struct({
+	// Optional viewer password. Omit or null for a token-only link.
+	password: Schema.optional(Schema.NullOr(Schema.String)),
+	// Lifetime in days. Omit for the default (7 days); pass null for no expiry.
+	expiresInDays: Schema.optional(Schema.NullOr(Schema.Number)),
+	label: Schema.optional(Schema.NullOr(Schema.String))
+});
+
+export type FileShareCreate = typeof FileShareCreateSchema.Type;
+
+export const FileShareSchema = Schema.Struct({
+	id: Schema.String,
+	fileId: Schema.String,
+	label: Schema.NullOr(Schema.String),
+	hasPassword: Schema.Boolean,
+	createdAt: Schema.String,
+	expiresAt: Schema.NullOr(Schema.String),
+	lastAccessedAt: Schema.NullOr(Schema.String),
+	revokedAt: Schema.NullOr(Schema.String)
+});
+
+export type FileShare = typeof FileShareSchema.Type;
+
+export const FileShareListResponseSchema = Schema.Struct({
+	shares: Schema.Array(FileShareSchema),
+	contentOrigin: Schema.String
+});
+
+export type FileShareListResponse = typeof FileShareListResponseSchema.Type;
+
+// The `url` carries the one-time secret token and is never returned again.
+export const FileShareCreateResponseSchema = Schema.Struct({
+	share: FileShareSchema,
+	url: Schema.String
+});
+
+export type FileShareCreateResponse =
+	typeof FileShareCreateResponseSchema.Type;
+
 export const AuthCheckResponseSchema = Schema.Struct({
 	ok: Schema.Literal(true)
 });
@@ -385,3 +427,6 @@ export const ErrorResponseSchema = Schema.Struct({
 });
 
 export const API_KEY_PATTERN = /^adr_([A-Za-z0-9]{8})_([A-Za-z0-9_-]{24,})$/;
+
+// Durable share tokens carried in the `?s=` query param of a content link.
+export const SHARE_TOKEN_PATTERN = /^([A-Za-z0-9]{8})_([A-Za-z0-9_-]{24,})$/;

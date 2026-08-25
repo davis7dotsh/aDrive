@@ -13,6 +13,7 @@ import { SemanticBindingsLive } from './services/semantic';
 import { IndexingLive } from './services/indexing';
 import { LifecycleLive } from './services/lifecycle';
 import { GrantSecretsLive } from './services/grant-secrets';
+import { SharesLive } from './services/shares';
 
 const SqlLive = Layer.unwrap(Effect.map(Db, (db) => D1.layer({ db })));
 
@@ -30,6 +31,7 @@ export const requestLayer = (env: Env) => {
 	const auth = AuthLive.pipe(Layer.provide(infrastructure));
 	const authGuard = AuthGuardLive().pipe(Layer.provide(bindings));
 	const grantSecrets = GrantSecretsLive.pipe(Layer.provide(infrastructure));
+	const shares = SharesLive.pipe(Layer.provide(infrastructure));
 	const tags = TagsLive.pipe(Layer.provide(infrastructure));
 	const search = SearchLive.pipe(
 		Layer.provide(Layer.merge(infrastructure, semantic))
@@ -51,6 +53,7 @@ export const requestLayer = (env: Env) => {
 		auth,
 		authGuard,
 		grantSecrets,
+		shares,
 		tags,
 		search,
 		sites,

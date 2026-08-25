@@ -3,6 +3,7 @@ import type {
 	FileDetailResponse,
 	FileListResponse,
 	FileMutation,
+	FileShareCreate,
 	Tag,
 	TagCreate,
 	TagUpdate
@@ -14,6 +15,8 @@ import {
 	parseFileDetailResponse,
 	parseFileListResponse,
 	parseFileMutationResponse,
+	parseFileShareCreateResponse,
+	parseFileShareListResponse,
 	parseFileTagsResponse,
 	parseSessionsRevokedResponse,
 	parseTagResponse,
@@ -424,6 +427,48 @@ export const mutateFile = async (
 		}
 	);
 	return json(parseFileMutationResponse, response);
+};
+
+export const listShares = async (
+	token: string,
+	fileId: string,
+	signal?: AbortSignal
+) => {
+	const response = await request(
+		`/api/files/${encodeURIComponent(fileId)}/shares`,
+		token,
+		{ signal }
+	);
+	return json(parseFileShareListResponse, response);
+};
+
+export const createShare = async (
+	token: string,
+	fileId: string,
+	input: FileShareCreate
+) => {
+	const response = await request(
+		`/api/files/${encodeURIComponent(fileId)}/shares`,
+		token,
+		{
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(input)
+		}
+	);
+	return json(parseFileShareCreateResponse, response);
+};
+
+export const revokeShare = async (
+	token: string,
+	fileId: string,
+	shareId: string
+) => {
+	await request(
+		`/api/files/${encodeURIComponent(fileId)}/shares/${encodeURIComponent(shareId)}`,
+		token,
+		{ method: 'DELETE' }
+	);
 };
 
 export const createTag = async (token: string, input: TagCreate) => {

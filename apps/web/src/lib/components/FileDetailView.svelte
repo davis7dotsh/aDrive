@@ -15,6 +15,7 @@
 	import Icon from './ui/Icon.svelte';
 	import FileName from './files/FileName.svelte';
 	import FilePreview from './files/FilePreview.svelte';
+	import FileShares from './files/FileShares.svelte';
 	import FileSidebar from './files/FileSidebar.svelte';
 	import { resource } from 'runed';
 	import { untrack } from 'svelte';
@@ -368,41 +369,47 @@
 				contentOrigin={detail.current.contentOrigin}
 				ondownload={() => void openLink()}
 			/>
-			<FileSidebar
-				file={detail.current.file}
-				versions={detail.current.versions}
-				moreVersions={detail.current.nextVersionsCursor !== null}
-				loadingVersions={loadingOlderVersions}
-				onmoreversions={() => void loadOlderVersions()}
-				availableTags={detail.current.availableTags}
-				{busy}
-				oncopy={() => resolveLink()}
-				ondownload={() => void openLink()}
-				onvisibility={(value) =>
-					void update(
-						{ action: 'visibility', public: value },
-						value ? 'File is public' : 'File is private'
-					)}
-				onexpiration={(expiresAt) =>
-					update(
-						{ action: 'expiration', expiresAt },
-						expiresAt ? 'Expiration updated' : 'Expiration removed'
-					)}
-				ontag={(tag) => void toggleTag(tag)}
-				oncreatetag={addTag}
-				onversion={(file) => void putVersion(file)}
-				oncopyversion={(version) => resolveLink(version)}
-				onopenversion={(version) => void openLink(version)}
-				onrestoreversion={(version) =>
-					void update(
-						{ action: 'restore-version', version },
-						`Version ${version} restored as a new version`
-					)}
-				onreindex={() =>
-					void update({ action: 'reindex' }, 'Reindexing queued')}
-				ontrash={() => void update({ action: 'trash' }, 'File moved to trash')}
-				onrestore={() => void update({ action: 'restore' }, 'File restored')}
-			/>
+			<div class="space-y-6">
+				{#if detail.current.file.kind === 'file' && !detail.current.file.public && !detail.current.file.deletedAt}
+					<FileShares file={detail.current.file} token={session.token} />
+				{/if}
+				<FileSidebar
+					file={detail.current.file}
+					versions={detail.current.versions}
+					moreVersions={detail.current.nextVersionsCursor !== null}
+					loadingVersions={loadingOlderVersions}
+					onmoreversions={() => void loadOlderVersions()}
+					availableTags={detail.current.availableTags}
+					{busy}
+					oncopy={() => resolveLink()}
+					ondownload={() => void openLink()}
+					onvisibility={(value) =>
+						void update(
+							{ action: 'visibility', public: value },
+							value ? 'File is public' : 'File is private'
+						)}
+					onexpiration={(expiresAt) =>
+						update(
+							{ action: 'expiration', expiresAt },
+							expiresAt ? 'Expiration updated' : 'Expiration removed'
+						)}
+					ontag={(tag) => void toggleTag(tag)}
+					oncreatetag={addTag}
+					onversion={(file) => void putVersion(file)}
+					oncopyversion={(version) => resolveLink(version)}
+					onopenversion={(version) => void openLink(version)}
+					onrestoreversion={(version) =>
+						void update(
+							{ action: 'restore-version', version },
+							`Version ${version} restored as a new version`
+						)}
+					onreindex={() =>
+						void update({ action: 'reindex' }, 'Reindexing queued')}
+					ontrash={() =>
+						void update({ action: 'trash' }, 'File moved to trash')}
+					onrestore={() => void update({ action: 'restore' }, 'File restored')}
+				/>
+			</div>
 		</div>
 	{/if}
 </main>

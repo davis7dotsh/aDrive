@@ -29,6 +29,7 @@ import type { Embedder, VectorIndex } from './services/semantic';
 import type { Indexing } from './services/indexing';
 import type { Lifecycle } from './services/lifecycle';
 import type { GrantSecrets } from './services/grant-secrets';
+import type { Shares } from './services/shares';
 
 export type AppServices =
 	| SqlClient.SqlClient
@@ -44,7 +45,8 @@ export type AppServices =
 	| VectorIndex
 	| Indexing
 	| Lifecycle
-	| GrantSecrets;
+	| GrantSecrets
+	| Shares;
 
 export const isAppError = (failure: unknown): failure is AppError =>
 	failure instanceof InvalidRequest ||
