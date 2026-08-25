@@ -94,9 +94,8 @@ describe('scoped tokens (local platform)', () => {
 			allowedTagIds: [reportsTag]
 		});
 
-		const { GET: listGET } = await import(
-			'../../../routes/api/files/+server.js'
-		);
+		const { GET: listGET } =
+			await import('../../../routes/api/files/+server.js');
 		const listing = await call(
 			listGET,
 			bearerEvent(ctx, token, { path: '/api/files' })
@@ -109,9 +108,8 @@ describe('scoped tokens (local platform)', () => {
 		expect(ids).toContain(inScope.id);
 		expect(ids).not.toContain(outScope.id);
 
-		const { GET: detailGET } = await import(
-			'../../../routes/api/files/[id]/+server.js'
-		);
+		const { GET: detailGET } =
+			await import('../../../routes/api/files/[id]/+server.js');
 		const inDetail = await call(
 			detailGET,
 			bearerEvent(ctx, token, {
@@ -131,9 +129,8 @@ describe('scoped tokens (local platform)', () => {
 			)
 		).rejects.toMatchObject({ status: 403 });
 
-		const { GET: linkGET } = await import(
-			'../../../routes/api/files/[id]/link/+server.js'
-		);
+		const { GET: linkGET } =
+			await import('../../../routes/api/files/[id]/link/+server.js');
 		const link = await call(
 			linkGET,
 			bearerEvent(ctx, token, {

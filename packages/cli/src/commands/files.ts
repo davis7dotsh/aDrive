@@ -167,13 +167,15 @@ const printUpload = (result: UploadResult) =>
 		}
 	});
 
-const uploadCaps = (client: HttpClient.HttpClient, endpoint: string, apiKey: string) =>
-	client
-		.execute(apiRequest('GET', `${endpoint}/api/files`, apiKey))
-		.pipe(
-			Effect.flatMap(ensureOk),
-			Effect.flatMap((response) => decodeBody(FileListResponseSchema, response))
-		);
+const uploadCaps = (
+	client: HttpClient.HttpClient,
+	endpoint: string,
+	apiKey: string
+) =>
+	client.execute(apiRequest('GET', `${endpoint}/api/files`, apiKey)).pipe(
+		Effect.flatMap(ensureOk),
+		Effect.flatMap((response) => decodeBody(FileListResponseSchema, response))
+	);
 
 const oneShotUpload = (
 	client: HttpClient.HttpClient,
@@ -339,11 +341,7 @@ export const put = Command.make(
 					catch: (cause) =>
 						new CliFailure({ message: 'Could not size the file', cause })
 				});
-				const caps = yield* uploadCaps(
-					client,
-					config.endpoint,
-					config.apiKey
-				);
+				const caps = yield* uploadCaps(client, config.endpoint, config.apiKey);
 				if (size > caps.maxStagedUploadBytes) {
 					return yield* new CliFailure({
 						message: 'That is too large for this drive.'

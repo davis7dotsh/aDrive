@@ -26,9 +26,7 @@ const toHex = (buffer: ArrayBuffer) =>
 	).join('');
 
 export const sha256Hex = (value: string) =>
-	crypto.subtle
-		.digest('SHA-256', new TextEncoder().encode(value))
-		.then(toHex);
+	crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)).then(toHex);
 
 const hexBytes = (value: string) => {
 	const normalized = /^[0-9a-f]{64}$/i.test(value) ? value : '0'.repeat(64);

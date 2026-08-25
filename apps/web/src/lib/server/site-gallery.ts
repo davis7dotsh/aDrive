@@ -75,7 +75,9 @@ export const renderSiteIndex = (
 	title: string,
 	assets: ReadonlyArray<GalleryAsset>
 ) => {
-	const images = assets.filter((asset) => asset.contentType.startsWith('image/'));
+	const images = assets.filter((asset) =>
+		asset.contentType.startsWith('image/')
+	);
 	const others = assets.filter(
 		(asset) => !asset.contentType.startsWith('image/')
 	);

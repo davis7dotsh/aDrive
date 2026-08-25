@@ -1,7 +1,4 @@
-import {
-	type FileSummary,
-	type UploadSessionCreate
-} from '@adrive/shared';
+import { type FileSummary, type UploadSessionCreate } from '@adrive/shared';
 import { Context, Effect, Layer, Schema } from 'effect';
 import { validateExpiration } from '../auth-policy';
 import { AppConfig } from '../config';
@@ -79,10 +76,12 @@ export interface UploadsShape {
 	readonly create: (
 		input: UploadSessionCreate
 	) => Effect.Effect<UploadSessionInfo, InvalidRequest | StorageError>;
-	readonly uploadPart: (
-		input: UploadPartInfo
-	) => Effect.Effect<
-		{ readonly partNumber: number; readonly etag: string; readonly sizeBytes: number },
+	readonly uploadPart: (input: UploadPartInfo) => Effect.Effect<
+		{
+			readonly partNumber: number;
+			readonly etag: string;
+			readonly sizeBytes: number;
+		},
 		InvalidRequest | NotFound | StorageError
 	>;
 	readonly complete: (
@@ -310,9 +309,7 @@ const makeUploads = Effect.gen(function* () {
 			);
 			const resolvedTags = yield* tags
 				.resolveNames(decodeTagNames(session.tags))
-				.pipe(
-					Effect.catchTag('InvalidRequest', () => Effect.succeed([]))
-				);
+				.pipe(Effect.catchTag('InvalidRequest', () => Effect.succeed([])));
 			const now = new Date().toISOString();
 			const exists = `EXISTS (SELECT 1 FROM upload_sessions WHERE id = ? AND status = 'complete')`;
 			const statements = [
@@ -368,9 +365,9 @@ const makeUploads = Effect.gen(function* () {
 						.bind(session.file_id, tag.id, session.id)
 				),
 				...fileIndexStatements(db, session.file_id),
-				db.prepare('DELETE FROM upload_parts WHERE session_id = ?').bind(
-					session.id
-				)
+				db
+					.prepare('DELETE FROM upload_parts WHERE session_id = ?')
+					.bind(session.id)
 			];
 			yield* Effect.tryPromise({
 				try: async () => {

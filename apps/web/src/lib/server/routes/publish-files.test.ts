@@ -12,7 +12,10 @@ import {
 } from '../test/route-context';
 import { login, uploadFile } from '../test/helpers';
 
-const publish = async (ctx: RouteTestContext, body: Record<string, unknown>) => {
+const publish = async (
+	ctx: RouteTestContext,
+	body: Record<string, unknown>
+) => {
 	const { POST } = await import('../../../routes/api/sites/publish/+server.js');
 	const response = await call(
 		POST,
@@ -24,7 +27,9 @@ const publish = async (ctx: RouteTestContext, body: Record<string, unknown>) => 
 		})
 	);
 	if (response.status !== 201) {
-		throw new Error(`Publish failed: ${response.status} ${await response.text()}`);
+		throw new Error(
+			`Publish failed: ${response.status} ${await response.text()}`
+		);
 	}
 	await ctx.drainWaitUntil();
 	return (await response.json()) as {
@@ -36,7 +41,10 @@ const publish = async (ctx: RouteTestContext, body: Record<string, unknown>) => 
 
 const serveSite = async (ctx: RouteTestContext, id: string, path: string) => {
 	const { GET } = await import('../../../routes/s/[id]/[...path]/+server.js');
-	return call(GET, ctx.event({ path: `/s/${id}/${path}`, params: { id, path } }));
+	return call(
+		GET,
+		ctx.event({ path: `/s/${id}/${path}`, params: { id, path } })
+	);
 };
 
 describe('publish drive files as a site (local platform)', () => {

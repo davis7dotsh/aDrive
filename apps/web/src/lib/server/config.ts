@@ -42,8 +42,7 @@ export const configFromEnv = (env: Env) => {
 	// 500 MiB and must be at least the one-shot cap so staged uploads are
 	// never smaller than a single PUT.
 	const rawMaxStagedUploadBytes = env.MAX_STAGED_UPLOAD_BYTES as
-		| string
-		| undefined;
+		string | undefined;
 	const maxStagedUploadBytes =
 		rawMaxStagedUploadBytes === undefined || rawMaxStagedUploadBytes === ''
 			? 500 * 1024 * 1024

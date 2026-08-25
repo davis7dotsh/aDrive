@@ -70,7 +70,10 @@ export const publishOps = (
 					message: `A site can publish at most ${MAX_SITE_ASSETS} files`
 				});
 			}
-			if (input.fileId === undefined && (input.displayName ?? '').trim() === '') {
+			if (
+				input.fileId === undefined &&
+				(input.displayName ?? '').trim() === ''
+			) {
 				return yield* new InvalidRequest({
 					status: 400,
 					message: 'A site name is required for a new site'
@@ -176,10 +179,9 @@ export const publishOps = (
 			).pipe(
 				Effect.andThen(session.commit(created.sessionId)),
 				Effect.catch((failure) =>
-					session.abort(created.sessionId).pipe(
-						Effect.ignore,
-						Effect.andThen(Effect.fail(failure))
-					)
+					session
+						.abort(created.sessionId)
+						.pipe(Effect.ignore, Effect.andThen(Effect.fail(failure)))
 				)
 			);
 		})

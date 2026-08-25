@@ -15,7 +15,10 @@ import { AuthGuard } from '$lib/server/services/auth-guard';
 import { Files } from '$lib/server/services/files';
 import { Indexing } from '$lib/server/services/indexing';
 import { Tags } from '$lib/server/services/tags';
-import { assertUnrestricted, filterFilesByScope } from '$lib/server/token-scope';
+import {
+	assertUnrestricted,
+	filterFilesByScope
+} from '$lib/server/token-scope';
 
 const decodeName = (value: string | null) => {
 	if (value === null) {

@@ -27,7 +27,9 @@ const createSession = async (
 		})
 	);
 	if (response.status !== 201) {
-		throw new Error(`Create failed: ${response.status} ${await response.text()}`);
+		throw new Error(
+			`Create failed: ${response.status} ${await response.text()}`
+		);
 	}
 	return (await response.json()) as {
 		sessionId: string;
@@ -43,9 +45,8 @@ const uploadPart = async (
 	partNumber: number,
 	body: string
 ) => {
-	const { PUT } = await import(
-		'../../../routes/api/uploads/[id]/parts/[part]/+server.js'
-	);
+	const { PUT } =
+		await import('../../../routes/api/uploads/[id]/parts/[part]/+server.js');
 	return call(
 		PUT,
 		ctx.event({
@@ -59,9 +60,8 @@ const uploadPart = async (
 };
 
 const complete = async (ctx: RouteTestContext, sessionId: string) => {
-	const { POST } = await import(
-		'../../../routes/api/uploads/[id]/complete/+server.js'
-	);
+	const { POST } =
+		await import('../../../routes/api/uploads/[id]/complete/+server.js');
 	return call(
 		POST,
 		ctx.event({
@@ -103,7 +103,10 @@ describe('staged/resumable upload (local platform)', () => {
 		const { GET } = await import('../../../routes/f/[id]/+server.js');
 		const served = await call(
 			GET,
-			ctx.event({ path: `/f/${session.fileId}`, params: { id: session.fileId } })
+			ctx.event({
+				path: `/f/${session.fileId}`,
+				params: { id: session.fileId }
+			})
 		);
 		expect(served.status).toBe(200);
 		expect(await served.text()).toBe(payload);
@@ -130,7 +133,8 @@ describe('staged/resumable upload (local platform)', () => {
 			sizeBytes: 10,
 			contentType: 'application/octet-stream'
 		});
-		const { DELETE } = await import('../../../routes/api/uploads/[id]/+server.js');
+		const { DELETE } =
+			await import('../../../routes/api/uploads/[id]/+server.js');
 		const aborted = await call(
 			DELETE,
 			ctx.event({

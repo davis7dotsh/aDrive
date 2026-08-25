@@ -17,9 +17,8 @@ const createShare = async (
 	fileId: string,
 	body: Record<string, unknown>
 ) => {
-	const { POST } = await import(
-		'../../../routes/api/files/[id]/shares/+server.js'
-	);
+	const { POST } =
+		await import('../../../routes/api/files/[id]/shares/+server.js');
 	const response = await call(
 		POST,
 		ctx.event({
@@ -74,9 +73,8 @@ describe('durable private links (local platform)', () => {
 		expect(served.headers.get('cache-control')).toBe('private, no-store');
 		expect(await served.text()).toBe('durable body');
 
-		const { DELETE } = await import(
-			'../../../routes/api/files/[id]/shares/[shareId]/+server.js'
-		);
+		const { DELETE } =
+			await import('../../../routes/api/files/[id]/shares/[shareId]/+server.js');
 		const revoked = await call(
 			DELETE,
 			ctx.event({
@@ -87,9 +85,9 @@ describe('durable private links (local platform)', () => {
 		);
 		expect(revoked.status).toBe(204);
 
-		await expect(
-			serveShare(ctx, file.id, `?s=${token}`)
-		).rejects.toMatchObject({ status: 404 });
+		await expect(serveShare(ctx, file.id, `?s=${token}`)).rejects.toMatchObject(
+			{ status: 404 }
+		);
 	});
 
 	it('gates a passworded durable link behind the correct password', async () => {

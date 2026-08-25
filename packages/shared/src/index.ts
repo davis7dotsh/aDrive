@@ -385,8 +385,7 @@ export const FileShareCreateResponseSchema = Schema.Struct({
 	url: Schema.String
 });
 
-export type FileShareCreateResponse =
-	typeof FileShareCreateResponseSchema.Type;
+export type FileShareCreateResponse = typeof FileShareCreateResponseSchema.Type;
 
 export const AuthCheckResponseSchema = Schema.Struct({
 	ok: Schema.Literal(true)

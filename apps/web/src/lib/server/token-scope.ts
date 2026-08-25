@@ -18,7 +18,10 @@ export const restrictionMatches = (
 ) => {
 	if (!isRestricted(restriction)) return true;
 	if (restriction.fileIds?.includes(fileId)) return true;
-	if (restriction.tagIds && tagIds.some((id) => restriction.tagIds!.includes(id)))
+	if (
+		restriction.tagIds &&
+		tagIds.some((id) => restriction.tagIds!.includes(id))
+	)
 		return true;
 	return false;
 };
@@ -27,7 +30,10 @@ export const restrictionMatches = (
 // this a post-filter avoids threading token state into every keyset query;
 // scoped tokens are the exception, and short pages simply page again.
 export const filterFilesByScope = <
-	F extends { readonly id: string; readonly tags: ReadonlyArray<{ readonly id: string }> }
+	F extends {
+		readonly id: string;
+		readonly tags: ReadonlyArray<{ readonly id: string }>;
+	}
 >(
 	credential: AuthorizedCredential,
 	files: ReadonlyArray<F>

@@ -93,15 +93,9 @@ export const keysCreate = Command.make(
 							body: HttpBody.jsonUnsafe({
 								name,
 								...(scopeValue !== undefined ? { scope: scopeValue } : {}),
-								...(Option.isSome(expires)
-									? { expiresAt: expires.value }
-									: {}),
-								...(allowedTagIds.length > 0
-									? { allowedTagIds }
-									: {}),
-								...(allowedFileIds.length > 0
-									? { allowedFileIds }
-									: {})
+								...(Option.isSome(expires) ? { expiresAt: expires.value } : {}),
+								...(allowedTagIds.length > 0 ? { allowedTagIds } : {}),
+								...(allowedFileIds.length > 0 ? { allowedFileIds } : {})
 							})
 						}
 					)

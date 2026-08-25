@@ -35,8 +35,11 @@ Authorization: Bearer adr_…
 ```
 
 Read-only keys can list, search, and read metadata. Read-write keys can
-upload, tag, and publish sites. MCP uploads are capped at 2 MiB; use the
-CLI for larger files.
+upload, tag, publish sites (including `publish_files_site` from existing files),
+and manage durable share links (`create_share` / `list_shares` /
+`revoke_share`). A key can also be scoped to specific tags and/or file IDs so it
+only reaches those files. MCP uploads are capped at 2 MiB; use the CLI or
+dashboard staged upload for larger files.
 
 The marketing landing page lives in `apps/site` — a static assets-only
 Worker (no build step) deployed by `bun release` to
@@ -113,10 +116,28 @@ bun adrive get <file-uuid> --output ./downloaded-file
 bun adrive get <file-uuid> --output - > downloaded-file
 bun adrive site put ./dist
 bun adrive site put ./dist --id <existing-site-uuid>
+bun adrive site publish --tag <tag-uuid> --name "Photos"
+bun adrive site publish --files "<file-uuid> <file-uuid>" --name "Docs"
+bun adrive share create <file-uuid> --expires-days 7
+bun adrive share create <file-uuid> --password 'hunter2'
+bun adrive share list <file-uuid>
+bun adrive share revoke <file-uuid> <share-uuid>
+bun adrive keys create "phone reader" --scope read-only --tag <tag-uuid>
+bun adrive keys list
+bun adrive keys revoke <key-uuid>
 bun adrive --json tag list
 bun adrive tag create reports --color '#2563eb'
 bun adrive tag set <file-uuid> reports important
 ```
+
+`put` streams a single request under the one-shot cap (`MAX_UPLOAD_BYTES`, 95
+MiB) and automatically switches to a resumable, multi-part staged upload for
+larger files up to `MAX_STAGED_UPLOAD_BYTES` (default 500 MiB); the 100 GiB
+instance cap still applies. `keys create` can scope a token to specific tags
+and/or file IDs so agents get narrow, revocable access. `site publish` turns
+files already in the drive into a `/s/<uuid>/` site without re-uploading — it
+copies their current bytes server-side and generates a gallery when no
+`index.html` is selected.
 
 `login` starts a device flow. Normal mode tries to open the approval URL;
 `--headless` prints the same complete URL so it can be opened on another
@@ -133,7 +154,11 @@ CLI first requests a typed content link from the authenticated dashboard API,
 then downloads directly from the cookie-less content origin without forwarding
 its API key. Public links are stable. Private file links are scoped to one exact
 version, signed with a deployment-only HMAC, and expire after 15 minutes; the
-dashboard clearly labels these expiring links when copying them.
+dashboard clearly labels these expiring links when copying them. For sharing a
+private file for longer, create a durable link (`adrive share create`, or the
+file detail view in the dashboard): a revocable URL that follows the file's
+current version, optionally carries a password, defaults to seven days, and
+works on the cookie-less content origin without the dashboard session.
 
 `site put` walks regular files without following symlinks, declares the complete
 manifest, streams assets with four uploads at a time, and atomically publishes

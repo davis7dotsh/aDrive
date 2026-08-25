@@ -66,9 +66,13 @@ some-command | adrive put - --name "output.txt" --private
 
 If the user doesn't say otherwise, it's fine to just make the file public. Make it private if the user asks for it.
 
+`put` uploads in one request under the one-shot cap and automatically switches
+to a resumable, multi-part staged upload for larger files, up to the staged cap.
+`status` reports both (`Max upload  95 MiB (staged 500 MiB)`).
+
 Before uploading:
 
-- Check `status` for the maximum upload size when the file may be large.
+- Check `status` for the one-shot and staged upload sizes when the file may be large.
 - Quote paths and display names.
 
 After uploading, retain the returned file ID and verify its display name, size, content type, and visibility through `adrive --json list`, then send that to the user.
@@ -111,6 +115,25 @@ adrive tag delete <tag-id>
 - Resolve tag and file IDs from fresh output before update or deletion.
 - Verify changes with `adrive --json tag list` and `adrive --json list`.
 
+## Share a private file with a durable link
+
+The default private link is a signed 15-minute URL (used for previews). For
+"open on my phone later" or "send to one person", create a durable, revocable
+link that works on the content origin without the dashboard session:
+
+```sh
+adrive share create <file-id>
+adrive share create <file-id> --expires-days 30
+adrive share create <file-id> --password "hunter2"
+adrive share create <file-id> --no-expiry
+adrive share list <file-id>
+adrive share revoke <file-id> <share-id>
+```
+
+- The returned URL carries a one-time secret; copy it once and give it to the user. Do not store it.
+- A durable link follows the file's current version and stops working when the file is trashed/expired or the share is revoked.
+- Only create a password when the user asks; a password is only meaningful for private files (a public file's plain URL bypasses it).
+
 ## Publish static sites
 
 Create a public site from a directory:
@@ -125,10 +148,34 @@ Republish an existing site:
 adrive site put "./site-directory" --id <site-id>
 ```
 
+Publish files that are already in the drive as a site — no re-upload:
+
+```sh
+adrive site publish --files "<file-id> <file-id>" --name "Photos"
+adrive site publish --tag <tag-id> --name "Reports"
+adrive site publish --files "<file-id>" --id <existing-site-id>
+```
+
 - Site publishing is public.
 - Inspect the directory first. The CLI rejects symlinks and non-regular assets.
 - Use `--id` only after confirming the existing site ID; it updates that site.
+- `site publish` copies the current bytes of the selected files server-side. If none is an `index.html`, a simple gallery/listing is generated; an existing `index.html` is used as-is.
 - Verify the returned site ID, asset count, version, and public URL. A successful fetch may return a normal `2xx` response.
+
+## Mint scoped tokens
+
+Hand out narrow, revocable access with a token limited to specific tags and/or
+file IDs, read-only or read-write, with an optional expiry:
+
+```sh
+adrive keys list
+adrive keys create "phone reader" --scope read-only --tag <tag-id>
+adrive keys create "reports agent" --files "<file-id> <file-id>" --expires 2026-09-01T00:00:00Z
+adrive keys revoke <key-id>
+```
+
+- The created token is shown once; treat it like a password and never store or echo it beyond handing it to the user.
+- A scoped token only reads and edits files in its tags/file list and cannot create new files, sites, tags, or other keys.
 
 ## Authenticate only when needed
 

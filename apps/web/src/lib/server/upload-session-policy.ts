@@ -30,9 +30,7 @@ export const expectedPartSize = (
 	partSize: number,
 	partCount: number
 ) =>
-	partNumber < partCount
-		? partSize
-		: sizeBytes - (partCount - 1) * partSize;
+	partNumber < partCount ? partSize : sizeBytes - (partCount - 1) * partSize;
 
 export const validateSessionSize = (
 	sizeBytes: number,
@@ -65,10 +63,7 @@ export const validatePartNumber = (partNumber: number, partCount: number) => {
 	}
 };
 
-export const validatePartLength = (
-	header: string | null,
-	expected: number
-) => {
+export const validatePartLength = (header: string | null, expected: number) => {
 	if (header === null) {
 		throw new InvalidRequest({
 			status: 411,

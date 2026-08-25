@@ -59,8 +59,7 @@ const serveFile: RequestHandler = ({ params, platform, request, url }) =>
 				if (share.passwordHash !== null) {
 					const supplied = url.searchParams.get('p');
 					const unlocked =
-						supplied !== null &&
-						(yield* shares.checkPassword(share, supplied));
+						supplied !== null && (yield* shares.checkPassword(share, supplied));
 					if (!unlocked) {
 						return sharePasswordPage(url, supplied !== null);
 					}
@@ -72,10 +71,8 @@ const serveFile: RequestHandler = ({ params, platform, request, url }) =>
 				const grantSecrets = yield* GrantSecrets;
 				const version = requestedVersion(url);
 				if (version === null) return yield* new NotFound({ id: params.id });
-				const hasGrant =
-					url.searchParams.has('e') && url.searchParams.has('g');
-				const thumbnailSource =
-					url.searchParams.get('purpose') === 'thumbnail';
+				const hasGrant = url.searchParams.has('e') && url.searchParams.has('g');
+				const thumbnailSource = url.searchParams.get('purpose') === 'thumbnail';
 				if (thumbnailSource && !hasGrant) {
 					return yield* new NotFound({ id: params.id });
 				}

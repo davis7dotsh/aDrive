@@ -188,94 +188,86 @@ const makeBlobs = Effect.gen(function* () {
 					new StorageError({ operation: 'delete blob prefixes', cause })
 			});
 		}),
-		createMultipart: Effect.fn('Blobs.createMultipart')(function* (
-			key,
-			contentType
-		) {
-			const upload = yield* Effect.tryPromise({
-				try: () =>
-					bucket.createMultipartUpload(key, {
-						httpMetadata: { contentType }
-					}),
-				catch: (cause) =>
-					new StorageError({ operation: 'create multipart upload', cause })
-			});
-			return { uploadId: upload.uploadId };
-		}),
-		uploadPart: Effect.fn('Blobs.uploadPart')(function* (
-			key,
-			uploadId,
-			partNumber,
-			body,
-			size
-		) {
-			const uploaded = yield* Effect.tryPromise({
-				try: async () => {
-					const upload = bucket.resumeMultipartUpload(key, uploadId);
-					// FixedLengthStream pins the exact part length so a truncated
-					// or overlong body is rejected at the transform, matching the
-					// one-shot upload path.
-					if (
-						body instanceof ReadableStream &&
-						typeof FixedLengthStream !== 'undefined'
-					) {
-						const { readable, writable } = new FixedLengthStream(size);
-						const pumped = body.pipeTo(writable);
-						const [part] = await Promise.all([
-							upload.uploadPart(partNumber, readable),
-							pumped
-						]);
-						return part;
-					}
-					const value =
-						body instanceof ReadableStream
-							? await new Response(body).arrayBuffer()
-							: body;
-					if (value.byteLength !== size) {
-						throw new StorageError({
-							operation: 'upload part',
-							cause: `Part ${partNumber} was ${value.byteLength} bytes, expected ${size}`
-						});
-					}
-					return upload.uploadPart(partNumber, value);
-				},
-				catch: (cause) =>
-					cause instanceof StorageError
-						? cause
-						: new StorageError({ operation: 'upload part', cause })
-			});
-			return { partNumber: uploaded.partNumber, etag: uploaded.etag };
-		}),
-		completeMultipart: Effect.fn('Blobs.completeMultipart')(function* (
-			key,
-			uploadId,
-			parts
-		) {
-			const object = yield* Effect.tryPromise({
-				try: () => {
-					const upload = bucket.resumeMultipartUpload(key, uploadId);
-					return upload.complete(
-						parts.map((part) => ({
-							partNumber: part.partNumber,
-							etag: part.etag
-						}))
-					);
-				},
-				catch: (cause) =>
-					new StorageError({ operation: 'complete multipart upload', cause })
-			});
-			return { size: object.size, etag: object.httpEtag };
-		}),
-		abortMultipart: Effect.fn('Blobs.abortMultipart')(function* (
-			key,
-			uploadId
-		) {
-			yield* Effect.tryPromise({
-				try: () => bucket.resumeMultipartUpload(key, uploadId).abort(),
-				catch: (cause) =>
-					new StorageError({ operation: 'abort multipart upload', cause })
-			});
-		})
+		createMultipart: Effect.fn('Blobs.createMultipart')(
+			function* (key, contentType) {
+				const upload = yield* Effect.tryPromise({
+					try: () =>
+						bucket.createMultipartUpload(key, {
+							httpMetadata: { contentType }
+						}),
+					catch: (cause) =>
+						new StorageError({ operation: 'create multipart upload', cause })
+				});
+				return { uploadId: upload.uploadId };
+			}
+		),
+		uploadPart: Effect.fn('Blobs.uploadPart')(
+			function* (key, uploadId, partNumber, body, size) {
+				const uploaded = yield* Effect.tryPromise({
+					try: async () => {
+						const upload = bucket.resumeMultipartUpload(key, uploadId);
+						// FixedLengthStream pins the exact part length so a truncated
+						// or overlong body is rejected at the transform, matching the
+						// one-shot upload path.
+						if (
+							body instanceof ReadableStream &&
+							typeof FixedLengthStream !== 'undefined'
+						) {
+							const { readable, writable } = new FixedLengthStream(size);
+							const pumped = body.pipeTo(writable);
+							const [part] = await Promise.all([
+								upload.uploadPart(partNumber, readable),
+								pumped
+							]);
+							return part;
+						}
+						const value =
+							body instanceof ReadableStream
+								? await new Response(body).arrayBuffer()
+								: body;
+						if (value.byteLength !== size) {
+							throw new StorageError({
+								operation: 'upload part',
+								cause: `Part ${partNumber} was ${value.byteLength} bytes, expected ${size}`
+							});
+						}
+						return upload.uploadPart(partNumber, value);
+					},
+					catch: (cause) =>
+						cause instanceof StorageError
+							? cause
+							: new StorageError({ operation: 'upload part', cause })
+				});
+				return { partNumber: uploaded.partNumber, etag: uploaded.etag };
+			}
+		),
+		completeMultipart: Effect.fn('Blobs.completeMultipart')(
+			function* (key, uploadId, parts) {
+				const object = yield* Effect.tryPromise({
+					try: () => {
+						const upload = bucket.resumeMultipartUpload(key, uploadId);
+						return upload.complete(
+							parts.map((part) => ({
+								partNumber: part.partNumber,
+								etag: part.etag
+							}))
+						);
+					},
+					catch: (cause) =>
+						new StorageError({ operation: 'complete multipart upload', cause })
+				});
+				return { size: object.size, etag: object.httpEtag };
+			}
+		),
+		abortMultipart: Effect.fn('Blobs.abortMultipart')(
+			function* (key, uploadId) {
+				yield* Effect.tryPromise({
+					try: () => bucket.resumeMultipartUpload(key, uploadId).abort(),
+					catch: (cause) =>
+						new StorageError({ operation: 'abort multipart upload', cause })
+				});
+			}
+		)
 	});
 });
 

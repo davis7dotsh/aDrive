@@ -57,10 +57,7 @@ export const shareCreate = Command.make(
 					)
 				)
 				.pipe(Effect.flatMap(ensureOk));
-			const result = yield* decodeBody(
-				FileShareCreateResponseSchema,
-				response
-			);
+			const result = yield* decodeBody(FileShareCreateResponseSchema, response);
 			if (wantsJson()) {
 				yield* emit(result);
 			} else {
@@ -70,9 +67,7 @@ export const shareCreate = Command.make(
 				);
 			}
 		})
-).pipe(
-	Command.withDescription('Create a durable private link for a file')
-);
+).pipe(Command.withDescription('Create a durable private link for a file'));
 
 export const shareList = Command.make(
 	'list',

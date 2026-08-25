@@ -226,9 +226,7 @@ export const parseFileTagsResponse = (value: unknown): FileTagsResponse => {
 	};
 };
 
-export const parseSiteCommitResponse = (
-	value: unknown
-): SiteCommitResponse => {
+export const parseSiteCommitResponse = (value: unknown): SiteCommitResponse => {
 	const record = requireRecord(value, 'site');
 	return {
 		file: parseFileSummary(record.file, 'site.file'),
@@ -271,7 +269,10 @@ const parseApiKey = (value: unknown, path = 'key'): ApiKey => {
 		expiresAt: maybeString(record.expiresAt, `${path}.expiresAt`),
 		lastUsedAt: maybeString(record.lastUsedAt, `${path}.lastUsedAt`),
 		revokedAt: maybeString(record.revokedAt, `${path}.revokedAt`),
-		allowedTagIds: maybeStringList(record.allowedTagIds, `${path}.allowedTagIds`),
+		allowedTagIds: maybeStringList(
+			record.allowedTagIds,
+			`${path}.allowedTagIds`
+		),
 		allowedFileIds: maybeStringList(
 			record.allowedFileIds,
 			`${path}.allowedFileIds`
@@ -314,7 +315,10 @@ const parseFileShare = (value: unknown, path = 'share'): FileShare => {
 		hasPassword: flag(record.hasPassword, `${path}.hasPassword`),
 		createdAt: text(record.createdAt, `${path}.createdAt`),
 		expiresAt: maybeString(record.expiresAt, `${path}.expiresAt`),
-		lastAccessedAt: maybeString(record.lastAccessedAt, `${path}.lastAccessedAt`),
+		lastAccessedAt: maybeString(
+			record.lastAccessedAt,
+			`${path}.lastAccessedAt`
+		),
 		revokedAt: maybeString(record.revokedAt, `${path}.revokedAt`)
 	};
 };

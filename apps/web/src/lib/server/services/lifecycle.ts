@@ -98,9 +98,7 @@ const makeLifecycle = Effect.gen(function* () {
 		// independent: an upload sweep failure cannot lose the purge count.
 		files: Effect.zip(
 			files.sweepPurges(5),
-			uploads
-				.sweep(10)
-				.pipe(Effect.catchCause(() => Effect.succeed(0)))
+			uploads.sweep(10).pipe(Effect.catchCause(() => Effect.succeed(0)))
 		).pipe(Effect.map(([purged, swept]) => purged + swept)),
 		vectors: indexing.retryVectorDeletes(100)
 	}).pipe(Effect.withSpan('Lifecycle.run'));

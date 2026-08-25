@@ -644,7 +644,9 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 					const config = yield* AppConfig;
 					yield* assertUnrestricted(credential);
 					const result = yield* sites.publishFromFiles({
-						...(display_name !== undefined ? { displayName: display_name } : {}),
+						...(display_name !== undefined
+							? { displayName: display_name }
+							: {}),
 						...(file_id !== undefined ? { fileId: file_id } : {}),
 						...(file_ids !== undefined ? { fileIds: file_ids } : {}),
 						...(tag_id !== undefined ? { tagId: tag_id } : {})
@@ -657,7 +659,8 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 					};
 				})
 			);
-			if (!published.ok) return errorResult(published.message, published.status);
+			if (!published.ok)
+				return errorResult(published.message, published.status);
 			scheduleIndex(env, ctx, published.value.file.id);
 			return jsonResult(published.value);
 		}
