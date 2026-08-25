@@ -234,9 +234,37 @@ describe('route integration (local platform)', () => {
 		expect(page.headers.get('content-type')).toContain('text/html');
 		expect(await page.text()).toBe('<h1>promo</h1>ok');
 
-		const screenshot = mockBrowserScreenshot(ctx.env, 'site-webp');
 		const { GET: linkGET } =
 			await import('../../../routes/api/files/[id]/link/+server.js');
+		const publicLinkResponse = await call(
+			linkGET,
+			ctx.event({
+				path: `/api/files/${session.fileId}/link`,
+				params: { id: session.fileId }
+			})
+		);
+		expect(await publicLinkResponse.json()).toMatchObject({
+			url: `${ctx.env.CONTENT_ORIGIN}/s/${session.fileId}/`,
+			expiresAt: null,
+			public: true,
+			version: 1
+		});
+
+		const { GET: contentGET } =
+			await import('../../../routes/api/files/[id]/content/+server.js');
+		const publicContentResponse = await call(
+			contentGET,
+			ctx.event({
+				path: `/api/files/${session.fileId}/content`,
+				params: { id: session.fileId }
+			})
+		);
+		expect(publicContentResponse.status).toBe(307);
+		expect(publicContentResponse.headers.get('location')).toBe(
+			`${ctx.env.CONTENT_ORIGIN}/s/${session.fileId}/`
+		);
+
+		const screenshot = mockBrowserScreenshot(ctx.env, 'site-webp');
 		const linked = await call(
 			linkGET,
 			ctx.event({
@@ -361,8 +389,13 @@ describe('route integration (local platform)', () => {
 			name: 'dashboard-preview.html',
 			content: '<h1>lightweight preview</h1>',
 			contentType: 'text/html',
-			isPublic: true
+			isPublic: false
 		});
+		expect(
+			await ctx.env.DB.prepare('SELECT public FROM files WHERE id = ?')
+				.bind(file.id)
+				.first<{ public: number }>()
+		).toEqual({ public: 1 });
 		const screenshot = mockBrowserScreenshot(ctx.env, 'html-webp');
 		const { GET: linkGET } =
 			await import('../../../routes/api/files/[id]/link/+server.js');
@@ -394,6 +427,20 @@ describe('route integration (local platform)', () => {
 		);
 		expect(source.pathname).toBe(`/f/${file.id}`);
 		expect(source.searchParams.get('purpose')).toBe('thumbnail');
+		const { GET: serveGET } = await import('../../../routes/f/[id]/+server.js');
+		const sourceEvent = ctx.event({
+			path: `${source.pathname}${source.search}`,
+			params: { id: file.id }
+		});
+		const renderedSource = await call(serveGET, {
+			...sourceEvent,
+			url: source,
+			request: new Request(source)
+		});
+		expect(renderedSource.headers.get('content-disposition')).toMatch(
+			/^inline;/
+		);
+		expect(await renderedSource.text()).toBe('<h1>lightweight preview</h1>');
 		expect(screenshot).toHaveBeenCalledOnce();
 		await ctx.drainWaitUntil();
 	});

@@ -59,12 +59,12 @@ export const resolveFileContentLink = (
 		const config = yield* AppConfig;
 		const files = yield* Files;
 		const grantSecrets = yield* GrantSecrets;
-		const includeSites = includeUnavailable || requireGrant;
+		const resolveCurrentVersion = includeUnavailable || requireGrant;
 		const resolved = yield* files.findContent(
 			id,
-			includeSites ? undefined : version,
+			resolveCurrentVersion ? undefined : version,
 			includeUnavailable,
-			includeSites
+			true
 		);
 		if (resolved.file.kind === 'site') {
 			if (version !== undefined && version !== resolved.file.version) {
@@ -72,6 +72,17 @@ export const resolveFileContentLink = (
 					status: 400,
 					message: 'Only the current site version can be previewed'
 				});
+			}
+			if (!includeUnavailable && !requireGrant) {
+				return {
+					url: new URL(
+						`/s/${encodeURIComponent(resolved.file.id)}/`,
+						config.contentOrigin
+					).href,
+					expiresAt: null,
+					version: resolved.file.version,
+					public: true
+				};
 			}
 			const grant = yield* grantSecrets.mint({
 				contentOrigin: config.contentOrigin,
@@ -90,7 +101,9 @@ export const resolveFileContentLink = (
 			};
 		}
 		const content =
-			includeSites && version !== undefined && version !== resolved.file.version
+			resolveCurrentVersion &&
+			version !== undefined &&
+			version !== resolved.file.version
 				? yield* files.findContent(id, version, includeUnavailable)
 				: resolved;
 		const grant =
