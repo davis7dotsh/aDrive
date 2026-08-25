@@ -361,7 +361,7 @@
 			<CopyButton variant="ghost" resolve={() => resolveLink()} />
 		</header>
 
-		<div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
+		<div class="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
 			<FilePreview
 				file={detail.current.file}
 				token={session.token}
