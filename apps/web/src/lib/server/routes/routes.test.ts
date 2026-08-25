@@ -293,7 +293,9 @@ describe('route integration (local platform)', () => {
 		expect(action).toBe('screenshot');
 		expect(screenshotOptions).toMatchObject({
 			viewport: { width: 1_200, height: 900 },
-			screenshotOptions: { type: 'webp', quality: 75 }
+			screenshotOptions: { type: 'webp', quality: 75 },
+			allowResourceTypes: ['document', 'stylesheet', 'image', 'font', 'script'],
+			allowRequestPattern: ['^http://localhost:5174(?:/|$)']
 		});
 		expect(screenshotOptions && 'url' in screenshotOptions).toBe(true);
 		const sourceUrl = new URL(
@@ -305,6 +307,21 @@ describe('route integration (local platform)', () => {
 		expect(sourceUrl.searchParams.get('purpose')).toBe('thumbnail');
 		expect(sourceUrl.searchParams.get('e')).not.toBeNull();
 		expect(sourceUrl.searchParams.get('g')).not.toBeNull();
+		const allowedScreenshotRequest = new RegExp(
+			screenshotOptions?.allowRequestPattern?.[0] ?? '^$'
+		);
+		expect(allowedScreenshotRequest.test(sourceUrl.href)).toBe(true);
+		expect(
+			allowedScreenshotRequest.test(
+				new URL(`/s/${session.fileId}/style.css`, ctx.env.CONTENT_ORIGIN).href
+			)
+		).toBe(true);
+		expect(allowedScreenshotRequest.test('https://evil.example/steal')).toBe(
+			false
+		);
+		expect(
+			allowedScreenshotRequest.test('http://169.254.169.254/latest/meta-data/')
+		).toBe(false);
 
 		const downloadCount = async () =>
 			(
@@ -422,6 +439,9 @@ describe('route integration (local platform)', () => {
 		expect(response.status).toBe(307);
 		const options = screenshot.mock.calls[0]?.[1];
 		expect(options && 'url' in options).toBe(true);
+		expect(options?.allowRequestPattern).toEqual([
+			'^http://localhost:5174(?:/|$)'
+		]);
 		const source = new URL(
 			options && 'url' in options ? options.url : 'http://invalid.example'
 		);

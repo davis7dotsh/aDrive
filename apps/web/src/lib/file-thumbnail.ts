@@ -30,8 +30,13 @@ export const DASHBOARD_RENDERED_THUMBNAIL = {
 		timeout: 15_000
 	},
 	bestAttempt: true,
-	rejectResourceTypes: ['media', 'websocket', 'eventsource']
+	allowResourceTypes: ['document', 'stylesheet', 'image', 'font', 'script']
 } as const satisfies Omit<BrowserRunScreenshotOptions, 'url' | 'html'>;
+
+export const dashboardRenderedThumbnailRequestPattern = (
+	contentOrigin: string
+) =>
+	`^${new URL(contentOrigin).origin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:/|$)`;
 
 export const dashboardThumbnailPrefix = (id: string, version: number) =>
 	`thumbnail/${id}/${version}/`;

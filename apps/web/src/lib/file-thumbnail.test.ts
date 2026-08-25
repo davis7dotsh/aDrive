@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	DASHBOARD_RENDERED_THUMBNAIL,
 	DASHBOARD_THUMBNAIL,
+	dashboardRenderedThumbnailRequestPattern,
 	dashboardSiteThumbnailSourceUrl,
 	dashboardThumbnailPrefix,
 	dashboardThumbnailSourceUrl,
@@ -75,6 +76,45 @@ describe('dashboard thumbnails', () => {
 			waitUntil: 'networkidle2',
 			timeout: 15_000
 		});
+		expect(DASHBOARD_RENDERED_THUMBNAIL.allowResourceTypes).toEqual([
+			'document',
+			'stylesheet',
+			'image',
+			'font',
+			'script'
+		]);
+	});
+
+	it('limits rendered screenshot requests to the configured content origin', () => {
+		const allowed = new RegExp(
+			dashboardRenderedThumbnailRequestPattern(
+				'https://files.example.test:8443'
+			)
+		);
+
+		expect(allowed.test('https://files.example.test:8443')).toBe(true);
+		expect(allowed.test('https://files.example.test:8443/s/site-id/')).toBe(
+			true
+		);
+		expect(
+			allowed.test('https://files.example.test:8443/assets/style.css')
+		).toBe(true);
+		expect(allowed.test('https://filesXexampleXtest:8443/s/site-id/')).toBe(
+			false
+		);
+		expect(allowed.test('https://files.example.test:84430/s/site-id/')).toBe(
+			false
+		);
+		expect(allowed.test('https://files.example.test.evil:8443/')).toBe(false);
+		expect(allowed.test('https://dashboard.example.test/')).toBe(false);
+		expect(allowed.test('http://169.254.169.254/latest/meta-data/')).toBe(
+			false
+		);
+		expect(
+			allowed.test(
+				'https://evil.example/?next=https://files.example.test:8443/'
+			)
+		).toBe(false);
 	});
 
 	it('preserves private grants when changing a content link to a thumbnail', () => {

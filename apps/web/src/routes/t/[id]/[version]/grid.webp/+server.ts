@@ -3,6 +3,7 @@ import { Effect } from 'effect';
 import {
 	DASHBOARD_RENDERED_THUMBNAIL,
 	DASHBOARD_THUMBNAIL,
+	dashboardRenderedThumbnailRequestPattern,
 	dashboardSiteThumbnailSourceUrl,
 	dashboardThumbnailSourceUrl,
 	isTransformedWebpResponse,
@@ -206,7 +207,10 @@ export const GET: RequestHandler = ({ params, platform, request, url }) =>
 					const response = rendered
 						? await platform?.env.BROWSER.quickAction('screenshot', {
 								url: sourceUrl.href,
-								...DASHBOARD_RENDERED_THUMBNAIL
+								...DASHBOARD_RENDERED_THUMBNAIL,
+								allowRequestPattern: [
+									dashboardRenderedThumbnailRequestPattern(config.contentOrigin)
+								]
 							})
 						: await fetch(sourceUrl, {
 								cf: { image: DASHBOARD_THUMBNAIL }
