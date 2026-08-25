@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { DashboardFile } from '@adrive/shared';
+	import { browser } from '$app/environment';
 	import { page } from '$app/state';
 	import type { FileListPayload } from '$lib/dashboard/api';
 	import {
@@ -51,7 +52,11 @@
 	});
 	const session = getDashboardSession();
 	const toasts = getToasts();
-	const showTrash = $derived(params.view === 'trash');
+	const showTrash = $derived(
+		browser
+			? params.view === 'trash'
+			: page.url.searchParams.get('view') === 'trash'
+	);
 	const layout = $derived(params.layout === 'list' ? 'list' : 'grid');
 	const loadingLayout = $derived(
 		page.url.searchParams.get('layout') === 'list' ? 'list' : 'grid'
