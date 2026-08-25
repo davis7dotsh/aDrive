@@ -20,6 +20,7 @@ let deviceAuthorizations = 0;
 let authChecks = 0;
 let uploadedContentLength: string | undefined;
 let linkUrlOverride: string | undefined;
+let keyCreateBody: unknown;
 
 const deviceApiKey = 'adr_login123_123456789012345678901234';
 
@@ -221,6 +222,55 @@ beforeAll(async () => {
 					JSON.stringify({ message: 'A valid credential is required' })
 				);
 			}
+			return;
+		}
+		if (request.method === 'POST' && request.url === '/api/auth/keys') {
+			const chunks: Array<Buffer> = [];
+			request.on('data', (chunk: Buffer) => chunks.push(chunk));
+			request.on('end', () => {
+				keyCreateBody = JSON.parse(Buffer.concat(chunks).toString());
+				response.statusCode = 201;
+				response.setHeader('Content-Type', 'application/json');
+				response.end(
+					JSON.stringify({
+						key: {
+							id: 'key-scoped',
+							name: 'scoped agent',
+							prefix: 'abcd1234',
+							scope: 'read-only',
+							createdAt: file.createdAt,
+							expiresAt: null,
+							lastUsedAt: null,
+							revokedAt: null,
+							allowedTagIds: ['tag-a'],
+							allowedFileIds: null
+						},
+						token: 'adr_scoped01_123456789012345678901234'
+					})
+				);
+			});
+			return;
+		}
+		if (request.method === 'GET' && request.url === '/api/auth/keys') {
+			response.setHeader('Content-Type', 'application/json');
+			response.end(
+				JSON.stringify({
+					keys: [
+						{
+							id: 'key-scoped',
+							name: 'scoped agent',
+							prefix: 'abcd1234',
+							scope: 'read-only',
+							createdAt: file.createdAt,
+							expiresAt: null,
+							lastUsedAt: null,
+							revokedAt: null,
+							allowedTagIds: ['tag-a'],
+							allowedFileIds: null
+						}
+					]
+				})
+			);
 			return;
 		}
 		if (request.method === 'PUT' && request.url === '/api/files/boom/tags') {
@@ -538,6 +588,40 @@ describe('CLI stream and JSON contracts', () => {
 		expect(result.stdout.toString() + result.stderr.toString()).toContain(
 			'https'
 		);
+	});
+
+	it('mints a scoped token and forwards its tag/file targets', async () => {
+		keyCreateBody = undefined;
+		const result = await run([
+			'keys',
+			'create',
+			'scoped agent',
+			'--scope',
+			'read-only',
+			'--tags',
+			'tag-a, tag-b',
+			'--files',
+			'file-1'
+		]);
+		expect(result.status).toBe(0);
+		expect(result.stderr.toString()).toBe('');
+		expect(result.stdout.toString()).toContain(
+			'adr_scoped01_123456789012345678901234'
+		);
+		expect(keyCreateBody).toMatchObject({
+			name: 'scoped agent',
+			scope: 'read-only',
+			allowedTagIds: ['tag-a', 'tag-b'],
+			allowedFileIds: ['file-1']
+		});
+	});
+
+	it('lists keys as machine-parseable JSON', async () => {
+		const result = await run(['--json', 'keys', 'list']);
+		expect(result.status).toBe(0);
+		expect(JSON.parse(result.stdout.toString())).toMatchObject({
+			keys: [{ id: 'key-scoped', allowedTagIds: ['tag-a'] }]
+		});
 	});
 
 	it('accepts update as an alias of upgrade', async () => {

@@ -47,7 +47,8 @@ const rpc = async (scope: 'read-only' | 'read-write', body: unknown) => {
 				credential: {
 					credentialId: 'key-1',
 					kind: 'api-key',
-					scope
+					scope,
+					restriction: { tagIds: null, fileIds: null }
 				}
 			}),
 		{

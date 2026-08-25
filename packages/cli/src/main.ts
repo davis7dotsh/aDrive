@@ -5,6 +5,7 @@ import { Effect } from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
 import { login, whoami } from './commands/auth.ts';
 import { get, list, put, rename, status } from './commands/files.ts';
+import { keys } from './commands/keys.ts';
 import { site } from './commands/sites.ts';
 import { tag } from './commands/tags.ts';
 import { upgrade } from './commands/upgrade.ts';
@@ -25,6 +26,7 @@ const root = Command.make('adrive', {
 		put,
 		get,
 		rename,
+		keys,
 		site,
 		tag,
 		upgrade

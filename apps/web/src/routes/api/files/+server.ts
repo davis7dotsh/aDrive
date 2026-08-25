@@ -15,6 +15,7 @@ import { AuthGuard } from '$lib/server/services/auth-guard';
 import { Files } from '$lib/server/services/files';
 import { Indexing } from '$lib/server/services/indexing';
 import { Tags } from '$lib/server/services/tags';
+import { assertUnrestricted, filterFilesByScope } from '$lib/server/token-scope';
 
 const decodeName = (value: string | null) => {
 	if (value === null) {
@@ -75,7 +76,7 @@ export const GET: RequestHandler = ({ cookies, request, url }) =>
 			const tags = yield* Tags;
 			const indexing = yield* Indexing;
 			const config = yield* AppConfig;
-			yield* authorizeRequest(auth, request, url, cookies);
+			const credential = yield* authorizeRequest(auth, request, url, cookies);
 			const trashed = url.searchParams.get('trashed') === 'true';
 			const page = {
 				cursor: url.searchParams.get('cursor'),
@@ -102,7 +103,7 @@ export const GET: RequestHandler = ({ cookies, request, url }) =>
 						{ concurrency: 'unbounded' }
 					);
 			return Response.json({
-				files: listing.files,
+				files: filterFilesByScope(credential, listing.files),
 				nextCursor: listing.nextCursor,
 				tags: tagList ?? [],
 				contentOrigin: config.contentOrigin,
@@ -133,6 +134,7 @@ export const PUT: RequestHandler = async (event) => {
 				url,
 				cookies
 			);
+			yield* assertUnrestricted(credential);
 			const rateLimit = yield* authGuard.consume(
 				'upload',
 				credential.credentialId

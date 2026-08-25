@@ -103,12 +103,23 @@ export const listApiKeys = async (token: string, signal?: AbortSignal) => {
 export const createApiKey = async (
 	token: string,
 	name: string,
-	scope: 'read-only' | 'read-write' = 'read-write'
+	scope: 'read-only' | 'read-write' = 'read-write',
+	options: {
+		readonly expiresAt?: string | null;
+		readonly allowedTagIds?: ReadonlyArray<string> | null;
+		readonly allowedFileIds?: ReadonlyArray<string> | null;
+	} = {}
 ) => {
 	const response = await request('/api/auth/keys', token, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name, scope })
+		body: JSON.stringify({
+			name,
+			scope,
+			expiresAt: options.expiresAt ?? null,
+			allowedTagIds: options.allowedTagIds ?? null,
+			allowedFileIds: options.allowedFileIds ?? null
+		})
 	});
 	return json(parseApiKeyCreateResponse, response);
 };

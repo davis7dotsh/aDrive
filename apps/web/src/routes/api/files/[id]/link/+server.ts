@@ -7,6 +7,7 @@ import {
 import { InvalidRequest } from '$lib/server/errors';
 import { runEdge } from '$lib/server/edge';
 import { Auth, authorizeRequest } from '$lib/server/services/auth';
+import { assertFileInScope } from '$lib/server/token-scope';
 
 const requestedVersion = (url: URL) => {
 	const value = url.searchParams.get('v');
@@ -25,7 +26,8 @@ export const GET: RequestHandler = ({ cookies, params, request, url }) =>
 	runEdge(
 		Effect.gen(function* () {
 			const auth = yield* Auth;
-			yield* authorizeRequest(auth, request, url, cookies);
+			const credential = yield* authorizeRequest(auth, request, url, cookies);
+			yield* assertFileInScope(credential, params.id);
 			return contentLinkJsonResponse(
 				yield* resolveFileContentLink(
 					params.id,

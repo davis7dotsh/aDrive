@@ -8,6 +8,11 @@ import { InvalidRequest, validate } from '../errors';
 import { maxPreviewBytes, previewKind } from '../file-preview';
 import { resolveFileContentLink } from '../file-content-link';
 import type { AuthorizedCredential } from '../services/auth';
+import {
+	assertFileInScope,
+	assertUnrestricted,
+	filterFilesByScope
+} from '../token-scope';
 import { AuthGuard } from '../services/auth-guard';
 import { Blobs } from '../services/blobs';
 import { Files } from '../services/files';
@@ -102,6 +107,8 @@ const registerReadTools = (server: McpServer, input: McpServerInput) => {
 						kind: credential.kind,
 						scope: credential.scope,
 						credentialId: credential.credentialId,
+						allowedTagIds: credential.restriction.tagIds,
+						allowedFileIds: credential.restriction.fileIds,
 						dashboardOrigin: config.dashboardOrigin,
 						contentOrigin: config.contentOrigin
 					};
@@ -137,7 +144,7 @@ const registerReadTools = (server: McpServer, input: McpServerInput) => {
 							cursor,
 							limit: MCP_STATUS_PAGE_SIZE
 						});
-						for (const item of page.files) {
+						for (const item of filterFilesByScope(credential, page.files)) {
 							if (item.kind === 'site') {
 								siteCount += 1;
 							} else {
@@ -190,7 +197,11 @@ const registerReadTools = (server: McpServer, input: McpServerInput) => {
 						cursor: cursor ?? null,
 						limit: yield* validate(() => mcpPageLimit(limit))
 					};
-					return yield* files.list(false, page);
+					const listing = yield* files.list(false, page);
+					return {
+						files: filterFilesByScope(credential, listing.files),
+						nextCursor: listing.nextCursor
+					};
 				})
 			)
 	);
@@ -216,7 +227,7 @@ const registerReadTools = (server: McpServer, input: McpServerInput) => {
 						cursor: cursor ?? null
 					});
 					return {
-						files: page.files,
+						files: filterFilesByScope(credential, page.files),
 						nextCursor: page.nextCursor
 					};
 				})
@@ -240,6 +251,7 @@ const registerReadTools = (server: McpServer, input: McpServerInput) => {
 					const files = yield* Files;
 					const blobs = yield* Blobs;
 					const config = yield* AppConfig;
+					yield* assertFileInScope(credential, id);
 					const detail = yield* files.detail(id);
 					const now = new Date().toISOString();
 					if (!fileIsLive(detail.file, now)) {
@@ -328,6 +340,7 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 					const authGuard = yield* AuthGuard;
 					const files = yield* Files;
 					const config = yield* AppConfig;
+					yield* assertUnrestricted(credential);
 					const rate = yield* authGuard.consume(
 						'upload',
 						credential.credentialId
@@ -388,6 +401,7 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 				env,
 				Effect.gen(function* () {
 					const files = yield* Files;
+					yield* assertFileInScope(credential, id);
 					return yield* files.rename(id, display_name);
 				})
 			);
@@ -411,6 +425,7 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 				env,
 				Effect.gen(function* () {
 					const tags = yield* Tags;
+					yield* assertUnrestricted(credential);
 					return { tag: yield* tags.create({ name, color }) };
 				})
 			)
@@ -431,6 +446,7 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 				env,
 				Effect.gen(function* () {
 					const tags = yield* Tags;
+					yield* assertUnrestricted(credential);
 					return { tag: yield* tags.update(id, { name, color }) };
 				})
 			)
@@ -449,6 +465,7 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 				env,
 				Effect.gen(function* () {
 					const tags = yield* Tags;
+					yield* assertUnrestricted(credential);
 					yield* tags.remove(id);
 					return { ok: true as const, id };
 				})
@@ -470,6 +487,7 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 				Effect.gen(function* () {
 					const tags = yield* Tags;
 					const files = yield* Files;
+					yield* assertFileInScope(credential, file_id);
 					yield* tags.setFileTags(file_id, names);
 					return { file: (yield* files.detail(file_id)).file };
 				})
@@ -525,6 +543,7 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 					const authGuard = yield* AuthGuard;
 					const sites = yield* Sites;
 					const config = yield* AppConfig;
+					yield* assertUnrestricted(credential);
 					const rate = yield* authGuard.consume(
 						'upload',
 						credential.credentialId

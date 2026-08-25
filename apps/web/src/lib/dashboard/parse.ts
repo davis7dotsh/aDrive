@@ -234,6 +234,12 @@ export const parseTagResponse = (value: unknown): TagResponse => {
 	};
 };
 
+const maybeStringList = (
+	value: unknown,
+	path: string
+): ReadonlyArray<string> | null =>
+	value === null ? null : list(value, text, path);
+
 const parseApiKey = (value: unknown, path = 'key'): ApiKey => {
 	const record = requireRecord(value, path);
 	return {
@@ -244,7 +250,12 @@ const parseApiKey = (value: unknown, path = 'key'): ApiKey => {
 		createdAt: text(record.createdAt, `${path}.createdAt`),
 		expiresAt: maybeString(record.expiresAt, `${path}.expiresAt`),
 		lastUsedAt: maybeString(record.lastUsedAt, `${path}.lastUsedAt`),
-		revokedAt: maybeString(record.revokedAt, `${path}.revokedAt`)
+		revokedAt: maybeString(record.revokedAt, `${path}.revokedAt`),
+		allowedTagIds: maybeStringList(record.allowedTagIds, `${path}.allowedTagIds`),
+		allowedFileIds: maybeStringList(
+			record.allowedFileIds,
+			`${path}.allowedFileIds`
+		)
 	};
 };
 

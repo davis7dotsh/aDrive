@@ -319,7 +319,12 @@ export type ApiKeyScope = typeof ApiKeyScopeSchema.Type;
 export const ApiKeyCreateSchema = Schema.Struct({
 	name: Schema.String,
 	scope: Schema.optional(ApiKeyScopeSchema),
-	expiresAt: Schema.optional(Schema.NullOr(Schema.String))
+	expiresAt: Schema.optional(Schema.NullOr(Schema.String)),
+	// Scoped tokens: a key restricted to these tag ids and/or file ids can
+	// only read and modify files that carry one of the tags or appear in the
+	// file list. Omit or pass null/empty for a full-drive key.
+	allowedTagIds: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
+	allowedFileIds: Schema.optional(Schema.NullOr(Schema.Array(Schema.String)))
 });
 
 export const ApiKeySchema = Schema.Struct({
@@ -330,7 +335,9 @@ export const ApiKeySchema = Schema.Struct({
 	createdAt: Schema.String,
 	expiresAt: Schema.NullOr(Schema.String),
 	lastUsedAt: Schema.NullOr(Schema.String),
-	revokedAt: Schema.NullOr(Schema.String)
+	revokedAt: Schema.NullOr(Schema.String),
+	allowedTagIds: Schema.NullOr(Schema.Array(Schema.String)),
+	allowedFileIds: Schema.NullOr(Schema.Array(Schema.String))
 });
 
 export type ApiKey = typeof ApiKeySchema.Type;
