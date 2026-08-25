@@ -9,7 +9,7 @@ import {
 
 const env = {
 	DASHBOARD_ORIGIN: 'https://drive.example.com'
-} as Env;
+} as unknown as Env;
 
 const ctx = {
 	waitUntil: (promise: Promise<unknown>) => {

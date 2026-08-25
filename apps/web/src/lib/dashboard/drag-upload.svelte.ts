@@ -10,6 +10,7 @@ type DragUploadDeps = {
 	readonly toasts: Toasts;
 	readonly uploads: UploadManager;
 	readonly maxUploadBytes: () => number;
+	readonly maxStagedUploadBytes: () => number;
 	readonly uploadOpen: () => boolean;
 	readonly closeUpload: () => void;
 	readonly trashed: () => boolean;
@@ -20,6 +21,7 @@ export const createDragUpload = ({
 	toasts,
 	uploads,
 	maxUploadBytes,
+	maxStagedUploadBytes,
 	uploadOpen,
 	closeUpload,
 	trashed
@@ -59,7 +61,7 @@ export const createDragUpload = ({
 		}
 		const { accepted, rejected } = partitionUploadFiles(
 			selected,
-			maxUploadBytes()
+			maxStagedUploadBytes()
 		);
 		if (rejected.length > 0) {
 			toasts.error(
@@ -73,7 +75,8 @@ export const createDragUpload = ({
 			token: session.token,
 			public: true,
 			tags: [],
-			expiresAt: null
+			expiresAt: null,
+			maxUploadBytes: maxUploadBytes()
 		});
 	};
 	const onDragEnter = (event: DragEvent) => {

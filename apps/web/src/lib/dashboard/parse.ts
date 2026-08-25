@@ -173,6 +173,10 @@ export const parseFileListResponse = (value: unknown): FileListResponse => {
 		tags: list(record.tags, parseTag, 'files.tags'),
 		contentOrigin: text(record.contentOrigin, 'files.contentOrigin'),
 		maxUploadBytes: integer(record.maxUploadBytes, 'files.maxUploadBytes'),
+		maxStagedUploadBytes: integer(
+			record.maxStagedUploadBytes,
+			'files.maxStagedUploadBytes'
+		),
 		semantic: parseSemanticStatus(record.semantic, 'files.semantic')
 	};
 };

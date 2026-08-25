@@ -176,6 +176,7 @@ const registerReadTools = (server: McpServer, input: McpServerInput) => {
 						totalBytes,
 						tags: (yield* tags.list).length,
 						maxUploadBytes: config.maxUploadBytes,
+						maxStagedUploadBytes: config.maxStagedUploadBytes,
 						mcpMaxUploadBytes: MCP_MAX_UPLOAD_BYTES,
 						contentOrigin: config.contentOrigin,
 						semantic: yield* indexing.status

@@ -1,5 +1,5 @@
 import type { Tag } from '@adrive/shared';
-import { uploadFile } from './api';
+import { uploadFile, uploadFileStaged } from './api';
 
 export type UploadItem = {
 	readonly id: string;
@@ -16,6 +16,9 @@ type UploadDefaults = {
 	readonly public: boolean;
 	readonly tags: ReadonlyArray<Tag>;
 	readonly expiresAt: string | null;
+	// Files larger than this one-shot cap upload through the staged multipart
+	// flow instead of a single PUT.
+	readonly maxUploadBytes: number;
 };
 
 type StoredUploadDefaults = Omit<UploadDefaults, 'tags'> & {
@@ -80,7 +83,8 @@ export class UploadManager {
 				token: defaults.token,
 				public: defaults.public,
 				tagNames: defaults.tags.map((tag) => tag.name),
-				expiresAt: defaults.expiresAt
+				expiresAt: defaults.expiresAt,
+				maxUploadBytes: defaults.maxUploadBytes
 			});
 			return item;
 		});
@@ -188,7 +192,9 @@ export class UploadManager {
 		const controller = new AbortController();
 		this.#controllers.set(id, controller);
 		try {
-			const result = await uploadFile(
+			const upload =
+				file.size > defaults.maxUploadBytes ? uploadFileStaged : uploadFile;
+			const result = await upload(
 				defaults.token,
 				file,
 				defaults.public,

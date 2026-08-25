@@ -9,7 +9,8 @@ const { uploadFileMock } = vi.hoisted(() => ({
 }));
 
 vi.mock('./api', () => ({
-	uploadFile: uploadFileMock
+	uploadFile: uploadFileMock,
+	uploadFileStaged: vi.fn()
 }));
 
 const uploadResponse = {
@@ -38,7 +39,8 @@ const defaults = {
 	token: 'secret-token',
 	public: true,
 	tags: [],
-	expiresAt: null
+	expiresAt: null,
+	maxUploadBytes: 100_000_000
 };
 
 const file = (name = 'report.txt', contents = 'report') =>

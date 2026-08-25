@@ -49,6 +49,7 @@ const listResponse = {
 	tags: [tag],
 	contentOrigin: 'https://files.example',
 	maxUploadBytes: 99_614_720,
+	maxStagedUploadBytes: 524_288_000,
 	semantic: {
 		enabled: false,
 		indexedChunks: 0,

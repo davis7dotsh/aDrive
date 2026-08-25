@@ -36,6 +36,7 @@ export const GET: RequestHandler = ({ cookies, request, url }) =>
 				tags: tagList ?? [],
 				contentOrigin: config.contentOrigin,
 				maxUploadBytes: config.maxUploadBytes,
+				maxStagedUploadBytes: config.maxStagedUploadBytes,
 				semantic: semantic ?? {
 					enabled: false,
 					indexedChunks: 0,

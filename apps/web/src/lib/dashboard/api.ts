@@ -399,6 +399,67 @@ export const uploadFile = async (
 	return parseUploadResponse(body);
 };
 
+// Staged/resumable upload for files above the one-shot cap. Opens a session,
+// PUTs each slice of the File (no full buffering), then finalizes. Progress is
+// reported per completed part; a failure or cancel aborts the session so no
+// partial upload lingers server-side.
+export const uploadFileStaged = async (
+	token: string,
+	file: File,
+	isPublic: boolean,
+	tagNames: ReadonlyArray<string> = [],
+	expiresAt: string | null = null,
+	options: UploadOptions = {}
+) => {
+	const created = await request('/api/uploads', token, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({
+			name: file.name,
+			sizeBytes: file.size,
+			contentType: file.type || 'application/octet-stream',
+			public: isPublic,
+			tags: tagNames,
+			expiresAt
+		}),
+		signal: options.signal
+	});
+	const session = (await created.json()) as {
+		sessionId: string;
+		partSize: number;
+		partCount: number;
+	};
+	try {
+		for (let partNumber = 1; partNumber <= session.partCount; partNumber += 1) {
+			const start = (partNumber - 1) * session.partSize;
+			const end = Math.min(start + session.partSize, file.size);
+			await request(
+				`/api/uploads/${encodeURIComponent(session.sessionId)}/parts/${partNumber}`,
+				token,
+				{ method: 'PUT', body: file.slice(start, end), signal: options.signal }
+			);
+			options.onProgress?.(end, file.size);
+		}
+	} catch (cause) {
+		try {
+			await request(
+				`/api/uploads/${encodeURIComponent(session.sessionId)}`,
+				token,
+				{ method: 'DELETE' }
+			);
+		} catch {
+			// Best-effort cleanup; the scheduled sweep aborts stale sessions.
+		}
+		throw cause;
+	}
+	const finished = await request(
+		`/api/uploads/${encodeURIComponent(session.sessionId)}/complete`,
+		token,
+		{ method: 'POST', signal: options.signal }
+	);
+	return json(parseUploadResponse, finished);
+};
+
 export const uploadVersion = async (token: string, id: string, file: File) => {
 	const response = await request(
 		`/api/files/${encodeURIComponent(id)}/versions`,

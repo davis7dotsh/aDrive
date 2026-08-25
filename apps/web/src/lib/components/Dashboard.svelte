@@ -112,6 +112,7 @@
 		toasts,
 		uploads,
 		maxUploadBytes: () => files.list.current.maxUploadBytes,
+		maxStagedUploadBytes: () => files.list.current.maxStagedUploadBytes,
 		uploadOpen: () => uploadOpen,
 		closeUpload: () => (uploadOpen = false),
 		trashed: () => showTrash
@@ -379,6 +380,7 @@
 		token={session.token}
 		tags={files.list.current.tags}
 		maxUploadBytes={files.list.current.maxUploadBytes}
+		maxStagedUploadBytes={files.list.current.maxStagedUploadBytes}
 	/>
 	<TagManager
 		bind:open={tagManagerOpen}

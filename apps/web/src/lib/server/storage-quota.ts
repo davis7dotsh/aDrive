@@ -34,6 +34,12 @@ const TOTAL_STORED_BYTES_SQL = `
 			WHERE a.stored_size_bytes IS NOT NULL
 				AND s.status IN ('open', 'committing')
 		), 0)
+		+
+		COALESCE((
+			SELECT SUM(expected_size_bytes)
+			FROM upload_sessions
+			WHERE status IN ('open', 'committing')
+		), 0)
 	AS total`;
 
 export const ensureStorageQuota = (

@@ -140,6 +140,7 @@ export const FileListResponseSchema = Schema.Struct({
 	tags: Schema.Array(TagSchema),
 	contentOrigin: Schema.String,
 	maxUploadBytes: Schema.Int,
+	maxStagedUploadBytes: Schema.Int,
 	semantic: Schema.Struct({
 		enabled: Schema.Boolean,
 		indexedChunks: Schema.Int,
@@ -257,6 +258,38 @@ export const UploadResponseSchema = Schema.Struct({
 });
 
 export type UploadResponse = typeof UploadResponseSchema.Type;
+
+// Staged / resumable upload for files larger than the one-shot cap. The client
+// creates a session, PUTs uniform parts (each part_size bytes except the last),
+// then completes to finalize into a normal file row.
+export const UploadSessionCreateSchema = Schema.Struct({
+	name: Schema.String,
+	sizeBytes: Schema.Int,
+	contentType: Schema.optional(Schema.String),
+	public: Schema.optional(Schema.Boolean),
+	tags: Schema.optional(Schema.Array(Schema.String)),
+	expiresAt: Schema.optional(Schema.NullOr(Schema.String))
+});
+
+export type UploadSessionCreate = typeof UploadSessionCreateSchema.Type;
+
+export const UploadSessionResponseSchema = Schema.Struct({
+	sessionId: Schema.String,
+	fileId: Schema.String,
+	partSize: Schema.Int,
+	partCount: Schema.Int,
+	expiresAt: Schema.String
+});
+
+export type UploadSessionResponse = typeof UploadSessionResponseSchema.Type;
+
+export const UploadPartResponseSchema = Schema.Struct({
+	partNumber: Schema.Int,
+	etag: Schema.String,
+	sizeBytes: Schema.Int
+});
+
+export type UploadPartResponse = typeof UploadPartResponseSchema.Type;
 
 export const SiteManifestAssetSchema = Schema.Struct({
 	path: Schema.String,
