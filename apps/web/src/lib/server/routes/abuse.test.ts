@@ -836,6 +836,49 @@ describe('admin surface (local platform)', () => {
 				)
 			)[0]
 		).toEqual({ quarantined: false, public: false });
+		expect(
+			(
+				await queryPg(
+					ctx.env,
+					(sql) => sql<{ details: { by?: string } }>`
+						SELECT details FROM scan_verdicts
+						WHERE file_id = ${file.id} AND source = 'admin'`
+				)
+			)[0]?.details
+		).toEqual({ by: 'user_operator' });
+
+		// A live file the scanner flagged after publish is listed for review
+		// until an operator rules on it.
+		await queryPg(
+			ctx.env,
+			(sql) => sql`
+				UPDATE orgs SET trust = 'established' WHERE id = ${target.orgId}`
+		);
+		await loginAs(ctx, { userId: 'user_admin_target', orgId: target.orgId });
+		const flagged = await uploadFile(ctx, {
+			name: 'flagged.txt',
+			content: '<html><script>x()</script></html>',
+			contentType: 'text/plain'
+		});
+		await ctx.drainJobs();
+		await loginAs(ctx, { userId: 'user_operator' });
+		const withFlagged = (await (
+			await adminCall(ctx, 'GET', '/api/admin/overview')
+		).json()) as { held: Array<{ id: string; public: boolean }> };
+		expect(
+			withFlagged.held.find((entry) => entry.id === flagged.id)
+		).toMatchObject({ public: true });
+		await adminCall(
+			ctx,
+			'PATCH',
+			`/api/admin/files/${flagged.id}`,
+			{ id: flagged.id },
+			{ verdict: 'clean' }
+		);
+		const afterClear = (await (
+			await adminCall(ctx, 'GET', '/api/admin/overview')
+		).json()) as { held: Array<{ id: string }> };
+		expect(afterClear.held.map((entry) => entry.id)).not.toContain(flagged.id);
 
 		expect(
 			(
