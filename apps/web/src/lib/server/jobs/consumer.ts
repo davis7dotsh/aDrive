@@ -191,6 +191,15 @@ export const runJobForOrg = (env: Env) => (job: Job) =>
 		}),
 		Effect.catchTag('SqlError', (cause) =>
 			Effect.fail(new StorageError({ operation: 'connect for job', cause }))
+		),
+		// The org was deleted after the job was sent. Nothing to do, and
+		// retrying would only dead-letter it.
+		Effect.catchTag('OrgMissing', (missing) =>
+			log({
+				message: 'job skipped for a missing org',
+				kind: job.kind,
+				orgId: missing.orgId
+			}).pipe(Effect.as('done' as const))
 		)
 	);
 
