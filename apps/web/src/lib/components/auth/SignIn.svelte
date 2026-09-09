@@ -15,7 +15,7 @@
 	<a
 		href={`${resolve('/auth/sign-in')}${signInQuery ? `?${signInQuery}` : ''}`}
 		data-sveltekit-reload
-		class="mt-6 inline-flex w-full items-center justify-center rounded-md bg-zinc-950 px-3 py-2 text-sm font-medium text-white transition hover:bg-zinc-800"
+		class="btn-primary mt-6 inline-flex w-full items-center justify-center rounded-md bg-zinc-950 px-3 py-2 text-sm font-medium text-white transition hover:bg-zinc-800"
 	>
 		Sign in
 	</a>

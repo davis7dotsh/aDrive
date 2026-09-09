@@ -14,7 +14,7 @@
 	} = $props();
 
 	const styles = {
-		primary: 'bg-zinc-950 text-white hover:bg-zinc-800',
+		primary: 'btn-primary bg-zinc-950 text-white hover:bg-zinc-800',
 		secondary: 'border border-zinc-200 bg-white text-zinc-800 hover:bg-zinc-50',
 		ghost: 'text-zinc-600 hover:bg-zinc-100 hover:text-zinc-950',
 		danger: 'text-red-700 hover:bg-red-50'

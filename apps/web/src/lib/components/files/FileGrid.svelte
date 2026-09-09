@@ -53,7 +53,7 @@
 <div
 	aria-busy={loading}
 	aria-live="polite"
-	class="flex items-center justify-between border-b border-zinc-200 pb-3"
+	class="count-row flex items-center justify-between border-b border-zinc-200 pb-3"
 >
 	{#if initialLoading}
 		<p class="text-sm font-medium text-zinc-500">Loading files…</p>
@@ -122,7 +122,7 @@
 	/>
 {:else}
 	<ul
-		class="grid grid-cols-2 gap-x-4 gap-y-8 py-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6"
+		class="file-grid grid grid-cols-2 gap-x-4 gap-y-8 py-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6"
 	>
 		{#each files as file (file.id)}
 			<FileCard

@@ -20,7 +20,7 @@
 </script>
 
 <header class="flex items-center justify-between gap-4">
-	<div class="inline-flex rounded-lg bg-zinc-100 p-1">
+	<div class="segment inline-flex rounded-lg bg-zinc-100 p-1">
 		<button
 			type="button"
 			aria-pressed={!showTrash}
