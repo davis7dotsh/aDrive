@@ -191,9 +191,13 @@
 								<div class="font-mono text-xs text-zinc-400">{file.id}</div>
 							</td>
 							<td class={cell}>{file.orgSlug}</td>
-							<td class={cell}
-								>{file.quarantined ? 'quarantined' : 'held for review'}</td
-							>
+							<td class={cell}>
+								{file.quarantined
+									? 'quarantined'
+									: file.publishPending
+										? 'held'
+										: 'live, flagged'}
+							</td>
 							<td class="{cell} text-xs">
 								{#each file.verdicts as verdict (verdict.source)}
 									<div>

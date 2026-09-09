@@ -175,11 +175,13 @@ export interface AdminShape {
 		orgId: string,
 		trust: Exclude<TrustLevel, 'suspended'>
 	) => Effect.Effect<AdminOrg, NotFound | StorageError>;
-	// An operator's verdict on a held or quarantined file. `clean` clears
-	// the quarantine and publishes a held row; `malicious` quarantines.
+	// An operator's verdict on a held, flagged, or quarantined file. `clean`
+	// clears the quarantine and publishes a held row; `malicious`
+	// quarantines. Recorded as an `admin` verdict row naming the operator.
 	readonly markFile: (
 		fileId: string,
-		verdict: Exclude<ScanVerdict, 'suspicious'>
+		verdict: Exclude<ScanVerdict, 'suspicious'>,
+		by: string
 	) => Effect.Effect<void, NotFound | StorageError>;
 	readonly blockHash: (
 		sha256: string,
@@ -348,7 +350,23 @@ const makeAdmin = Effect.gen(function* () {
 						), '[]'::jsonb) AS verdicts
 					FROM files f
 					JOIN orgs o ON o.id = f.org_id
-					WHERE (f.quarantined OR f.publish_pending) AND f.deleted_at IS NULL
+					WHERE f.deleted_at IS NULL AND (
+						f.quarantined OR f.publish_pending
+						-- A live file the scanner flagged after publish, until an
+						-- operator has ruled on that version.
+						OR (
+							EXISTS (
+								SELECT 1 FROM scan_verdicts v
+								WHERE v.file_id = f.id AND v.version = f.current_version
+									AND v.verdict <> 'clean' AND v.source <> 'admin'
+							)
+							AND NOT EXISTS (
+								SELECT 1 FROM scan_verdicts v
+								WHERE v.file_id = f.id AND v.version = f.current_version
+									AND v.source = 'admin'
+							)
+						)
+					)
 					ORDER BY f.updated_at DESC
 					LIMIT 200`,
 				sql`
@@ -443,16 +461,17 @@ const makeAdmin = Effect.gen(function* () {
 			yield* setOrgTrust(orgId, trust);
 			return yield* loadOrg(orgId);
 		}),
-		markFile: Effect.fn('Admin.markFile')(function* (fileId, verdict) {
+		markFile: Effect.fn('Admin.markFile')(function* (fileId, verdict, by) {
 			const file = yield* fileOrgAndVersion(fileId);
 			yield* sql`
 				INSERT INTO scan_verdicts (file_id, org_id, version, verdict, source, details)
 				VALUES (
 					${fileId}, ${file.org_id}, ${file.current_version}, ${verdict},
-					'admin', '{}'::jsonb
+					'admin', ${JSON.stringify({ by })}::jsonb
 				)
 				ON CONFLICT (file_id, version, source) DO UPDATE
-				SET verdict = EXCLUDED.verdict, created_at = now()
+				SET verdict = EXCLUDED.verdict, details = EXCLUDED.details,
+					created_at = now()
 			`.pipe(storageError('record admin verdict'));
 			if (verdict === 'malicious') {
 				yield* sql`

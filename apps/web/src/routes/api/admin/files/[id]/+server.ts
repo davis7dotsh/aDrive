@@ -14,13 +14,13 @@ export const PATCH: RequestHandler = (event) =>
 	runEdge(
 		Effect.gen(function* () {
 			const admin = yield* Admin;
-			yield* requireAdmin(event);
+			const auth = yield* requireAdmin(event);
 			const { verdict } = yield* decodeJson(
 				event.request,
 				Body,
 				'A verdict (clean, malicious) is required'
 			);
-			yield* admin.markFile(event.params.id, verdict);
+			yield* admin.markFile(event.params.id, verdict, auth.userId);
 			return Response.json({ ok: true as const });
 		})
 	);
