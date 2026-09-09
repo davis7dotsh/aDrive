@@ -63,6 +63,8 @@ describe('host gate', () => {
 		expect(classifyRoute('/f/3f9f')).toBe('content');
 		expect(classifyRoute('/t/3f9f/1/grid.webp')).toBe('content');
 		expect(classifyRoute('/s/3f9f/assets/app.js')).toBe('content');
+		expect(classifyRoute('/report')).toBe('content');
+		expect(classifyRoute('/reports')).toBe('dashboard');
 		expect(classifyRoute('/api/files')).toBe('dashboard');
 		expect(classifyRoute('/mcp')).toBe('dashboard');
 		expect(classifyRoute('/')).toBe('dashboard');

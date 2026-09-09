@@ -440,3 +440,198 @@ describe('scan pipeline (local platform)', () => {
 		expect(await notifications(ctx, sneaky.id)).toEqual(['held']);
 	});
 });
+
+describe('reports and the kill switch (local platform)', () => {
+	let shared: RouteTestContext | undefined;
+	const setup = async () => (shared ??= await createRouteContext());
+
+	const runAdmin = async <A>(
+		ctx: RouteTestContext,
+		program: (
+			admin: import('$lib/server/services/admin').Admin['Service']
+		) => Effect.Effect<A, unknown>
+	) => {
+		const { runWorkerProgram } = await import('$lib/server/edge');
+		const { Admin } = await import('$lib/server/services/admin');
+		return runWorkerProgram(ctx.env, Effect.flatMap(Admin, program));
+	};
+
+	it('stores a report filed on the content host', async () => {
+		const ctx = await setup();
+		await loginAs(ctx, { userId: 'user_reported' });
+		const { orgSlug, orgId } = await currentIdentity(ctx);
+		const file = await uploadFile(ctx, { name: 'reported.txt' });
+		const { GET, POST } = await import('../../../routes/report/+server.js');
+
+		const form = await call(
+			GET,
+			await ctx.contentEvent({ slug: orgSlug, path: `/report?f=${file.id}` })
+		);
+		expect(form.status).toBe(200);
+		expect(await form.text()).toContain(`value="${file.id}"`);
+
+		const filed = await call(
+			POST,
+			await ctx.contentEvent({
+				slug: orgSlug,
+				method: 'POST',
+				path: '/report',
+				body: JSON.stringify({
+					fileId: file.id,
+					reason: 'phishing',
+					details: 'asks for a password'
+				}),
+				headers: { 'content-type': 'application/json' }
+			})
+		);
+		expect(filed.status).toBe(201);
+		const fromForm = await call(
+			POST,
+			await ctx.contentEvent({
+				slug: orgSlug,
+				method: 'POST',
+				path: '/report',
+				body: new URLSearchParams({
+					fileId: file.id,
+					reason: 'spam'
+				}).toString(),
+				headers: { 'content-type': 'application/x-www-form-urlencoded' }
+			})
+		);
+		expect(fromForm.status).toBe(200);
+		expect(fromForm.headers.get('content-type')).toContain('text/html');
+
+		const rows = await queryPg(
+			ctx.env,
+			(sql) => sql<{
+				org_id: string;
+				version: number;
+				reason: string;
+				details: string | null;
+				reporter_ip_hash: string;
+			}>`
+				SELECT org_id, version, reason, details, reporter_ip_hash
+				FROM reports WHERE file_id = ${file.id} ORDER BY created_at`
+		);
+		expect(rows).toMatchObject([
+			{
+				org_id: orgId,
+				version: 1,
+				reason: 'phishing',
+				details: 'asks for a password'
+			},
+			{ org_id: orgId, version: 1, reason: 'spam', details: null }
+		]);
+		expect(rows[0]?.reporter_ip_hash).toMatch(/^[0-9a-f]{64}$/);
+		expect(rows[0]?.reporter_ip_hash).not.toContain('127.0.0.1');
+
+		// A bad reason and a file this host does not serve are refused.
+		await expect(
+			call(
+				POST,
+				await ctx.contentEvent({
+					slug: orgSlug,
+					method: 'POST',
+					path: '/report',
+					body: JSON.stringify({ fileId: file.id, reason: 'meh' }),
+					headers: { 'content-type': 'application/json' }
+				})
+			)
+		).rejects.toMatchObject({ status: 400 });
+		await loginAs(ctx, { userId: 'user_report_other' });
+		const other = await currentIdentity(ctx);
+		await expect(
+			call(
+				POST,
+				await ctx.contentEvent({
+					slug: other.orgSlug,
+					method: 'POST',
+					path: '/report',
+					body: JSON.stringify({ fileId: file.id, reason: 'spam' }),
+					headers: { 'content-type': 'application/json' }
+				})
+			)
+		).rejects.toMatchObject({ status: 404 });
+		ctx.deniedRateLimits.add('anonymous');
+		expect(
+			(
+				await call(
+					POST,
+					await ctx.contentEvent({
+						slug: orgSlug,
+						method: 'POST',
+						path: '/report',
+						body: JSON.stringify({ fileId: file.id, reason: 'spam' }),
+						headers: { 'content-type': 'application/json' }
+					})
+				)
+			).status
+		).toBe(429);
+		ctx.deniedRateLimits.delete('anonymous');
+	});
+
+	it('suspends an org: 404 on its host, 401 for its credentials, and back again', async () => {
+		const ctx = await setup();
+		await loginAs(ctx, { userId: 'user_killed' });
+		const { orgSlug, orgId } = await currentIdentity(ctx);
+		const file = await uploadFile(ctx, { name: 'live.txt', content: 'live' });
+		const { POST: keysPOST } =
+			await import('../../../routes/api/auth/keys/+server.js');
+		const created = await call(
+			keysPOST,
+			ctx.event({
+				method: 'POST',
+				path: '/api/auth/keys',
+				body: JSON.stringify({ name: 'killed cli' }),
+				headers: { 'content-type': 'application/json' }
+			})
+		);
+		const { token } = (await created.json()) as { token: string };
+		const { GET: filesGET } =
+			await import('../../../routes/api/files/+server.js');
+		const asKey = () =>
+			call(
+				filesGET,
+				ctx.event({
+					path: '/api/files',
+					headers: { authorization: `Bearer ${token}` }
+				})
+			);
+		expect((await asKey()).status).toBe(200);
+		const { resolveContentHost } = await import('$lib/server/content-host');
+		expect((await resolveContentHost(ctx.env, orgSlug))._tag).toBe('Found');
+
+		const suspended = await runAdmin(ctx, (admin) => admin.suspendOrg(orgId));
+		expect(suspended.trust).toBe('suspended');
+		// The slug cache was dropped, so the host is gone at once.
+		await expect(
+			ctx.contentEvent({ slug: orgSlug, path: `/f/${file.id}` })
+		).rejects.toMatchObject({ status: 404 });
+		await expect(
+			ctx.contentEvent({ slug: orgSlug, path: `/report?f=${file.id}` })
+		).rejects.toMatchObject({ status: 404 });
+		await expect(asKey()).rejects.toMatchObject({ status: 401 });
+		await expect(
+			call(filesGET, ctx.event({ path: '/api/files' }))
+		).rejects.toMatchObject({ status: 401 });
+		// Signing in again does not lift it.
+		await loginAs(ctx, { userId: 'user_killed', orgId });
+		await expect(
+			call(filesGET, ctx.event({ path: '/api/files' }))
+		).rejects.toMatchObject({ status: 401 });
+
+		const restored = await runAdmin(ctx, (admin) => admin.restoreOrg(orgId));
+		expect(restored.trust).toBe('verified');
+		expect((await asKey()).status).toBe(200);
+		const { GET: serveGET } = await import('../../../routes/f/[id]/+server.js');
+		const served = await call(
+			serveGET,
+			await ctx.contentEvent({
+				slug: orgSlug,
+				path: `/f/${file.id}`,
+				params: { id: file.id }
+			})
+		);
+		expect(await served.text()).toBe('live');
+	});
+});
