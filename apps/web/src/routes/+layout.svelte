@@ -4,9 +4,23 @@
 	import { createToasts } from '$lib/dashboard/toast.svelte';
 	import Toast from '$lib/components/ui/Toast.svelte';
 	import type { LayoutProps } from './$types';
+	import { page } from '$app/state';
 	import { untrack } from 'svelte';
 
 	let { children, data }: LayoutProps = $props();
+	// /A … /E render the files page under one of the design variants.
+	const VARIANTS = ['a', 'b', 'c', 'd', 'e'] as const;
+	const variant = $derived.by(() => {
+		const letter = page.params.design?.toLowerCase();
+		return VARIANTS.find((candidate) => candidate === letter) ?? null;
+	});
+	const variantNames = {
+		a: 'Ember',
+		b: 'Iris',
+		c: 'Terminal',
+		d: 'Tide',
+		e: 'Sage'
+	} as const;
 	const session = createDashboardSession(untrack(() => data.session !== null));
 	createToasts();
 
@@ -53,14 +67,41 @@
 	<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 </svelte:head>
 
-<div class="min-h-screen bg-white">
+<div class="min-h-screen bg-white" data-theme={variant ?? undefined}>
 	<header class="border-b border-zinc-200 bg-white">
 		<div
 			class="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6"
 		>
-			<a href="/" class="text-sm font-semibold tracking-tight text-zinc-950">
-				adrive
-			</a>
+			<div class="flex items-center gap-5">
+				<a
+					href={variant ? `/${variant.toUpperCase()}` : '/'}
+					class="inline-flex items-center gap-2 text-sm font-semibold tracking-tight text-zinc-950"
+				>
+					<span class="brand-dot size-2.5 rounded-full" aria-hidden="true"
+					></span>
+					adrive
+				</a>
+				{#if variant}
+					<nav
+						class="segment inline-flex rounded-lg bg-zinc-100 p-0.5 text-xs font-medium"
+						aria-label="Design variant"
+					>
+						{#each VARIANTS as candidate (candidate)}
+							<a
+								href={`/${candidate.toUpperCase()}`}
+								aria-current={candidate === variant ? 'page' : undefined}
+								title={variantNames[candidate]}
+								class="rounded-md px-2 py-1 font-mono uppercase {candidate ===
+								variant
+									? 'bg-white text-zinc-950 shadow-sm'
+									: 'text-zinc-500 hover:text-zinc-900'}"
+							>
+								{candidate}
+							</a>
+						{/each}
+					</nav>
+				{/if}
+			</div>
 			{#if data.session}
 				<nav class="flex items-center gap-1" aria-label="Account">
 					<span class="truncate px-3 py-2 text-sm text-zinc-500">

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { DashboardFile } from '@adrive/shared';
+	import { fileFamily } from '$lib/dashboard/file-family';
 	import { formatBytes, formatDate } from '$lib/dashboard/format';
 	import FileMenu from './FileMenu.svelte';
 
@@ -27,7 +28,7 @@
 </script>
 
 <div class="overflow-x-auto py-4">
-	<table class="w-full min-w-[42rem] text-left text-sm">
+	<table class="file-table w-full min-w-[42rem] text-left text-sm">
 		<thead class="text-xs font-medium text-zinc-400">
 			<tr>
 				{#if onselect}
@@ -45,7 +46,11 @@
 		</thead>
 		<tbody class="divide-y divide-zinc-100">
 			{#each files as file (file.id)}
-				<tr>
+				<tr
+					class="file-row"
+					data-family={fileFamily(file)}
+					style:--tag-color={file.tags[0]?.color ?? undefined}
+				>
 					{#if onselect}
 						<td class="py-3 pr-3">
 							<input
@@ -61,7 +66,7 @@
 					<td class="py-3 pr-4">
 						<a
 							href={`/files/${file.id}${returnQuery ? `?from=${encodeURIComponent(returnQuery)}` : ''}`}
-							class="font-medium text-zinc-900 hover:text-accent-700"
+							class="file-name font-medium text-zinc-900 hover:text-accent-700"
 							>{file.displayName}</a
 						>
 					</td>
