@@ -1,6 +1,6 @@
 ---
 name: deploy-fresh-instance
-description: Deploy a fresh a-drive instance to Cloudflare Workers — provision D1, R2, KV, and Vectorize plus Workers AI, set the PASSCODE secret, attach the two custom domains, and cut the first release. Use for the first-ever deploy to a new Cloudflare account or a new operator domain (not for routine redeploys, which are just `bun release`).
+description: Deploy a fresh a-drive instance to Cloudflare Workers — provision D1, R2, KV, and Postgres plus Workers AI, set the PASSCODE secret, attach the two custom domains, and cut the first release. Use for the first-ever deploy to a new Cloudflare account or a new operator domain (not for routine redeploys, which are just `bun release`).
 ---
 
 # Deploy a fresh a-drive instance to Cloudflare
@@ -41,29 +41,15 @@ into `env.production` by hand.
    (no id to paste — the bucket is bound by name.)
 3. `wrangler kv namespace create AUTH_GUARD --env production`
    → paste the printed id into `env.production.kv_namespaces[0].id`.
-4. Create the Vectorize index and its three metadata indexes:
-
-   ```
-   wrangler vectorize create adrive-production --dimensions=384 --metric=cosine
-   wrangler vectorize create-metadata-index adrive-production --property-name=deleted --type=boolean
-   wrangler vectorize create-metadata-index adrive-production --property-name=kind --type=string
-   wrangler vectorize create-metadata-index adrive-production --property-name=visibility --type=string
-   ```
-
-   **Gotcha (expected, safe):** metadata-index creation is async — each
-   command returns "enqueued", and `wrangler vectorize list-metadata-index
-adrive-production` shows them appearing one at a time over a minute or
-   two. That is propagation lag, not a failure. It is harmless because no
-   vectors are written until after the first deploy, so you don't need to
-   wait for all three before continuing.
-
-   **Workers AI needs no provisioning** — it activates from the `ai`
-   binding already declared in `wrangler.jsonc` `env.production`.
+4. Semantic search needs no extra provisioning. Embeddings come from
+   the Workers AI `ai` binding already declared in `wrangler.jsonc`
+   `env.production`, and the vectors are stored in Postgres
+   (`file_chunks.embedding`, pgvector), which the `HYPERDRIVE` binding
+   already reaches.
 
    Note: `env.production` sets `SEMANTIC_SEARCH=required` (not `auto`), so a
-   missing `AI` or `VECTORIZE` binding fails the deploy **loudly** instead
-   of silently degrading to keyword search. That is intended — if the
-   Vectorize/AI setup above is incomplete, the deploy in step 5 will stop.
+   missing `AI` binding fails the deploy **loudly** instead of silently
+   degrading to keyword search. That is intended.
 
 5. In the Cloudflare dashboard, open **Images → Transformations**, select
    the zone that owns `CONTENT_ORIGIN` (`davis7.space` for
@@ -140,7 +126,7 @@ Expected live checks once both origins are up:
 
 ## 7. Backfill note (semantic search)
 
-Any files uploaded before the Vectorize index existed sit in
+Any files uploaded while the `AI` binding was absent sit in
 `index_state = 'disabled'` and are backfilled by the maintenance cron at
 about **5 files per 5 minutes**. The settings page's indexed-chunk count
 shows progress. On a truly fresh instance there's usually nothing to

@@ -15,23 +15,15 @@ describe('scheduled lifecycle orchestration', () => {
 				authentication: task('authentication', 1),
 				sites: task('sites', 2),
 				indexing: task('indexing', 3),
-				files: task('files', 4),
-				vectors: task('vectors', 5)
+				files: task('files', 4)
 			})
 		);
-		expect(calls).toEqual([
-			'authentication',
-			'sites',
-			'indexing',
-			'files',
-			'vectors'
-		]);
+		expect(calls).toEqual(['authentication', 'sites', 'indexing', 'files']);
 		expect(result).toEqual({
 			authentication: 1,
 			sites: 2,
 			indexing: 3,
-			files: 4,
-			vectors: 5
+			files: 4
 		});
 	});
 
@@ -46,8 +38,7 @@ describe('scheduled lifecycle orchestration', () => {
 					return 1;
 				}),
 				indexing: Effect.succeed(0),
-				files: Effect.succeed(0),
-				vectors: Effect.succeed(0)
+				files: Effect.succeed(0)
 			})
 		);
 		expect(result.authentication).toBe(0);

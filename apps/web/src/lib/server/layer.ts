@@ -34,7 +34,11 @@ export const requestLayer = (env: Env) => {
 	const pg = PgLive.pipe(Layer.provide(bindings));
 	const blobs = BlobsLive.pipe(Layer.provide(bindings));
 	const infrastructure = Layer.mergeAll(bindings, sql, pg, blobs);
-	const semantic = SemanticBindingsLive(env);
+	// The vector index reads and writes file_chunks, so it sits on Postgres
+	// like every other service; only the embedder still binds Workers AI.
+	const semantic = SemanticBindingsLive(env).pipe(
+		Layer.provide(infrastructure)
+	);
 	const auth = AuthLive.pipe(Layer.provide(infrastructure));
 	const authGuard = AuthGuardLive().pipe(Layer.provide(bindings));
 	const grantSecrets = GrantSecretsLive.pipe(Layer.provide(infrastructure));

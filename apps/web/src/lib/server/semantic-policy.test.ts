@@ -3,15 +3,11 @@ import {
 	CHUNK_CHARACTERS,
 	CHUNK_OVERLAP_CHARACTERS,
 	chunkSearchText,
-	collapseVectorMatches,
-	fileIdFromVectorId,
 	indexFailureDisposition,
 	newIndexLeaseToken,
 	retryAt,
-	safeIndexError,
-	vectorIdForChunk
+	safeIndexError
 } from './semantic-policy';
-import { searchTextLimit } from './search-text';
 
 describe('semantic indexing policy', () => {
 	it('chunks deterministically with bounded overlap and a filename prefix', () => {
@@ -41,32 +37,8 @@ describe('semantic indexing policy', () => {
 		]);
 	});
 
-	it('uses attempt-unique vector ids within Vectorize limits', () => {
-		const id = '550e8400-e29b-41d4-a716-446655440000';
-		const token = newIndexLeaseToken();
-		const maxOrdinal = chunkSearchText(
-			'notes.txt',
-			'a'.repeat(searchTextLimit)
-		).at(-1)?.ordinal;
-		expect(token).toMatch(/^[A-Za-z0-9_-]{22}$/);
-		expect(maxOrdinal).toBeDefined();
-		const vectorId = vectorIdForChunk(id, token, maxOrdinal ?? 0);
-		expect(new TextEncoder().encode(vectorId).byteLength).toBeLessThanOrEqual(
-			64
-		);
-		expect(fileIdFromVectorId(vectorId)).toBe(id);
-	});
-
-	it('max-pools chunks before ranking and reads legacy ids', () => {
-		const id = '550e8400-e29b-41d4-a716-446655440000';
-		expect(
-			collapseVectorMatches([
-				{ id: `${id}:1:0`, score: 0.5 },
-				{ id: `second:1:0`, score: 0.7 },
-				{ id: `${id}:1:1`, score: 0.9 },
-				{ id: 'invalid', score: 1 }
-			])
-		).toEqual([{ fileId: id }, { fileId: 'second' }]);
+	it('issues url-safe lease tokens', () => {
+		expect(newIndexLeaseToken()).toMatch(/^[A-Za-z0-9_-]{22}$/);
 	});
 
 	it('backs off deterministically and redacts credential-shaped errors', () => {

@@ -1,24 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
+	hasSearchableQuery,
 	matchesAnyTag,
 	pinExactName,
 	reciprocalRankFusion,
-	sanitizeMatchQuery,
-	sanitizeTrigramQuery,
 	shouldEmbedSearchQuery
 } from './search-ranking';
 
-describe('search query sanitization', () => {
-	it('turns arbitrary punctuation into safe quoted terms', () => {
-		expect(sanitizeMatchQuery('"orbit": manifest—2026 (')).toBe(
-			'"orbit" "manifest" "2026"*'
-		);
-		expect(sanitizeMatchQuery('":-*()')).toBeNull();
-	});
-
-	it('builds only quoted OR-connected trigrams', () => {
-		expect(sanitizeTrigramQuery('A:B')).toBe('"a b"');
-		expect(sanitizeTrigramQuery('ab')).toBeNull();
+describe('search query guards', () => {
+	it('treats punctuation-only input as no query', () => {
+		expect(hasSearchableQuery('"orbit": manifest—2026 (')).toBe(true);
+		expect(hasSearchableQuery('":-*()')).toBe(false);
+		expect(hasSearchableQuery('   ')).toBe(false);
 	});
 
 	it('skips Workers AI embeddings for queries too short to be semantic', () => {

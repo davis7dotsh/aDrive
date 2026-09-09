@@ -6,7 +6,7 @@ scheduled storage lifecycle management.
 Uploads stream directly to R2, metadata and append-only version history live in
 D1, and file/site bytes are served from a separate cookie-less content origin.
 Search combines weighted FTS5 BM25 results, a filename trigram index, and an
-optional Workers AI + Vectorize semantic source with reciprocal rank fusion.
+optional Workers AI + pgvector semantic source with reciprocal rank fusion.
 Canonical D1 hydration still applies deletion, expiry, visibility, and tag
 filters. The CLI supports file transfer and safe, staged directory publishing.
 
@@ -173,9 +173,8 @@ and `scheduled` exports. Its signed internal maintenance request is authenticate
 with a short-lived HMAC derived from `PASSCODE`; the endpoint cannot be invoked
 with a static or public header.
 
-The FTS5 tables are derived state so canonical tables can be backed up one table
-at a time even though D1 whole-database export does not support virtual tables.
-After restoring the canonical tables, rebuild local search state with:
+The `search_documents` table is derived keyword-search state. After restoring
+the canonical tables, rebuild local search state with:
 
 ```bash
 bun search:rebuild:local
@@ -201,7 +200,7 @@ No remote resource is created or modified by the local setup above.
 File expiration is enforced immediately by API, search, file, and site reads.
 The scheduled Worker runs every five minutes. It re-drives interrupted indexing,
 physically deletes expired/trash bytes before removing canonical D1 rows, expires
-dashboard/device/site-upload sessions, and retries deferred R2/site/vector
+dashboard/device/site-upload sessions, and retries deferred R2/site
 deletes. Work is bounded per invocation and every retryable transition is stored
 in D1. Download counts increment for full downloads and the initial
 `bytes=0-…` request only, so follow-up range requests do not inflate the count.
@@ -209,29 +208,17 @@ in D1. Download counts increment for full downloads and the initial
 ### Optional semantic search
 
 Keyword, typo-tolerant, tag, and extracted-text search work without AI bindings.
-`SEMANTIC_SEARCH` defaults to `auto`: both `AI` and `VECTORIZE` must be present
-before the semantic layer activates. Set it to `off` to force the null-object
-layer, or `required` to make a missing binding a startup error.
+`SEMANTIC_SEARCH` defaults to `auto`: the `AI` binding must be present before
+the semantic layer activates. Set it to `off` to force the null-object layer,
+or `required` to make a missing binding a startup error. Embeddings are stored
+in Postgres (`file_chunks.embedding`, pgvector), so no separate vector service
+is provisioned.
 
-Provision the optional resources once, before the first vector insert:
-
-```bash
-cd apps/web
-bun x wrangler vectorize create adrive \
-  --dimensions=384 --metric=cosine
-bun x wrangler vectorize create-metadata-index adrive \
-  --propertyName=deleted --type=boolean
-bun x wrangler vectorize create-metadata-index adrive \
-  --propertyName=kind --type=string
-bun x wrangler vectorize create-metadata-index adrive \
-  --propertyName=visibility --type=string
-```
-
-Then add these bindings to `apps/web/wrangler.jsonc` and regenerate types:
+To enable semantic search locally, add the binding to `apps/web/wrangler.jsonc`
+and regenerate types:
 
 ```jsonc
-"ai": { "binding": "AI" },
-"vectorize": [{ "binding": "VECTORIZE", "index_name": "adrive" }]
+"ai": { "binding": "AI" }
 ```
 
 ```bash
@@ -240,7 +227,6 @@ bun --filter @adrive/web types:worker
 
 The embedding contract is pinned in Wrangler config to
 `@cf/baai/bge-small-en-v1.5`, `pooling: "cls"`, and 384 dimensions. Changing any
-of those values requires a new Vectorize index and a full reindex. The dashboard
-shows the indexed chunk count and warns that Vectorize queries are billed against
-stored vectors multiplied by dimensions. Failed files retry with exponential
+of those values requires a full reindex. The dashboard shows the indexed chunk
+count. Failed files retry with exponential
 backoff up to five attempts and can be queued again with **Reindex**.
