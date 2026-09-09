@@ -1,7 +1,9 @@
 import { Context, Effect, Layer, Schema } from 'effect';
+import { AppConfig } from '../config';
 import { StorageError } from '../errors';
 import { createObjectTtlCache } from '../isolate-cache';
 import { PgSql } from '../pg';
+import { CurrentOrg } from './current-org';
 import {
 	mintPrivateGrant,
 	verifyPrivateGrant,
@@ -30,8 +32,18 @@ const signingKeyCache = createObjectTtlCache<object, string>(
 	SIGNING_KEY_CACHE_TTL_MS
 );
 
-type MintGrantInput = Omit<MintPrivateGrantOptions, 'signingKey'>;
-type VerifyGrantInput = Omit<VerifyPrivateGrantOptions, 'signingKey'>;
+// Grants are bound to the current org's content origin
+// (`<slug>.<content domain>`): a dashboard request mints for its own org,
+// a content request verifies for the org its host names. Verification
+// additionally requires the request to arrive on exactly that origin.
+type MintGrantInput = Omit<
+	MintPrivateGrantOptions,
+	'signingKey' | 'contentOrigin'
+>;
+type VerifyGrantInput = Omit<
+	VerifyPrivateGrantOptions,
+	'signingKey' | 'contentOrigin'
+>;
 
 export interface GrantSecretsShape {
 	readonly mint: (
@@ -58,6 +70,8 @@ const randomSigningKey = () => {
 
 const makeGrantSecrets = Effect.gen(function* () {
 	const sql = yield* PgSql;
+	const config = yield* AppConfig;
+	const org = yield* CurrentOrg;
 
 	const signingKey = Effect.gen(function* () {
 		const cached = signingKeyCache.get(signingKeyCacheKey);
@@ -100,15 +114,17 @@ const makeGrantSecrets = Effect.gen(function* () {
 
 	return GrantSecrets.of({
 		mint: Effect.fn('GrantSecrets.mint')(function* (input) {
+			const contentOrigin = config.contentOriginFor(org.slug);
 			const key = yield* signingKey;
 			return yield* Effect.promise(() =>
-				mintPrivateGrant({ ...input, signingKey: key })
+				mintPrivateGrant({ ...input, contentOrigin, signingKey: key })
 			);
 		}),
 		verify: Effect.fn('GrantSecrets.verify')(function* (input) {
+			const contentOrigin = config.contentOriginFor(org.slug);
 			const key = yield* signingKey;
 			return yield* Effect.promise(() =>
-				verifyPrivateGrant({ ...input, signingKey: key })
+				verifyPrivateGrant({ ...input, contentOrigin, signingKey: key })
 			);
 		})
 	});

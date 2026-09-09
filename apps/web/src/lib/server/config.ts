@@ -1,6 +1,6 @@
 import { dev } from '$app/environment';
 import { Context, Layer } from 'effect';
-import { normalizeOrigins } from './host-gate';
+import { contentOriginFor, normalizeOrigins } from './host-gate';
 
 // A null API key is reserved for the explicitly enabled development fake.
 // Production always requires real WorkOS credentials.
@@ -13,7 +13,11 @@ export interface WorkOSConfig {
 
 export interface AppConfigShape {
 	readonly dashboardOrigin: string;
-	readonly contentOrigin: string;
+	// Tenant content is served from `<slug>.<contentDomain>` over the
+	// dashboard's scheme; contentOriginFor builds one org's origin.
+	readonly contentDomain: string;
+	readonly contentScheme: string;
+	readonly contentOriginFor: (slug: string) => string;
 	readonly maxUploadBytes: number;
 	// Signs the Worker facade's cron and queue self-requests.
 	readonly maintenanceSecret: string;
@@ -77,7 +81,7 @@ const workosFromEnv = (env: Env): WorkOSConfig => {
 export const configFromEnv = (env: Env) => {
 	const origins = normalizeOrigins({
 		dashboardOrigin: env.DASHBOARD_ORIGIN,
-		contentOrigin: env.CONTENT_ORIGIN
+		contentDomain: env.CONTENT_DOMAIN
 	});
 	const maxUploadBytes = Number(env.MAX_UPLOAD_BYTES);
 	if (!Number.isSafeInteger(maxUploadBytes) || maxUploadBytes <= 0) {
@@ -102,6 +106,8 @@ export const configFromEnv = (env: Env) => {
 	}
 	return {
 		...origins,
+		contentOriginFor: (slug: string) =>
+			contentOriginFor(origins.contentScheme, origins.contentDomain, slug),
 		maxUploadBytes,
 		maintenanceSecret: env.MAINTENANCE_SECRET,
 		workos: workosFromEnv(env),

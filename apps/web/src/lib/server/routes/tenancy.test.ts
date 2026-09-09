@@ -140,14 +140,106 @@ describe('tenancy (local platform)', () => {
 			)
 		).rejects.toMatchObject({ status: 404 });
 
-		// Public content still serves regardless of who asks.
+		// Public content still serves regardless of who asks, on A's host.
+		const b = await currentIdentity(ctx);
+		await loginAs(ctx, ORG_A);
+		const a = await currentIdentity(ctx);
 		const { GET: serveGET } = await import('../../../routes/f/[id]/+server.js');
 		const served = await call(
 			serveGET,
-			ctx.event({ path: `/f/${fileA.id}`, params: { id: fileA.id } })
+			await ctx.contentEvent({
+				slug: a.orgSlug,
+				path: `/f/${fileA.id}`,
+				params: { id: fileA.id }
+			})
 		);
 		expect(served.status).toBe(200);
 		expect(await served.text()).toBe('zebra ledger for org a');
+
+		// The same public file on B's host is a 404: the host names the org.
+		await expect(
+			call(
+				serveGET,
+				await ctx.contentEvent({
+					slug: b.orgSlug,
+					path: `/f/${fileA.id}`,
+					params: { id: fileA.id }
+				})
+			)
+		).rejects.toMatchObject({ status: 404 });
+		const { GET: thumbnailGET } =
+			await import('../../../routes/t/[id]/[version]/grid.webp/+server.js');
+		await expect(
+			call(
+				thumbnailGET,
+				await ctx.contentEvent({
+					slug: b.orgSlug,
+					path: `/t/${fileA.id}/1/grid.webp`,
+					params: { id: fileA.id, version: '1' }
+				})
+			)
+		).rejects.toMatchObject({ status: 404 });
+	});
+
+	it('answers 404 on every path for a host that names no live org', async () => {
+		const ctx = await setup();
+		await loginAs(ctx, ORG_A);
+		const a = await currentIdentity(ctx);
+		const file = await uploadFile(ctx, {
+			name: 'hosted.txt',
+			content: 'hosted'
+		});
+		const { resolveContentHost } = await import('$lib/server/content-host');
+
+		// An unknown slug is refused by the hook before any route runs, and
+		// the miss is remembered in KV.
+		for (const path of [`/f/${file.id}`, '/f/anything', `/s/${file.id}/`]) {
+			await expect(
+				ctx.contentEvent({ slug: 'nobody-here', path })
+			).rejects.toMatchObject({ status: 404 });
+		}
+		expect(await resolveContentHost(ctx.env, 'nobody-here')).toEqual({
+			_tag: 'Missing'
+		});
+		expect(await ctx.env.AUTH_GUARD.get('org-slug:nobody-here')).toBe(
+			JSON.stringify({ missing: true })
+		);
+
+		// The live org resolves and is cached with its trust.
+		expect(await resolveContentHost(ctx.env, a.orgSlug)).toEqual({
+			_tag: 'Found',
+			host: { orgId: a.orgId, slug: a.orgSlug }
+		});
+		expect(await ctx.env.AUTH_GUARD.get(`org-slug:${a.orgSlug}`)).toBe(
+			JSON.stringify({ orgId: a.orgId, trust: 'new' })
+		);
+
+		// Suspending the org takes its host offline once the cache entry is
+		// dropped; the file itself is untouched.
+		await queryPg(
+			ctx.env,
+			(sql) => sql`UPDATE orgs SET trust = 'suspended' WHERE id = ${a.orgId}`
+		);
+		await ctx.env.AUTH_GUARD.delete(`org-slug:${a.orgSlug}`);
+		await expect(
+			ctx.contentEvent({ slug: a.orgSlug, path: `/f/${file.id}` })
+		).rejects.toMatchObject({ status: 404 });
+		await queryPg(
+			ctx.env,
+			(sql) => sql`UPDATE orgs SET trust = 'new' WHERE id = ${a.orgId}`
+		);
+		await ctx.env.AUTH_GUARD.delete(`org-slug:${a.orgSlug}`);
+		const { GET: serveGET } = await import('../../../routes/f/[id]/+server.js');
+		const served = await call(
+			serveGET,
+			await ctx.contentEvent({
+				slug: a.orgSlug,
+				path: `/f/${file.id}`,
+				params: { id: file.id }
+			})
+		);
+		expect(served.status).toBe(200);
+		expect(await served.text()).toBe('hosted');
 	});
 
 	it('meters stored bytes per org and enforces the plan limit', async () => {

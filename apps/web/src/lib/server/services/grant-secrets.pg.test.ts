@@ -1,16 +1,47 @@
 import { Effect, Layer } from 'effect';
 import { describe, expect, it } from 'vitest';
+import { AppConfig, type AppConfigShape } from '../config';
 import { PgSql } from '../pg';
 import { verifyPrivateGrant } from '../private-grant';
 import { testPgLayer } from '../test/pg';
+import { CurrentOrg } from './current-org';
 import { GrantSecrets, GrantSecretsLive } from './grant-secrets';
+
+// Grants bind to the current org's content origin, so the service needs
+// the org and the content domain it lives under.
+const config: AppConfigShape = {
+	dashboardOrigin: 'https://drive.example.test',
+	contentDomain: 'content.example.test',
+	contentScheme: 'https:',
+	contentOriginFor: (slug) => `https://${slug}.content.example.test`,
+	maxUploadBytes: 1,
+	maintenanceSecret: 'test-maintenance-secret',
+	workos: {
+		apiKey: null,
+		clientId: '',
+		cookiePassword: '',
+		webhookSecret: ''
+	},
+	semanticSearch: 'off',
+	embeddingModel: '@cf/baai/bge-small-en-v1.5',
+	embeddingPooling: 'cls',
+	embeddingDimensions: 384
+};
 
 // The signing key is a per-instance singleton row (id = 1) in a shared test
 // database, so these tests never assume the row is absent. They assert
 // that mint and verify agree across request-scoped services and that the
 // key is read from Postgres at most once per isolate within the TTL.
-const requestLayer = () =>
-	GrantSecretsLive.pipe(Layer.provideMerge(testPgLayer()));
+const requestLayer = (slug = 'org-test') =>
+	GrantSecretsLive.pipe(
+		Layer.provideMerge(
+			Layer.mergeAll(
+				testPgLayer(),
+				Layer.succeed(AppConfig, config),
+				Layer.succeed(CurrentOrg, { id: 'org_test', slug })
+			)
+		)
+	);
 
 const now = new Date('2026-07-27T12:00:00.000Z');
 
@@ -19,7 +50,6 @@ const mintFromRequest = (fileId: string) =>
 		Effect.gen(function* () {
 			const secrets = yield* GrantSecrets;
 			return yield* secrets.mint({
-				contentOrigin: 'https://content.example.test',
 				orgId: 'org_test',
 				fileId,
 				version: 4,
@@ -30,22 +60,22 @@ const mintFromRequest = (fileId: string) =>
 
 const verifyFromRequest = (
 	fileId: string,
-	grant: Awaited<ReturnType<typeof mintFromRequest>>
+	grant: Awaited<ReturnType<typeof mintFromRequest>>,
+	slug = 'org-test'
 ) =>
 	Effect.runPromise(
 		Effect.gen(function* () {
 			const secrets = yield* GrantSecrets;
 			return yield* secrets.verify({
-				contentOrigin: 'https://content.example.test',
 				orgId: 'org_test',
-				requestOrigin: 'https://content.example.test',
+				requestOrigin: `https://${slug}.content.example.test`,
 				fileId,
 				version: 4,
 				expiresAtSeconds: grant.expiresAtSeconds,
 				signature: grant.signature,
 				now
 			});
-		}).pipe(Effect.provide(requestLayer()))
+		}).pipe(Effect.provide(requestLayer(slug)))
 	);
 
 const readPersistedKey = () =>
@@ -81,6 +111,15 @@ describe('persisted content grant secrets', () => {
 		const grant = await mintFromRequest(fileId);
 		await expect(verifyFromRequest(fileId, grant)).resolves.toBe(true);
 		await expect(verifyFromRequest(fileId, grant)).resolves.toBe(true);
+	});
+
+	it('binds a grant to the org host it was minted for', async () => {
+		const fileId = `grant-${crypto.randomUUID()}`;
+		const grant = await mintFromRequest(fileId);
+		// The same signing key on another org's host does not validate it.
+		await expect(verifyFromRequest(fileId, grant, 'other-org')).resolves.toBe(
+			false
+		);
 	});
 
 	it('caches the signing key per isolate within the TTL', async () => {

@@ -80,25 +80,31 @@ start both local origins:
 bun --filter @adrive/web dev
 ```
 
-The dashboard/API is at `http://localhost:5173/`. Public file bytes are
-served from `http://localhost:5174/`. The second port is a small streaming
-proxy into the same SvelteKit process so both origins share one local D1/R2
-state while the Worker still sees and enforces the content host.
+The dashboard/API is at `http://localhost:5173/`. Each org's file bytes are
+served from its own host under `CONTENT_DOMAIN`: `http://<org
+slug>.localhost:5174/` locally (browsers resolve `*.localhost` to loopback,
+so nothing needs configuring). The second port is a small streaming proxy
+into the same SvelteKit process so both origins share one local state
+while the Worker still sees and enforces the tenant host. The settings
+page shows your org's content origin.
 
 ### Developing over Tailscale (or another network hostname)
 
 The dev server binds `0.0.0.0`, so other devices can use it — phones,
-tablets, or a laptop pointed at a beefier dev box. Set both origins in
+tablets, or a laptop pointed at a beefier dev box. Set both values in
 `apps/web/.dev.vars` to the hostname the _browser_ will use. With
 Tailscale MagicDNS that's your machine name plus tailnet domain (see
 `tailscale status`):
 
 ```bash
 DASHBOARD_ORIGIN="http://<machine>.<tailnet>.ts.net:5173"
-CONTENT_ORIGIN="http://<machine>.<tailnet>.ts.net:5174"
+CONTENT_DOMAIN="<machine>.<tailnet>.ts.net:5174"
 ```
 
-Any LAN hostname or IP works the same way; the origins just have to match
+`CONTENT_DOMAIN` has no scheme (it follows the dashboard) and content is
+served from `<org slug>.<CONTENT_DOMAIN>`, so the browser also has to
+resolve that wildcard to the machine: `*.localhost` does out of the box,
+any other domain needs a wildcard DNS entry. The values just have to match
 how the browser addresses the machine, since the Worker enforces its
 host-routing rules even in dev.
 
@@ -192,7 +198,8 @@ modify those source tables.
 The checked-in Wrangler D1 and R2 resource names are placeholders. The
 `AUTH_GUARD` KV namespace is already provisioned and bound. Before deployment,
 create one D1 database and one private R2 bucket, replace the D1 database ID,
-apply the migration remotely, set production dashboard/content origins, and set
+apply the migration remotely, set the production dashboard origin and
+content domain, and set
 the secrets (`MAINTENANCE_SECRET`, `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`,
 `WORKOS_COOKIE_PASSWORD`, `WORKOS_WEBHOOK_SECRET`):
 

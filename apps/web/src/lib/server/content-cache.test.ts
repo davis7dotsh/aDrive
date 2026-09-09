@@ -150,6 +150,45 @@ describe('content cache policy', () => {
 		).resolves.toBeInstanceOf(Response);
 	});
 
+	it('keys cache entries by host so two orgs never share one', async () => {
+		const stored = new Map<string, Response>();
+		const cache = {
+			match: vi.fn(async (request: Request) => stored.get(request.url)),
+			put: vi.fn(async (request: Request, response: Response) => {
+				stored.set(request.url, response);
+			})
+		};
+		const pending: Promise<unknown>[] = [];
+		const platform = {
+			caches: { default: cache },
+			ctx: {
+				waitUntil: (promise: Promise<unknown>) => {
+					pending.push(promise);
+				}
+			}
+		};
+		const acme = fileContentCacheRequest(
+			new URL('https://acme.files.example/f/id?v=1')
+		);
+		const other = fileContentCacheRequest(
+			new URL('https://other.files.example/f/id?v=1')
+		);
+		storeEdgeCache(
+			platform,
+			acme,
+			new Response('acme bytes', {
+				status: 200,
+				headers: { 'Cache-Control': PUBLIC_IMMUTABLE_CACHE_CONTROL }
+			})
+		);
+		await Promise.all(pending);
+		const hit = await Effect.runPromise(matchEdgeCache(platform, acme));
+		expect(await hit?.text()).toBe('acme bytes');
+		await expect(
+			Effect.runPromise(matchEdgeCache(platform, other))
+		).resolves.toBeUndefined();
+	});
+
 	it('hands back a mutable copy so hooks can add security headers', async () => {
 		const immutable = new Response('cached-bytes', {
 			status: 200,

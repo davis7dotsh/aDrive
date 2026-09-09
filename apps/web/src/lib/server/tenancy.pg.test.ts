@@ -14,7 +14,10 @@ const run = <A, E>(
 ) =>
 	Effect.runPromise(
 		effect.pipe(
-			Effect.provideService(CurrentOrg, { id: orgId }),
+			Effect.provideService(CurrentOrg, {
+				id: orgId,
+				slug: orgId.replaceAll('_', '-')
+			}),
 			Effect.provide(testPgLayer())
 		)
 	);

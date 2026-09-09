@@ -1,8 +1,8 @@
 import type { FileContentLinkResponse, FileSummary } from '@adrive/shared';
 import { Effect } from 'effect';
-import { AppConfig } from './config';
 import { InvalidRequest } from './errors';
 import type { PrivateGrant } from './private-grant';
+import { currentContentOrigin } from './services/current-org';
 import { Files } from './services/files';
 import { GrantSecrets } from './services/grant-secrets';
 
@@ -56,7 +56,7 @@ export const resolveFileContentLink = (
 	requireGrant = false
 ) =>
 	Effect.gen(function* () {
-		const config = yield* AppConfig;
+		const config = { contentOrigin: yield* currentContentOrigin };
 		const files = yield* Files;
 		const grantSecrets = yield* GrantSecrets;
 		const resolveCurrentVersion = includeUnavailable || requireGrant;
@@ -85,7 +85,6 @@ export const resolveFileContentLink = (
 				};
 			}
 			const grant = yield* grantSecrets.mint({
-				contentOrigin: config.contentOrigin,
 				orgId: resolved.orgId,
 				fileId: resolved.file.id,
 				version: resolved.file.version
@@ -111,7 +110,6 @@ export const resolveFileContentLink = (
 			content.file.public && !includeUnavailable && !requireGrant
 				? undefined
 				: yield* grantSecrets.mint({
-						contentOrigin: config.contentOrigin,
 						orgId: content.orgId,
 						fileId: content.file.id,
 						version: content.file.version
