@@ -27,7 +27,9 @@ describe('Cloudflare Worker facade', () => {
 		expect(source).toContain('return sveltekit.fetch(request, env, ctx)');
 		expect(source).toContain('scheduled(controller, env, ctx)');
 		expect(source).toContain('async queue(batch, env, ctx)');
-		expect(source).toContain('/api/internal/jobs');
+		expect(source).toContain("'/api/internal/jobs'");
+		expect(source).toContain("'/api/internal/jobs/dead'");
+		expect(source).toContain("batch.queue.endsWith('-dlq')");
 		expect(source).toContain('message.ack()');
 		expect(source).toContain('message.retry()');
 		expect(source).toContain(

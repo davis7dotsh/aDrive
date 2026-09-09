@@ -167,10 +167,13 @@ wrangler queues create adrive-jobs-production-dlq
 - The consumer retries a failed message up to `max_retries` (5) times,
   then moves it to `adrive-jobs-production-dlq`. Messages whose body does
   not decode as a job are acked and logged, never retried.
-- Inspect the dead-letter queue with
-  `wrangler queues consumer` tooling or the dashboard; nothing drains it
-  automatically. Re-send a message from the DLQ only after fixing the
-  cause, since the same job will otherwise fail again.
+- The Worker also consumes the dead-letter queue: each message is
+  written to the `failed_jobs` table (org, kind, payload, error,
+  attempts) and acked. Owners see their org's rows at
+  `GET /api/admin/failed-jobs`. Set the optional `ALERT_WEBHOOK_URL`
+  secret to have a JSON summary POSTed whenever a batch dead-letters.
+  Re-send a job only after fixing the cause, since it will otherwise
+  fail again.
 - Local development uses the `adrive-jobs` / `adrive-jobs-dlq` names and
   needs no provisioning; `wrangler dev` simulates the queue.
 

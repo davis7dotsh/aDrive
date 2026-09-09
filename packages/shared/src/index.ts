@@ -415,3 +415,22 @@ export const JobSchema = Schema.Union([
 ]);
 
 export type Job = typeof JobSchema.Type;
+
+// A job the queue gave up on, as listed for an org's owner.
+export const FailedJobSchema = Schema.Struct({
+	id: Schema.String,
+	kind: Schema.String,
+	payload: Schema.Unknown,
+	error: Schema.String,
+	attempts: Schema.Int,
+	failedAt: Schema.String,
+	resolvedAt: Schema.NullOr(Schema.String)
+});
+
+export type FailedJob = typeof FailedJobSchema.Type;
+
+export const FailedJobListResponseSchema = Schema.Struct({
+	jobs: Schema.Array(FailedJobSchema)
+});
+
+export type FailedJobListResponse = typeof FailedJobListResponseSchema.Type;

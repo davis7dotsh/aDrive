@@ -96,4 +96,108 @@ describe('queue consumer endpoint', () => {
 			)
 		).rejects.toMatchObject({ status: 413 });
 	});
+
+	it('records dead letters, acks them, and lists them for the owning org', async () => {
+		const ctx = await createRouteContext();
+		const { POST } =
+			await import('../../../routes/api/internal/jobs/dead/+server.js');
+		const { GET } =
+			await import('../../../routes/api/admin/failed-jobs/+server.js');
+		const { login, currentIdentity } = await import('../test/helpers');
+		await login(ctx);
+		const identity = await currentIdentity(ctx);
+		const error = vi
+			.spyOn(console, 'error')
+			.mockImplementation(() => undefined);
+		const alerts: Array<unknown> = [];
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async (
+			input: RequestInfo | URL,
+			init?: RequestInit
+		) => {
+			if (String(input) === 'https://alerts.example.test/hook') {
+				alerts.push(JSON.parse(String(init?.body)));
+				return new Response(null, { status: 204 });
+			}
+			return originalFetch(input, init);
+		}) as typeof fetch;
+		Object.defineProperty(ctx.env, 'ALERT_WEBHOOK_URL', {
+			value: 'https://alerts.example.test/hook',
+			configurable: true,
+			writable: true
+		});
+		try {
+			const messageId = `dead-${crypto.randomUUID()}`;
+			const body = JSON.stringify({
+				queue: 'adrive-jobs-dlq',
+				messages: [
+					{
+						id: messageId,
+						attempts: 5,
+						body: {
+							kind: 'index',
+							orgId: identity.orgId,
+							fileId: 'file-gone',
+							version: 1
+						}
+					},
+					{ id: `${messageId}-junk`, attempts: 2, body: 'junk' }
+				]
+			});
+			const timestamp = String(Date.now());
+			const signature = await signJobsRequest(
+				ctx.env.MAINTENANCE_SECRET,
+				timestamp,
+				body
+			);
+			const response = await call(
+				POST,
+				ctx.event({
+					method: 'POST',
+					path: '/api/internal/jobs/dead',
+					body,
+					headers: {
+						'content-type': 'application/json',
+						'x-adrive-jobs-time': timestamp,
+						'x-adrive-jobs-signature': signature
+					}
+				})
+			);
+			expect(response.status).toBe(200);
+			await expect(response.json()).resolves.toEqual({
+				decisions: [
+					{ id: messageId, ack: true },
+					{ id: `${messageId}-junk`, ack: true }
+				]
+			});
+			expect(alerts).toEqual([
+				{
+					text: 'adrive: 2 job(s) dead-lettered on adrive-jobs-dlq',
+					queue: 'adrive-jobs-dlq',
+					recorded: 2,
+					kinds: ['index', 'invalid'],
+					orgIds: [identity.orgId]
+				}
+			]);
+
+			const listed = await call(
+				GET,
+				ctx.event({ path: '/api/admin/failed-jobs' })
+			);
+			expect(listed.status).toBe(200);
+			const { jobs } = (await listed.json()) as {
+				jobs: Array<{ id: string; kind: string; attempts: number }>;
+			};
+			expect(jobs.map((job) => job.id)).toContain(messageId);
+			expect(jobs.map((job) => job.id)).not.toContain(`${messageId}-junk`);
+			expect(jobs.find((job) => job.id === messageId)).toMatchObject({
+				kind: 'index',
+				attempts: 5
+			});
+		} finally {
+			globalThis.fetch = originalFetch;
+			Reflect.deleteProperty(ctx.env, 'ALERT_WEBHOOK_URL');
+			error.mockRestore();
+		}
+	});
 });
