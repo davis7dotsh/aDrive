@@ -122,8 +122,9 @@
 	//      davis7.space zone, or use a dedicated content-domain zone apex.
 	//   5. `wrangler secret put` MAINTENANCE_SECRET, WORKOS_API_KEY,
 	//      WORKOS_CLIENT_ID, WORKOS_COOKIE_PASSWORD, WORKOS_WEBHOOK_SECRET,
-	//      ADMIN_USER_IDS; optionally URLSCAN_API_KEY + CF_ACCOUNT_ID and
-	//      CF_API_TOKEN + CF_ZONE_ID (docs/abuse.md) (all `--env production`)
+	//      ADMIN_USER_IDS, AUTUMN_SECRET_KEY, AUTUMN_WEBHOOK_SECRET; optionally
+	//      URLSCAN_API_KEY + CF_ACCOUNT_ID and CF_API_TOKEN + CF_ZONE_ID
+	//      (docs/abuse.md) (all `--env production`)
 	//   6. `DATABASE_URL=postgres://... bun db:pg:migrate` (see docs/release.md)
 	"env": {
 		"production": {
