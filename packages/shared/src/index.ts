@@ -304,14 +304,6 @@ export const AuthCheckResponseSchema = Schema.Struct({
 	ok: Schema.Literal(true)
 });
 
-export const SessionsRevokedResponseSchema = Schema.Struct({
-	revoked: Schema.Int
-});
-
-export const PasscodeLoginSchema = Schema.Struct({
-	passcode: Schema.String
-});
-
 export const ApiKeyScopeSchema = Schema.Literals(['read-only', 'read-write']);
 
 export type ApiKeyScope = typeof ApiKeyScopeSchema.Type;

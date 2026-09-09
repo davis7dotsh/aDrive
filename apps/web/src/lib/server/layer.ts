@@ -21,6 +21,7 @@ import { IndexingLive } from './services/indexing';
 import { LifecycleLive } from './services/lifecycle';
 import { GrantSecretsLive } from './services/grant-secrets';
 import { JobQueueLive } from './services/jobs';
+import { WorkOSLive } from './services/workos';
 
 export const PgLive = Layer.unwrap(
 	Effect.map(Pg, (hyperdrive) => pgLayer(hyperdrive))
@@ -52,7 +53,10 @@ export const requestLayer = (env: Env, identity: ProgramIdentity | null) => {
 	const semantic = SemanticBindingsLive(env).pipe(
 		Layer.provide(infrastructure)
 	);
-	const auth = AuthLive.pipe(Layer.provide(infrastructure));
+	const workos = WorkOSLive.pipe(Layer.provide(bindings));
+	const auth = AuthLive.pipe(
+		Layer.provide(Layer.merge(infrastructure, workos))
+	);
 	const authGuard = AuthGuardLive().pipe(Layer.provide(bindings));
 	const grantSecrets = GrantSecretsLive.pipe(Layer.provide(infrastructure));
 	const tags = TagsLive.pipe(Layer.provide(infrastructure));
@@ -73,6 +77,7 @@ export const requestLayer = (env: Env, identity: ProgramIdentity | null) => {
 	return Layer.mergeAll(
 		infrastructure,
 		semantic,
+		workos,
 		auth,
 		authGuard,
 		grantSecrets,

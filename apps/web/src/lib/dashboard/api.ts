@@ -15,7 +15,6 @@ import {
 	parseFileListResponse,
 	parseFileMutationResponse,
 	parseFileTagsResponse,
-	parseSessionsRevokedResponse,
 	parseTagResponse,
 	parseUploadResponse
 } from './parse';
@@ -74,25 +73,6 @@ const json = async <A>(parse: (value: unknown) => A, response: Response) =>
 
 export const checkKey = async (token: string, signal?: AbortSignal) => {
 	await request('/api/auth/check', token, { signal });
-};
-
-export const loginWithPasscode = async (passcode: string) => {
-	await request('/api/auth/session', BROWSER_SESSION, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ passcode })
-	});
-};
-
-export const logoutSession = async () => {
-	await request('/api/auth/session', BROWSER_SESSION, { method: 'DELETE' });
-};
-
-export const logoutEverywhere = async (token: string) => {
-	const response = await request('/api/auth/sessions', token, {
-		method: 'DELETE'
-	});
-	return json(parseSessionsRevokedResponse, response);
 };
 
 export const listApiKeys = async (token: string, signal?: AbortSignal) => {

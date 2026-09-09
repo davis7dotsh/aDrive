@@ -35,13 +35,29 @@ export const ensureTenant = (sql: PgClient.PgClient, tenant: TenantRows) =>
 			ON CONFLICT (org_id) DO NOTHING`;
 	}).pipe(Effect.asVoid);
 
-// The single tenant a passcode session signs into until WorkOS accounts
-// replace it. Stack B removes this once sign-in resolves a real org.
-export const BOOTSTRAP_TENANT: TenantRows = {
-	orgId: 'org_local',
-	userId: 'user_local',
-	slug: 'local',
-	name: 'Local drive',
-	email: 'local@adrive.invalid',
-	emailVerified: true
+// First-login org naming. Stack C owns the real slug rules; until then the
+// slug is the email's local part plus a short random suffix so two people
+// named `sam` never collide.
+export const slugify = (value: string) =>
+	value
+		.normalize('NFKD')
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, '-')
+		.replace(/^-+|-+$/g, '')
+		.slice(0, 40) || 'drive';
+
+const randomHex = (bytes: number) => {
+	const value = new Uint8Array(bytes);
+	crypto.getRandomValues(value);
+	return Array.from(value, (byte) => byte.toString(16).padStart(2, '0')).join(
+		''
+	);
+};
+
+export const personalOrgFor = (email: string) => {
+	const local = email.split('@')[0] ?? email;
+	return {
+		name: `${local}'s drive`,
+		slug: `${slugify(local)}-${randomHex(2)}`
+	};
 };

@@ -1,4 +1,5 @@
 import type { Handle } from '@sveltejs/kit';
+import { SESSION_COOKIE, sessionCookieOptions } from '$lib/server/auth-policy';
 import { MisdirectedRequest } from '$lib/server/errors';
 import { assertHostRoute, normalizeOrigins } from '$lib/server/host-gate';
 import { resolveEventAuth } from '$lib/server/request-auth';
@@ -23,7 +24,15 @@ export const handle: Handle = async ({ event, resolve }) => {
 	}
 
 	try {
-		event.locals.auth = await resolveEventAuth(env, event);
+		const resolved = await resolveEventAuth(env, event);
+		event.locals.auth = resolved.auth;
+		if (resolved.refreshedSession !== null) {
+			event.cookies.set(
+				SESSION_COOKIE,
+				resolved.refreshedSession,
+				sessionCookieOptions
+			);
+		}
 	} catch (cause) {
 		console.error(
 			JSON.stringify({

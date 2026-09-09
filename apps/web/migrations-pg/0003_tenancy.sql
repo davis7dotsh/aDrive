@@ -51,6 +51,11 @@ CREATE TABLE org_usage (
 	file_count integer NOT NULL DEFAULT 0 CHECK (file_count >= 0)
 );
 
+-- WorkOS sessions replace the passcode session table and its rotation
+-- record; nothing is carried over.
+DROP TABLE dashboard_sessions;
+DROP TABLE credential_state;
+
 ALTER TABLE files ADD COLUMN org_id text NOT NULL REFERENCES orgs (id);
 ALTER TABLE file_versions ADD COLUMN org_id text NOT NULL REFERENCES orgs (id);
 ALTER TABLE file_chunks ADD COLUMN org_id text NOT NULL REFERENCES orgs (id);
@@ -217,3 +222,15 @@ DROP TABLE IF EXISTS org_usage;
 DROP TABLE IF EXISTS memberships;
 DROP TABLE IF EXISTS users;
 DROP TABLE IF EXISTS orgs;
+CREATE TABLE credential_state (
+	id integer PRIMARY KEY CHECK (id = 1),
+	passcode_hash text NOT NULL CHECK (length(passcode_hash) = 64),
+	rotated_at timestamptz NOT NULL
+);
+CREATE TABLE dashboard_sessions (
+	token_hash text PRIMARY KEY,
+	created_at timestamptz NOT NULL,
+	expires_at timestamptz NOT NULL,
+	last_used_at timestamptz NOT NULL
+);
+CREATE INDEX dashboard_sessions_expiry_idx ON dashboard_sessions (expires_at);

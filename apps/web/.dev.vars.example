@@ -1,5 +1,17 @@
-# Copy to apps/web/.dev.vars and replace this with a long local-only passcode.
-PASSCODE="replace-with-at-least-12-characters"
+# Copy to apps/web/.dev.vars.
+
+# Signs the Worker facade's scheduled and queue self-requests. Any long
+# random string; production sets it with `wrangler secret put`.
+MAINTENANCE_SECRET="replace-with-at-least-12-characters"
+
+# WorkOS AuthKit. Leave WORKOS_API_KEY empty (or set it to any value
+# starting with `fake:`) to run the in-memory WorkOS fake: /auth/sign-in
+# then signs you in as `user_local` with no credentials or network. With a
+# real key, all four are required; the cookie password must be 32+ chars.
+WORKOS_API_KEY=""
+WORKOS_CLIENT_ID="client_replace"
+WORKOS_COOKIE_PASSWORD="replace-with-at-least-32-characters-of-random-text"
+WORKOS_WEBHOOK_SECRET="replace"
 
 # Local Postgres. `docker compose up -d` at the repo root starts one with
 # these credentials. Wrangler points the HYPERDRIVE binding at it.

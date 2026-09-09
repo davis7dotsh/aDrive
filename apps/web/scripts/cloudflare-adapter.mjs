@@ -15,10 +15,10 @@ export * from ${JSON.stringify(`./${svelteKitWorker}`)};
 const toHex = (bytes) =>
 	Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, '0')).join('');
 
-const hmacSign = async (passcode, message) => {
+const hmacSign = async (secret, message) => {
 	const key = await crypto.subtle.importKey(
 		'raw',
-		new TextEncoder().encode(passcode),
+		new TextEncoder().encode(secret),
 		{ name: 'HMAC', hash: 'SHA-256' },
 		false,
 		['sign']
@@ -28,12 +28,12 @@ const hmacSign = async (passcode, message) => {
 	);
 };
 
-const scheduledSignature = (passcode, scheduledTime, cron) =>
-	hmacSign(passcode, \`\${scheduledTime}\\n\${cron}\`);
+const scheduledSignature = (secret, scheduledTime, cron) =>
+	hmacSign(secret, \`\${scheduledTime}\\n\${cron}\`);
 
 // Mirrors verifyJobsRequest in src/lib/server/cron-auth.ts.
-const jobsSignature = (passcode, timestamp, body) =>
-	hmacSign(passcode, \`jobs\\n\${timestamp}\\n\${body}\`);
+const jobsSignature = (secret, timestamp, body) =>
+	hmacSign(secret, \`jobs\\n\${timestamp}\\n\${body}\`);
 
 export default {
 	fetch(request, env, ctx) {
@@ -44,7 +44,7 @@ export default {
 		ctx.waitUntil(
 			(async () => {
 				const signature = await scheduledSignature(
-					env.PASSCODE,
+					env.MAINTENANCE_SECRET,
 					scheduledTime,
 					controller.cron
 				);
@@ -80,7 +80,7 @@ export default {
 				body: message.body
 			}))
 		});
-		const signature = await jobsSignature(env.PASSCODE, timestamp, body);
+		const signature = await jobsSignature(env.MAINTENANCE_SECRET, timestamp, body);
 		const response = await sveltekit.fetch(
 			new Request(new URL('/api/internal/jobs', env.DASHBOARD_ORIGIN), {
 				method: 'POST',

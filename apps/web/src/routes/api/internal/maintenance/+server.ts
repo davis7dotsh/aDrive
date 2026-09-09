@@ -14,7 +14,7 @@ export const POST: RequestHandler = ({ request }) =>
 			const authorized = yield* Effect.tryPromise({
 				try: () =>
 					verifyScheduledRequest(
-						config.passcode,
+						config.maintenanceSecret,
 						request.headers.get('x-adrive-scheduled-time'),
 						request.headers.get('x-adrive-scheduled-cron'),
 						request.headers.get('x-adrive-scheduled-signature')
