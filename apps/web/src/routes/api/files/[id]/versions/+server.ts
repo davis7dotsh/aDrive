@@ -1,16 +1,14 @@
 import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
 import { authRateLimitResponse } from '$lib/server/auth-rate-limit-response';
-import { runEdgeWithEvent, runWorkerProgram } from '$lib/server/edge';
+import { runEdge } from '$lib/server/edge';
 import { requireWrite } from '$lib/server/request-auth';
 import { AuthGuard } from '$lib/server/services/auth-guard';
 import { Files } from '$lib/server/services/files';
-import { Indexing } from '$lib/server/services/indexing';
 
-export const PUT: RequestHandler = async (event) => {
+export const PUT: RequestHandler = (event) => {
 	const { params, request } = event;
-	const output = await runEdgeWithEvent(
-		event,
+	return runEdge(
 		Effect.gen(function* () {
 			const authGuard = yield* AuthGuard;
 			const files = yield* Files;
@@ -20,13 +18,10 @@ export const PUT: RequestHandler = async (event) => {
 				credential.credentialId
 			);
 			if (!rateLimit.allowed) {
-				return {
-					fileId: null,
-					response: authRateLimitResponse(
-						rateLimit,
-						'Too many uploads. Try again later.'
-					)
-				};
+				return authRateLimitResponse(
+					rateLimit,
+					'Too many uploads. Try again later.'
+				);
 			}
 			const result = yield* files.uploadVersion({
 				id: params.id,
@@ -35,24 +30,7 @@ export const PUT: RequestHandler = async (event) => {
 				contentLength: request.headers.get('content-length'),
 				body: request.body
 			});
-			return {
-				fileId: params.id,
-				response: Response.json(result, { status: 201 })
-			};
+			return Response.json(result, { status: 201 });
 		})
 	);
-	const uploadedFileId = output.fileId;
-	if (uploadedFileId !== null && event.platform) {
-		event.platform.ctx.waitUntil(
-			runWorkerProgram(
-				event.platform.env,
-				Effect.gen(function* () {
-					const indexing = yield* Indexing;
-					yield* indexing.process(uploadedFileId);
-				}),
-				event.locals.auth
-			)
-		);
-	}
-	return output.response;
 };

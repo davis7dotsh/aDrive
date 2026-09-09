@@ -116,10 +116,9 @@ export const GET: RequestHandler = (event) => {
 	);
 };
 
-export const PUT: RequestHandler = async (event) => {
+export const PUT: RequestHandler = (event) => {
 	const { request, url } = event;
-	const output = await runEdgeWithEvent(
-		event,
+	return runEdge(
 		Effect.gen(function* () {
 			const authGuard = yield* AuthGuard;
 			const files = yield* Files;
@@ -129,13 +128,10 @@ export const PUT: RequestHandler = async (event) => {
 				credential.credentialId
 			);
 			if (!rateLimit.allowed) {
-				return {
-					fileId: null,
-					response: authRateLimitResponse(
-						rateLimit,
-						'Too many uploads. Try again later.'
-					)
-				};
+				return authRateLimitResponse(
+					rateLimit,
+					'Too many uploads. Try again later.'
+				);
 			}
 			const displayName = yield* Effect.try({
 				try: () => decodeName(request.headers.get('x-adrive-file-name')),
@@ -186,33 +182,16 @@ export const PUT: RequestHandler = async (event) => {
 								})
 				})
 			});
-			return {
-				fileId: result.file.id,
-				response: Response.json(
-					{
-						file: result.file,
-						url: `${yield* currentContentOrigin}/f/${result.file.id}`,
-						forcedPublic: result.forcedPublic
-					},
-					{ status: 201 }
-				)
-			};
+			return Response.json(
+				{
+					file: result.file,
+					url: `${yield* currentContentOrigin}/f/${result.file.id}`,
+					forcedPublic: result.forcedPublic
+				},
+				{ status: 201 }
+			);
 		})
 	);
-	const uploadedFileId = output.fileId;
-	if (uploadedFileId !== null && event.platform) {
-		event.platform.ctx.waitUntil(
-			runWorkerProgram(
-				event.platform.env,
-				Effect.gen(function* () {
-					const indexing = yield* Indexing;
-					yield* indexing.process(uploadedFileId);
-				}),
-				event.locals.auth
-			)
-		);
-	}
-	return output.response;
 };
 
 export const DELETE: RequestHandler = async (event) => {

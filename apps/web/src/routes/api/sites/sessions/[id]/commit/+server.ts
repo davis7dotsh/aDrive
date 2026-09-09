@@ -1,42 +1,24 @@
 import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
-import { runEdgeWithEvent, runWorkerProgram } from '$lib/server/edge';
+import { runEdge } from '$lib/server/edge';
 import { requireWrite } from '$lib/server/request-auth';
 import { currentContentOrigin } from '$lib/server/services/current-org';
-import { Indexing } from '$lib/server/services/indexing';
 import { Sites } from '$lib/server/services/sites';
 
-export const POST: RequestHandler = async (event) => {
-	const { params, request, url } = event;
-	const output = await runEdgeWithEvent(
-		event,
+export const POST: RequestHandler = (event) => {
+	const { params } = event;
+	return runEdge(
 		Effect.gen(function* () {
 			const sites = yield* Sites;
 			yield* requireWrite(event);
 			const result = yield* sites.commit(params.id);
-			return {
-				fileId: result.file.id,
-				response: Response.json(
-					{
-						...result,
-						url: `${yield* currentContentOrigin}/s/${result.file.id}/`
-					},
-					{ status: 201 }
-				)
-			};
+			return Response.json(
+				{
+					...result,
+					url: `${yield* currentContentOrigin}/s/${result.file.id}/`
+				},
+				{ status: 201 }
+			);
 		})
 	);
-	if (event.platform) {
-		event.platform.ctx.waitUntil(
-			runWorkerProgram(
-				event.platform.env,
-				Effect.gen(function* () {
-					const indexing = yield* Indexing;
-					yield* indexing.process(output.fileId);
-				}),
-				event.locals.auth
-			)
-		);
-	}
-	return output.response;
 };

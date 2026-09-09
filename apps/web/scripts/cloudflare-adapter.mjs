@@ -68,8 +68,9 @@ export default {
 	},
 	// Queue batches are forwarded to the SvelteKit bundle in-process (the
 	// consumer lives under $lib, unreachable from this facade). The endpoint
-	// returns one ack/retry decision per message id; anything it did not
-	// decide on is retried so a crash never silently drops work.
+	// returns one decision per message id, \`{ ack: true }\` or
+	// \`{ retry: true, delaySeconds }\`; anything it did not decide on is
+	// retried so a crash never silently drops work.
 	async queue(batch, env, ctx) {
 		const timestamp = String(Date.now());
 		const body = JSON.stringify({
@@ -98,10 +99,13 @@ export default {
 			throw new Error(\`Queue consumer failed with status \${response.status}\`);
 		}
 		const { decisions } = await response.json();
-		const actions = new Map(decisions.map((decision) => [decision.id, decision.action]));
+		const byId = new Map(decisions.map((decision) => [decision.id, decision]));
 		for (const message of batch.messages) {
-			if (actions.get(message.id) === 'ack') message.ack();
-			else message.retry();
+			const decision = byId.get(message.id);
+			if (decision?.ack === true) message.ack();
+			else if (Number.isFinite(decision?.delaySeconds) && decision.delaySeconds > 0) {
+				message.retry({ delaySeconds: decision.delaySeconds });
+			} else message.retry();
 		}
 	}
 };

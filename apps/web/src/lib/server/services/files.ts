@@ -2,6 +2,7 @@ import { Context, Effect, Layer } from 'effect';
 import { AppConfig } from '../config';
 import { PgSql } from '../pg';
 import { Blobs } from './blobs';
+import { JobQueue } from './jobs';
 import { Tags } from './tags';
 import { CurrentOrg } from './current-org';
 import { createInternals } from './files/internals';
@@ -29,7 +30,8 @@ const makeFiles = Effect.gen(function* () {
 	const config = yield* AppConfig;
 	const tags = yield* Tags;
 	const org = yield* CurrentOrg;
-	const internals = createInternals({ sql, blobs, config, tags, org });
+	const jobs = yield* JobQueue;
+	const internals = createInternals({ sql, blobs, config, tags, org, jobs });
 
 	return Files.of({
 		...uploadOps(internals),

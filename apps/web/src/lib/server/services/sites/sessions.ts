@@ -27,7 +27,8 @@ export const sessionOps = (
 		sql,
 		blobs,
 		config,
-		org
+		org,
+		jobs
 	} = internals;
 
 	return {
@@ -426,6 +427,12 @@ export const sessionOps = (
 				)
 			);
 
+			yield* jobs.trySend({
+				kind: 'index',
+				orgId: org.id,
+				fileId: session.fileId,
+				version: session.version
+			});
 			const cleanupPending = yield* drainDeletes(session.fileId).pipe(
 				Effect.catchCause((cause) =>
 					Effect.sync(() => {
