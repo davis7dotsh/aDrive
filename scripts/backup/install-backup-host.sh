@@ -41,7 +41,7 @@ fi
 
 echo
 echo "Next steps:"
-echo "  1. Edit ${INSTALL_DIR}/backup.env (rclone remote, account id, D1 id, API token, webhook)."
+echo "  1. Edit ${INSTALL_DIR}/backup.env (rclone remote, DATABASE_URL, webhook)."
 echo "  2. rclone config create adrive-r2 s3 provider=Cloudflare ... (read-only R2 token)"
 echo "  3. Run ${INSTALL_DIR}/backup.sh once by hand and check \$BACKUP_ROOT/last-run.json."
 echo "  4. Perform the restore drill in docs/backup-restore.md before trusting it."
