@@ -112,6 +112,12 @@ record points to that IP. Verify a sample tenant hostname resolves on the
 device running the browser; its resolver may block public DNS answers
 that point to private networks.
 
+Sign-in stores the sealed WorkOS session in a thirty-day, `HttpOnly`,
+`SameSite=Lax` cookie. On an HTTPS dashboard origin it is the `Secure`,
+host-only `__Host-adrive-wos` cookie; on a plain-HTTP dev origin (a LAN or
+Tailscale hostname) it drops the prefix and the `Secure` flag so browsers
+will keep it.
+
 Vite also needs to allow the dashboard hostname and content-domain suffix.
 Set this in the shell when starting development, separately from
 `.dev.vars`, and adjust both entries if you changed the domains:
