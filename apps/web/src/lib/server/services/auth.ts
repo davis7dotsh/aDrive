@@ -17,6 +17,7 @@ import {
 import type { AuthContext, ResolvedCredential } from '../identity';
 import { PgSql } from '../pg';
 import { ensureTenant, personalOrgFor } from '../tenants';
+import { promoteVerified } from '../trust';
 import { CurrentOrg, CurrentUser } from './current-org';
 import { WorkOSClient } from './workos';
 
@@ -456,6 +457,9 @@ const makeAuth = Effect.gen(function* () {
 								role
 							}).pipe(storageError('create tenant rows'));
 						}
+						// Verified email unlocks sharing; keep promotion with tenant bootstrap.
+						if (exchanged.user.emailVerified)
+							yield* promoteVerified(sql, orgId);
 						return orgId;
 					})
 				)

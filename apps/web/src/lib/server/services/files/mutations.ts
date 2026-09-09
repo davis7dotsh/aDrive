@@ -26,7 +26,12 @@ export const mutationOps = (
 	| 'recordDownload'
 > => {
 	const { sql, org } = internals;
-	const { findDashboardFile, sendIndexJob, sendPurgeJob } = internals;
+	const {
+		ensurePublishAllowed,
+		findDashboardFile,
+		sendIndexJob,
+		sendPurgeJob
+	} = internals;
 	return {
 		setVisibility: Effect.fn('Files.setVisibility')(function* (id, isPublic) {
 			const current = yield* findDashboardFile(id);
@@ -41,6 +46,7 @@ export const mutationOps = (
 				current.htmlForcedPublic ? 'text/html' : current.contentType,
 				isPublic
 			);
+			yield* ensurePublishAllowed(visibility.public && !current.public);
 			const updatedAt = new Date().toISOString();
 			yield* sql`
 				UPDATE files
@@ -151,6 +157,7 @@ export const mutationOps = (
 				current.contentType,
 				current.public
 			);
+			yield* ensurePublishAllowed(visibility.public && !current.public);
 			const updatedAt = new Date().toISOString();
 			const rows = yield* sql
 				.withTransaction(

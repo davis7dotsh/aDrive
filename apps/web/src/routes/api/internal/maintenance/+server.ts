@@ -6,11 +6,12 @@ import { runAcrossOrgs, runEdgeWithEvent } from '$lib/server/edge';
 import { Unauthorized } from '$lib/server/errors';
 import { Lifecycle, summarize } from '$lib/server/services/lifecycle';
 
-// The cron tick: one global pass (device codes), then one bounded pass
-// per randomly chosen live org so no tenant starves another.
+// The cron tick: one global pass (device codes, trust promotions), then
+// one bounded pass per randomly chosen live org so no tenant starves
+// another.
 export const POST: RequestHandler = async (event) => {
 	const { request } = event;
-	const global = await runEdgeWithEvent(
+	const { global, trust } = await runEdgeWithEvent(
 		event,
 		Effect.gen(function* () {
 			const config = yield* AppConfig;
@@ -31,7 +32,9 @@ export const POST: RequestHandler = async (event) => {
 					message: 'Scheduled request is unauthorized'
 				});
 			}
-			return yield* lifecycle.global;
+			const global = yield* lifecycle.global;
+			const trust = yield* lifecycle.trust;
+			return { global, trust };
 		})
 	);
 	if (!event.platform) return new Response(null, { status: 204 });
@@ -43,6 +46,7 @@ export const POST: RequestHandler = async (event) => {
 		JSON.stringify({
 			message: 'maintenance tick',
 			orgs: perOrg.length,
+			trustPromotions: trust,
 			...summarize(
 				global,
 				perOrg.map((entry) => entry.value)

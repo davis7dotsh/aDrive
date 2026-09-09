@@ -212,7 +212,7 @@ describe('tenancy (local platform)', () => {
 			host: { orgId: a.orgId, slug: a.orgSlug }
 		});
 		expect(await ctx.env.AUTH_GUARD.get(`org-slug:${a.orgSlug}`)).toBe(
-			JSON.stringify({ orgId: a.orgId, trust: 'new' })
+			JSON.stringify({ orgId: a.orgId, trust: 'verified' })
 		);
 
 		// Suspending the org takes its host offline once the cache entry is
@@ -227,7 +227,7 @@ describe('tenancy (local platform)', () => {
 		).rejects.toMatchObject({ status: 404 });
 		await queryPg(
 			ctx.env,
-			(sql) => sql`UPDATE orgs SET trust = 'new' WHERE id = ${a.orgId}`
+			(sql) => sql`UPDATE orgs SET trust = 'verified' WHERE id = ${a.orgId}`
 		);
 		await ctx.env.AUTH_GUARD.delete(`org-slug:${a.orgSlug}`);
 		const { GET: serveGET } = await import('../../../routes/f/[id]/+server.js');
