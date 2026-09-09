@@ -15,6 +15,7 @@ import { visibilityForFile } from '../../file-policy';
 import { delaySecondsUntil } from '../../job-policy';
 import { refreshSearchDocument } from '../../search-index';
 import { ensureStorageHeadroom, reserveWithinPlan } from '../../storage-quota';
+import { requirePublishAllowed } from '../../trust';
 import type { AppConfig } from '../../config';
 import type { Blobs } from '../blobs';
 import type { JobQueue } from '../jobs';
@@ -69,6 +70,11 @@ export const createInternals = (deps: CoreDeps) => {
 			}
 		);
 
+	// Every path that turns a file public passes through here first; a
+	// `new` org is refused with the message that tells it what to do.
+	const ensurePublishAllowed = (becomesPublic: boolean) =>
+		becomesPublic ? requirePublishAllowed(sql, org.id) : Effect.succeed(null);
+
 	// Cheap read before a body streams; the reservation inside the commit
 	// transaction is what actually holds the bytes.
 	const ensureHeadroom = (incomingBytes: number) =>
@@ -118,6 +124,7 @@ export const createInternals = (deps: CoreDeps) => {
 			current.htmlForcedPublic ? 'text/html' : contentType,
 			current.public
 		);
+		yield* ensurePublishAllowed(visibility.public && !current.public);
 		// Optimistic concurrency on current_version: a concurrent upload
 		// that committed first makes this update match nothing.
 		yield* sql
@@ -187,6 +194,7 @@ export const createInternals = (deps: CoreDeps) => {
 		jobs,
 		compensateStoredBlob,
 		ensureHeadroom,
+		ensurePublishAllowed,
 		reserveBytes,
 		sendIndexJob,
 		sendPurgeJob,

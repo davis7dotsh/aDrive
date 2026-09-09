@@ -18,6 +18,7 @@ export const uploadOps = (
 	const { blobs, sql, config, tags, org } = internals;
 	const {
 		ensureHeadroom,
+		ensurePublishAllowed,
 		reserveBytes,
 		compensateStoredBlob,
 		commitStoredVersion,
@@ -55,6 +56,7 @@ export const uploadOps = (
 				contentType,
 				input.public
 			);
+			yield* ensurePublishAllowed(visibility.public);
 			const id = crypto.randomUUID();
 			const resolvedTags = yield* tags.resolveNames(input.tags);
 			const r2Key = `v/${id}/${crypto.randomUUID()}`;

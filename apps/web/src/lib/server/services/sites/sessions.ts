@@ -4,6 +4,7 @@ import { InvalidRequest, NotFound, StorageError } from '../../errors';
 import { delaySecondsUntil } from '../../job-policy';
 import { refreshSearchDocument } from '../../search-index';
 import { ensureStorageHeadroom, reserveWithinPlan } from '../../storage-quota';
+import { requirePublishAllowed } from '../../trust';
 import {
 	assertOpenSiteSession,
 	prepareSiteManifest,
@@ -43,6 +44,11 @@ export const sessionOps = (
 								message: 'Site manifest is invalid'
 							})
 			});
+			// Sites are always public, so an org that may not publish is
+			// refused before any asset bytes are accepted.
+			yield* requirePublishAllowed(sql, org.id);
+			// Declared manifest sizes gate the whole publish before any asset
+			// bytes are accepted; per-asset uploads re-verify actual lengths.
 			const declaredBytes = prepared.assets.reduce(
 				(total, asset) => total + asset.sizeBytes,
 				0
@@ -237,6 +243,7 @@ export const sessionOps = (
 								message: 'Site upload session is unavailable'
 							})
 			});
+			yield* requirePublishAllowed(sql, org.id);
 			const assets = yield* stagedAssets(session.id);
 			const totalSize = yield* Effect.try({
 				try: () => validateCommittedAssets(assets),

@@ -1,4 +1,6 @@
 import { Context, Effect, Layer } from 'effect';
+import { PgSql } from '../pg';
+import { promoteEstablished } from '../trust';
 import { Auth } from './auth';
 import { Files } from './files';
 import { Indexing } from './indexing';
@@ -18,6 +20,9 @@ export const ORG_SWEEP_LIMIT = 2;
 export interface LifecycleShape {
 	// Work that is not tenant-scoped (device codes); runs once per tick.
 	readonly global: Effect.Effect<number>;
+	// Promotes verified orgs that have paid for 14 days to established
+	// (trust-policy.ts). Returns how many moved.
+	readonly trust: Effect.Effect<number>;
 	// One org's share of purges, indexing, and site cleanup; runAcrossOrgs
 	// in edge.ts runs it once per randomly chosen live org.
 	readonly org: Effect.Effect<LifecycleSummary>;
@@ -82,6 +87,7 @@ export const summarize = (
 	);
 
 const makeLifecycle = Effect.gen(function* () {
+	const sql = yield* PgSql;
 	const auth = yield* Auth;
 	const files = yield* Files;
 	const indexing = yield* Indexing;
@@ -90,6 +96,11 @@ const makeLifecycle = Effect.gen(function* () {
 	const global = recover('authentication', auth.sweepExpired(100), 0).pipe(
 		Effect.withSpan('Lifecycle.global')
 	);
+	const trust = recover(
+		'trust',
+		Effect.suspend(() => promoteEstablished(sql, new Date())),
+		0
+	).pipe(Effect.withSpan('Lifecycle.trust'));
 
 	const org = runLifecycleTasks({
 		authentication: Effect.succeed(0),
@@ -98,7 +109,7 @@ const makeLifecycle = Effect.gen(function* () {
 		files: files.sweepPurges(ORG_SWEEP_LIMIT)
 	}).pipe(Effect.withSpan('Lifecycle.org'));
 
-	return Lifecycle.of({ global, org });
+	return Lifecycle.of({ global, trust, org });
 });
 
 export const LifecycleLive = Layer.effect(Lifecycle, makeLifecycle);
