@@ -35,6 +35,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 		throw cause;
 	}
 
+	const origins = normalizeOrigins(originConfig);
 	event.locals.auth = null;
 	event.locals.content = null;
 	if (hostRoute.route === 'content') {
@@ -48,6 +49,17 @@ export const handle: Handle = async ({ event, resolve }) => {
 		}
 		if (resolved._tag === 'Missing') {
 			return new Response('Not found', { status: 404 });
+		}
+		if (resolved._tag === 'Moved') {
+			const location = new URL(event.url);
+			location.host = `${resolved.slug}.${origins.contentDomain}`;
+			return new Response(null, {
+				status: 301,
+				headers: {
+					Location: location.href,
+					'Cache-Control': 'public, max-age=300'
+				}
+			});
 		}
 		event.locals.content = resolved.host;
 	} else {
@@ -66,7 +78,6 @@ export const handle: Handle = async ({ event, resolve }) => {
 		}
 	}
 
-	const origins = normalizeOrigins(originConfig);
 	return applySecurityHeaders(await resolve(event), {
 		pathname: event.url.pathname,
 		requestOrigin: event.url.origin,
