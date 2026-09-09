@@ -2,13 +2,17 @@
 
 adrive is a Cloudflare-backed file spine with a dashboard, tags, hybrid
 search, static-site publishing, deployment-based authentication, and
-scheduled storage lifecycle management.
+scheduled storage lifecycle management. It is becoming a hosted product:
+one deployment serving many organisations, each with its own files, keys,
+and usage (`docs/plans/hosted-product.md`). Self-hosting a single-tenant
+copy keeps working and is what the setup below describes.
 Uploads stream directly to R2, metadata and append-only version history live in
-D1, and file/site bytes are served from a separate cookie-less content origin.
-Search combines weighted FTS5 BM25 results, a filename trigram index, and an
-optional Workers AI + pgvector semantic source with reciprocal rank fusion.
-Canonical D1 hydration still applies deletion, expiry, visibility, and tag
-filters. The CLI supports file transfer and safe, staged directory publishing.
+Postgres (PlanetScale via Hyperdrive), and file/site bytes are served from a
+separate cookie-less content origin. Search combines weighted keyword
+results, a filename trigram index, and an optional Workers AI + pgvector
+semantic source with reciprocal rank fusion, then applies deletion, expiry,
+visibility, and tag filters. The CLI supports file transfer and safe, staged
+directory publishing.
 
 ## Install the CLI
 
@@ -51,14 +55,13 @@ Requirements: Node 26+ and Bun 1.4+.
 bun install
 bun db:pg:up              # local Postgres via docker compose
 bun db:pg:migrate:local
-bun db:migrate:local
 cp apps/web/.dev.vars.example apps/web/.dev.vars
 bun key:create:local
 ```
 
-Postgres (via a Hyperdrive binding) is being introduced beside D1; see
-`docs/plans/hosted-product.md` for the port sequence. The route test suite
-needs the docker compose Postgres running.
+Local development runs against the docker compose Postgres through the
+Hyperdrive binding; the route test suite needs it running too. Production
+uses PlanetScale Postgres (`docs/release.md`).
 
 Route tests reset their Postgres database before each suite run. They use
 `adrive_test` by default; `ADRIVE_TEST_DATABASE_URL` may point to another

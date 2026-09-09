@@ -112,6 +112,8 @@ the repository root.
 10. From the repo root: set up backups on your backup host
     (`scripts/backup/install-backup-host.sh`) and complete the restore drill
     in `docs/backup-restore.md`.
+11. Work through `docs/launch-checklist.md` (public pages, abuse
+    contacts, zone settings, secrets) before the deployment is public.
 
 Semantic search notes for the first deploy:
 
