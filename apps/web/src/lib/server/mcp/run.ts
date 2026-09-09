@@ -1,9 +1,8 @@
 import { Cause, Effect, Exit } from 'effect';
-import { isAppError, runWorkerProgram, type AppServices } from '../edge';
+import { isAppError, type AppServices } from '../edge';
 import type { AppError } from '../errors';
 import type { ProgramIdentity } from '../identity';
 import { requestLayer } from '../layer';
-import { Indexing } from '../services/indexing';
 
 export type McpRunSuccess<A> = { readonly ok: true; readonly value: A };
 export type McpRunFailure = {
@@ -61,22 +60,4 @@ export const runMcp = async <A, E>(
 	);
 	if (Exit.isSuccess(exit)) return { ok: true, value: exit.value };
 	return failureFromCause(exit.cause);
-};
-
-export const scheduleIndex = (
-	env: Env,
-	ctx: ExecutionContext,
-	identity: ProgramIdentity,
-	fileId: string
-) => {
-	ctx.waitUntil(
-		runWorkerProgram(
-			env,
-			Effect.gen(function* () {
-				const indexing = yield* Indexing;
-				yield* indexing.process(fileId);
-			}),
-			identity
-		)
-	);
 };

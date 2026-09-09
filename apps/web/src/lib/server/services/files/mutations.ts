@@ -26,7 +26,7 @@ export const mutationOps = (
 	| 'recordDownload'
 > => {
 	const { sql, org } = internals;
-	const { findDashboardFile } = internals;
+	const { findDashboardFile, sendIndexJob } = internals;
 	return {
 		setVisibility: Effect.fn('Files.setVisibility')(function* (id, isPublic) {
 			const current = yield* findDashboardFile(id);
@@ -161,6 +161,7 @@ export const mutationOps = (
 						(cause) => new StorageError({ operation: 'rename file', cause })
 					)
 				);
+			yield* sendIndexJob(id, current.version);
 			return {
 				file: {
 					...current,

@@ -103,27 +103,11 @@ export const PATCH: RequestHandler = async (event) => {
 													}))
 												);
 			return {
-				reindex:
-					mutation.action === 'reindex' ||
-					mutation.action === 'rename' ||
-					mutation.action === 'restore-version',
 				purge: mutation.action === 'purge',
 				response: Response.json(result)
 			};
 		})
 	);
-	if (output.reindex && event.platform) {
-		event.platform.ctx.waitUntil(
-			runWorkerProgram(
-				event.platform.env,
-				Effect.gen(function* () {
-					const indexing = yield* Indexing;
-					yield* indexing.process(params.id);
-				}),
-				event.locals.auth
-			)
-		);
-	}
 	if (output.purge && event.platform) {
 		event.platform.ctx.waitUntil(
 			runWorkerProgram(

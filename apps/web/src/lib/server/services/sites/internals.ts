@@ -6,6 +6,7 @@ import { NotFound, StorageError } from '../../errors';
 import { siteCleanupDisposition } from '../../site-policy';
 import { Blobs } from '../blobs';
 import type { CurrentOrg } from '../current-org';
+import type { JobQueue } from '../jobs';
 import {
 	PendingDeleteRow,
 	SiteSessionRow,
@@ -18,9 +19,16 @@ interface CoreDeps {
 	readonly blobs: Blobs['Service'];
 	readonly config: AppConfig['Service'];
 	readonly org: CurrentOrg['Service'];
+	readonly jobs: JobQueue['Service'];
 }
 
-export const createInternals = ({ sql, blobs, config, org }: CoreDeps) => {
+export const createInternals = ({
+	sql,
+	blobs,
+	config,
+	org,
+	jobs
+}: CoreDeps) => {
 	const all = <A, I>(
 		statement: Effect.Effect<ReadonlyArray<unknown>, unknown>,
 		schema: Schema.Codec<A, I, never>,
@@ -282,7 +290,8 @@ export const createInternals = ({ sql, blobs, config, org }: CoreDeps) => {
 		sql,
 		blobs,
 		config,
-		org
+		org,
+		jobs
 	};
 };
 

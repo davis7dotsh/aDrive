@@ -16,6 +16,7 @@ import { refreshSearchDocument } from '../../search-index';
 import { ensureStorageHeadroom, reserveWithinPlan } from '../../storage-quota';
 import type { AppConfig } from '../../config';
 import type { Blobs } from '../blobs';
+import type { JobQueue } from '../jobs';
 import type { Tags } from '../tags';
 import type { CurrentOrg } from '../current-org';
 import type { MutationResult } from './types';
@@ -26,10 +27,11 @@ export interface CoreDeps {
 	readonly config: AppConfig['Service'];
 	readonly tags: Tags['Service'];
 	readonly org: CurrentOrg['Service'];
+	readonly jobs: JobQueue['Service'];
 }
 
 export const createInternals = (deps: CoreDeps) => {
-	const { sql, blobs, config, tags, org } = deps;
+	const { sql, blobs, config, tags, org, jobs } = deps;
 	const compensateStoredBlob = <OriginalError>(
 		failure: OriginalError,
 		fileId: string,
@@ -72,6 +74,11 @@ export const createInternals = (deps: CoreDeps) => {
 		ensureStorageHeadroom(sql, org.id, incomingBytes);
 	const reserveBytes = (orgId: string, delta: number) =>
 		reserveWithinPlan(sql, orgId, delta);
+
+	// Sent after the transaction that made the work necessary has
+	// committed; a lost send is caught by the cron reconciliation.
+	const sendIndexJob = (fileId: string, version: number) =>
+		jobs.trySend({ kind: 'index', orgId: org.id, fileId, version });
 
 	const findDashboardFile = Effect.fn('Files.findDashboardFile')(function* (
 		id: string
@@ -144,6 +151,7 @@ export const createInternals = (deps: CoreDeps) => {
 					)
 				)
 			);
+		yield* sendIndexJob(current.id, version);
 		return {
 			file: {
 				...current,
@@ -168,9 +176,11 @@ export const createInternals = (deps: CoreDeps) => {
 		config,
 		tags,
 		org,
+		jobs,
 		compensateStoredBlob,
 		ensureHeadroom,
 		reserveBytes,
+		sendIndexJob,
 		findDashboardFile,
 		commitStoredVersion
 	};

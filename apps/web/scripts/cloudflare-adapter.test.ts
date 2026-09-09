@@ -30,6 +30,9 @@ describe('Cloudflare Worker facade', () => {
 		expect(source).toContain('/api/internal/jobs');
 		expect(source).toContain('message.ack()');
 		expect(source).toContain('message.retry()');
+		expect(source).toContain(
+			'message.retry({ delaySeconds: decision.delaySeconds })'
+		);
 		expect(source).toContain("name: 'HMAC', hash: 'SHA-256'");
 		expect(source).toContain('ctx.waitUntil(');
 		expect(source).not.toContain('const { waitUntil } = ctx');

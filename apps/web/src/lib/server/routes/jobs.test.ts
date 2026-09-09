@@ -21,7 +21,11 @@ describe('queue consumer endpoint', () => {
 				{
 					queue: 'adrive-jobs',
 					messages: [
-						{ id: 'a', attempts: 1, body: { kind: 'purge', fileId: 'file-1' } },
+						{
+							id: 'a',
+							attempts: 1,
+							body: { kind: 'purge', orgId: 'org_jobs', fileId: 'file-1' }
+						},
 						{ id: 'b', attempts: 1, body: { kind: 'nope' } }
 					]
 				},
@@ -50,8 +54,8 @@ describe('queue consumer endpoint', () => {
 		expect(response.status).toBe(200);
 		await expect(response.json()).resolves.toEqual({
 			decisions: [
-				{ id: 'a', action: 'ack' },
-				{ id: 'b', action: 'ack' }
+				{ id: 'a', ack: true },
+				{ id: 'b', ack: true }
 			]
 		});
 		log.mockRestore();

@@ -27,7 +27,7 @@ import {
 	decodeExclusiveContent,
 	mcpPageLimit
 } from './payload';
-import { runMcp, scheduleIndex } from './run';
+import { runMcp } from './run';
 
 export const READ_TOOL_NAMES = [
 	'whoami',
@@ -304,7 +304,7 @@ const registerReadTools = (server: McpServer, input: McpServerInput) => {
 };
 
 const registerWriteTools = (server: McpServer, input: McpServerInput) => {
-	const { env, ctx, credential } = input;
+	const { env, credential } = input;
 
 	server.registerTool(
 		'put_file',
@@ -370,7 +370,6 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 			if (uploaded.value.kind === 'rate-limit') {
 				return errorResult(uploaded.value.message, 429);
 			}
-			scheduleIndex(env, ctx, credential, uploaded.value.file.id);
 			const { kind: _kind, ...value } = uploaded.value;
 			return jsonResult(value);
 		}
@@ -395,7 +394,6 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 				})
 			);
 			if (!result.ok) return errorResult(result.message, result.status);
-			scheduleIndex(env, ctx, credential, result.value.file.id);
 			return jsonResult(result.value);
 		}
 	);
@@ -579,7 +577,6 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 			if (published.value.kind === 'rate-limit') {
 				return errorResult(published.value.message, 429);
 			}
-			scheduleIndex(env, ctx, credential, published.value.file.id);
 			const { kind: _kind, ...value } = published.value;
 			return jsonResult(value);
 		}
