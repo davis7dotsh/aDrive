@@ -19,7 +19,6 @@ import type { ProgramIdentity, ProgramTenant } from './identity';
 import { requestLayer } from './layer';
 import { PgSql } from './pg';
 import type { AppConfig } from './config';
-import type { AuthGuard } from './services/auth-guard';
 import type { Auth } from './services/auth';
 import type { AuthGuardStore } from './services/bindings';
 import type { Blobs } from './services/blobs';
@@ -34,12 +33,13 @@ import type { Lifecycle } from './services/lifecycle';
 import type { GrantSecrets } from './services/grant-secrets';
 import type { JobQueue } from './services/jobs';
 import type { Org } from './services/org';
+import type { RateLimits } from './services/rate-limits';
 import type { WorkOSClient } from './services/workos';
 
 export type AppServices =
 	| PgSql
 	| AppConfig
-	| AuthGuard
+	| RateLimits
 	| AuthGuardStore
 	| Auth
 	| Blobs

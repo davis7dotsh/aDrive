@@ -7,6 +7,23 @@ export class Pg extends Context.Service<Pg, Hyperdrive>()('app/Pg') {}
 
 export class Bucket extends Context.Service<Bucket, R2Bucket>()('app/Bucket') {}
 
+// The four Workers rate limit bindings (wrangler.jsonc `ratelimits`),
+// consumed through services/rate-limits.ts.
+export interface RateLimiterBindings {
+	readonly upload: RateLimit;
+	readonly publish: RateLimit;
+	readonly auth: RateLimit;
+	readonly anonymous: RateLimit;
+}
+
+export class RateLimiters extends Context.Service<
+	RateLimiters,
+	RateLimiterBindings
+>()('app/RateLimiters') {}
+
+// The AUTH_GUARD KV namespace. Its name predates the rate limit bindings;
+// today it only caches org slug lookups (content-host.ts) and query
+// embeddings (query-embedding-cache.ts).
 export interface AuthGuardStoreShape {
 	readonly get: (key: string) => Promise<string | null>;
 	readonly put: (
