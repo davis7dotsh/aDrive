@@ -20,9 +20,10 @@ try {
 	await client.query('BEGIN');
 	await client.query('DELETE FROM search_documents');
 	const inserted = await client.query(
-		`INSERT INTO search_documents (file_id, chunk_no, name, tags, body)
+		`INSERT INTO search_documents (file_id, org_id, chunk_no, name, tags, body)
 		SELECT
 			f.id,
+			f.org_id,
 			0,
 			f.display_name,
 			COALESCE((

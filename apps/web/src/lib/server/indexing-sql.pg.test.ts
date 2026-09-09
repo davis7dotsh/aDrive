@@ -11,6 +11,7 @@ import {
 } from './indexing-sql';
 import { PgSql } from './pg';
 import { MAX_INDEX_ATTEMPTS, indexFailureDisposition } from './semantic-policy';
+import { ensureTestOrg, TEST_ORG_ID } from './test/org';
 import { testPgLayer } from './test/pg';
 
 const NOW = '2026-07-27T00:00:00.000Z';
@@ -23,10 +24,11 @@ const seedVersion = (fileId: string, version: number, attempts = 0) =>
 	Effect.gen(function* () {
 		const sql = yield* PgSql;
 		if (version === 1) {
+			yield* ensureTestOrg(sql);
 			yield* sql`INSERT INTO files (
-					id, display_name, content_type, size_bytes, created_at, updated_at,
-					index_attempts
-				) VALUES (${fileId}, 'race.txt', 'text/plain', 4, ${NOW}, ${NOW}, ${attempts})`;
+					id, org_id, display_name, content_type, size_bytes, created_at,
+					updated_at, index_attempts
+				) VALUES (${fileId}, ${TEST_ORG_ID}, 'race.txt', 'text/plain', 4, ${NOW}, ${NOW}, ${attempts})`;
 		} else {
 			yield* sql`UPDATE files
 				SET current_version = ${version}, index_state = 'pending', index_cursor = 0,
@@ -35,8 +37,8 @@ const seedVersion = (fileId: string, version: number, attempts = 0) =>
 				WHERE id = ${fileId}`;
 		}
 		yield* sql`INSERT INTO file_versions (
-				file_id, version, r2_key, size_bytes, content_type, created_at
-			) VALUES (${fileId}, ${version}, ${`v/${fileId}/${version}`}, 4, 'text/plain', ${NOW})`;
+				file_id, org_id, version, r2_key, size_bytes, content_type, created_at
+			) VALUES (${fileId}, ${TEST_ORG_ID}, ${version}, ${`v/${fileId}/${version}`}, 4, 'text/plain', ${NOW})`;
 	});
 
 const lease = (
@@ -214,8 +216,8 @@ describe('lease-guarded indexing SQL on postgres', () => {
 				yield* storeExtractedText(sql, v1, 'version one');
 				// A leftover v1 chunk without an embedding must disappear
 				// when v2 commits.
-				yield* sql`INSERT INTO file_chunks (file_id, version, ordinal, char_start, char_end)
-					VALUES (${fileId}, 1, 7, 0, 1)`;
+				yield* sql`INSERT INTO file_chunks (file_id, org_id, version, ordinal, char_start, char_end)
+					VALUES (${fileId}, ${TEST_ORG_ID}, 1, 7, 0, 1)`;
 
 				yield* seedVersion(fileId, 2);
 				yield* claim(v2);

@@ -17,6 +17,7 @@ import { ensureStoredBytesWithin } from '../../storage-quota';
 import type { AppConfig } from '../../config';
 import type { Blobs } from '../blobs';
 import type { Tags } from '../tags';
+import type { CurrentOrg } from '../current-org';
 import type { MutationResult } from './types';
 
 export interface CoreDeps {
@@ -24,10 +25,11 @@ export interface CoreDeps {
 	readonly blobs: Blobs['Service'];
 	readonly config: AppConfig['Service'];
 	readonly tags: Tags['Service'];
+	readonly org: CurrentOrg['Service'];
 }
 
 export const createInternals = (deps: CoreDeps) => {
-	const { sql, blobs, config, tags } = deps;
+	const { sql, blobs, config, tags, org } = deps;
 	const compensateStoredBlob = <OriginalError>(
 		failure: OriginalError,
 		fileId: string,
@@ -121,13 +123,13 @@ export const createInternals = (deps: CoreDeps) => {
 						});
 					}
 					yield* sql`
-						INSERT INTO file_versions (
-							file_id, version, r2_key, size_bytes, sha256, content_type,
-							created_at, text_content
-						) VALUES (
-							${current.id}, ${version}, ${r2Key}, ${size}, NULL, ${contentType},
-							${updatedAt}, NULL
-						)`;
+							INSERT INTO file_versions (
+								file_id, org_id, version, r2_key, size_bytes, sha256,
+								content_type, created_at, text_content
+							) VALUES (
+								${current.id}, ${org.id}, ${version}, ${r2Key}, ${size}, NULL,
+								${contentType}, ${updatedAt}, NULL
+							)`;
 					yield* refreshSearchDocument(sql, current.id);
 				})
 			)
@@ -161,6 +163,7 @@ export const createInternals = (deps: CoreDeps) => {
 		blobs,
 		config,
 		tags,
+		org,
 		compensateStoredBlob,
 		checkStorageQuota,
 		findDashboardFile,

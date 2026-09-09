@@ -11,6 +11,7 @@ import {
 	type CandidateFilter
 } from './search-candidates';
 import { refreshSearchDocument } from './search-index';
+import { ensureTestOrg, TEST_ORG_ID } from './test/org';
 import { testPgLayer } from './test/pg';
 
 const NOW = '2026-07-27T00:00:00.000Z';
@@ -29,23 +30,25 @@ interface Seed {
 const seedTag = (id: string, name = id) =>
 	Effect.gen(function* () {
 		const sql = yield* PgSql;
-		yield* sql`INSERT INTO tags (id, name, normalized_name, created_at)
-			VALUES (${id}, ${name}, ${name}, ${NOW})`;
+		yield* ensureTestOrg(sql);
+		yield* sql`INSERT INTO tags (id, org_id, name, normalized_name, created_at)
+			VALUES (${id}, ${TEST_ORG_ID}, ${name}, ${name}, ${NOW})`;
 	});
 
 const seedFile = (id: string, seed: Seed) =>
 	Effect.gen(function* () {
 		const sql = yield* PgSql;
+		yield* ensureTestOrg(sql);
 		yield* sql`INSERT INTO files (
-				id, display_name, content_type, size_bytes, created_at, updated_at,
+				id, org_id, display_name, content_type, size_bytes, created_at, updated_at,
 				deleted_at, expires_at
 			) VALUES (
-				${id}, ${seed.name}, 'text/plain', 1, ${NOW}, ${NOW},
+				${id}, ${TEST_ORG_ID}, ${seed.name}, 'text/plain', 1, ${NOW}, ${NOW},
 				${seed.deletedAt ?? null}, ${seed.expiresAt ?? null}
 			)`;
 		yield* sql`INSERT INTO file_versions (
-				file_id, version, r2_key, size_bytes, content_type, created_at, text_content
-			) VALUES (${id}, 1, ${`v/${id}/1`}, 1, 'text/plain', ${NOW}, ${seed.body ?? ''})`;
+				file_id, org_id, version, r2_key, size_bytes, content_type, created_at, text_content
+			) VALUES (${id}, ${TEST_ORG_ID}, 1, ${`v/${id}/1`}, 1, 'text/plain', ${NOW}, ${seed.body ?? ''})`;
 		if (seed.tagId) {
 			yield* sql`INSERT INTO file_tags (file_id, tag_id) VALUES (${id}, ${seed.tagId})`;
 		}
@@ -255,6 +258,7 @@ describe('postgres search candidates', () => {
 				yield* seedFile(id, { name: 'Quarterly report.pdf' });
 				const unrelated = Array.from({ length: 2_000 }, (_, index) => ({
 					id: `${id}-unrelated-${index}`,
+					org_id: TEST_ORG_ID,
 					display_name: `Unrelated photograph ${index}`,
 					content_type: 'image/jpeg',
 					size_bytes: 1,
@@ -265,6 +269,7 @@ describe('postgres search candidates', () => {
 				yield* sql`INSERT INTO search_documents ${sql.insert(
 					unrelated.map((file) => ({
 						file_id: file.id,
+						org_id: TEST_ORG_ID,
 						name: file.display_name
 					}))
 				)}`;

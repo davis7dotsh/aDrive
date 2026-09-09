@@ -3,6 +3,7 @@ import { AppConfig } from '../config';
 import { PgSql } from '../pg';
 import { Blobs } from './blobs';
 import { Tags } from './tags';
+import { CurrentOrg } from './current-org';
 import { createInternals } from './files/internals';
 import { mutationOps } from './files/mutations';
 import { purgeOps } from './files/purge';
@@ -27,7 +28,8 @@ const makeFiles = Effect.gen(function* () {
 	const blobs = yield* Blobs;
 	const config = yield* AppConfig;
 	const tags = yield* Tags;
-	const internals = createInternals({ sql, blobs, config, tags });
+	const org = yield* CurrentOrg;
+	const internals = createInternals({ sql, blobs, config, tags, org });
 
 	return Files.of({
 		...uploadOps(internals),

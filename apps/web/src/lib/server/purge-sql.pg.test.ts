@@ -2,6 +2,7 @@ import { Effect } from 'effect';
 import { describe, expect, it } from 'vitest';
 import { PgSql } from './pg';
 import { completePurge } from './purge-sql';
+import { ensureTestOrg, TEST_ORG_ID } from './test/org';
 import { testPgLayer } from './test/pg';
 
 const run = <A, E>(effect: Effect.Effect<A, E, PgSql>) =>
@@ -12,31 +13,32 @@ const seedPurgingFile = (fileId: string, kind: 'file' | 'site') =>
 		const sql = yield* PgSql;
 		const now = '2026-07-27T00:00:00.000Z';
 		const isSite = kind === 'site';
+		yield* ensureTestOrg(sql);
 		yield* sql`
 			INSERT INTO files (
-				id, display_name, content_type, kind, current_version, size_bytes,
+				id, org_id, display_name, content_type, kind, current_version, size_bytes,
 				public, is_site, created_at, updated_at, deleted_at, purge_at, purge_state
 			) VALUES (
-				${fileId}, ${`${kind}-name`}, ${isSite ? 'text/html' : 'text/plain'},
+				${fileId}, ${TEST_ORG_ID}, ${`${kind}-name`}, ${isSite ? 'text/html' : 'text/plain'},
 				${kind}, 1, 42, true, ${isSite}, ${now}, ${now}, ${now}, ${now}, 'pending'
 			)`;
 		yield* sql`
 			INSERT INTO file_versions (
-				file_id, version, r2_key, size_bytes, content_type, created_at, text_content
+				file_id, org_id, version, r2_key, size_bytes, content_type, created_at, text_content
 			) VALUES (
-				${fileId}, 1, ${isSite ? `site-version/${fileId}/1` : `v/${fileId}/1`},
+				${fileId}, ${TEST_ORG_ID}, 1, ${isSite ? `site-version/${fileId}/1` : `v/${fileId}/1`},
 				42, ${isSite ? 'text/html' : 'text/plain'}, ${now}, 'purge body'
 			)`;
 		yield* sql`
-			INSERT INTO tags (id, name, normalized_name, created_at)
-			VALUES (${`tag-${fileId}`}, 'purge-tag', ${`purge-tag-${fileId}`}, ${now})`;
+			INSERT INTO tags (id, org_id, name, normalized_name, created_at)
+			VALUES (${`tag-${fileId}`}, ${TEST_ORG_ID}, 'purge-tag', ${`purge-tag-${fileId}`}, ${now})`;
 		yield* sql`INSERT INTO file_tags (file_id, tag_id) VALUES (${fileId}, ${`tag-${fileId}`})`;
 		yield* sql`
-			INSERT INTO search_documents (file_id, chunk_no, name, tags, body)
-			VALUES (${fileId}, 0, ${`${kind}-name`}, 'purge-tag', 'purge body')`;
+			INSERT INTO search_documents (file_id, org_id, chunk_no, name, tags, body)
+			VALUES (${fileId}, ${TEST_ORG_ID}, 0, ${`${kind}-name`}, 'purge-tag', 'purge body')`;
 		yield* sql`
-			INSERT INTO file_chunks (file_id, version, ordinal, char_start, char_end)
-			VALUES (${fileId}, 1, 0, 0, 10), (${fileId}, 1, 1, 8, 18)`;
+			INSERT INTO file_chunks (file_id, org_id, version, ordinal, char_start, char_end)
+			VALUES (${fileId}, ${TEST_ORG_ID}, 1, 0, 0, 10), (${fileId}, ${TEST_ORG_ID}, 1, 1, 8, 18)`;
 		if (isSite) {
 			yield* sql`
 				INSERT INTO site_assets (file_id, version, path, r2_key, content_type, size_bytes)

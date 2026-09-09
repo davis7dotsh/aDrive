@@ -9,6 +9,7 @@ import {
 } from '../tag-policy';
 import { createObjectTtlCache } from '../isolate-cache';
 import { PgSql } from '../pg';
+import { CurrentOrg } from './current-org';
 
 const TAG_LIST_CACHE_TTL_MS = 5_000;
 // One database per deployment, so the per-isolate cache needs a single
@@ -80,6 +81,7 @@ export class Tags extends Context.Service<Tags, TagsShape>()('app/Tags') {}
 
 const makeTags = Effect.gen(function* () {
 	const sql = yield* PgSql;
+	const org = yield* CurrentOrg;
 	const select = sql.literal(tagSelect);
 
 	const list = Effect.gen(function* () {
@@ -146,13 +148,14 @@ const makeTags = Effect.gen(function* () {
 				INSERT INTO tags ${sql.insert(
 					missing.map((tag) => ({
 						id: crypto.randomUUID(),
+						org_id: org.id,
 						name: tag.name,
 						normalized_name: tag.normalizedName,
 						color: null,
 						created_at: createdAt
 					}))
 				)}
-				ON CONFLICT (normalized_name) DO NOTHING`.pipe(
+				ON CONFLICT (org_id, normalized_name) DO NOTHING`.pipe(
 				Effect.mapError(
 					(cause) => new StorageError({ operation: 'auto-create tags', cause })
 				)
@@ -177,12 +180,12 @@ const makeTags = Effect.gen(function* () {
 			const color = yield* validate(() => normalizeTagColor(input.color));
 			const createdAt = new Date().toISOString();
 			yield* sql`
-				INSERT INTO tags (id, name, normalized_name, color, created_at)
+				INSERT INTO tags (id, org_id, name, normalized_name, color, created_at)
 				VALUES (
-					${crypto.randomUUID()}, ${tag.name}, ${tag.normalizedName},
+					${crypto.randomUUID()}, ${org.id}, ${tag.name}, ${tag.normalizedName},
 					${color}, ${createdAt}
 				)
-				ON CONFLICT (normalized_name) DO NOTHING`.pipe(
+				ON CONFLICT (org_id, normalized_name) DO NOTHING`.pipe(
 				Effect.mapError(
 					(cause) => new StorageError({ operation: 'create tag', cause })
 				)

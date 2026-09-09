@@ -5,6 +5,7 @@ import { AppConfig } from '../../config';
 import { NotFound, StorageError } from '../../errors';
 import { siteCleanupDisposition } from '../../site-policy';
 import { Blobs } from '../blobs';
+import type { CurrentOrg } from '../current-org';
 import {
 	PendingDeleteRow,
 	SiteSessionRow,
@@ -16,9 +17,10 @@ interface CoreDeps {
 	readonly sql: PgClient.PgClient;
 	readonly blobs: Blobs['Service'];
 	readonly config: AppConfig['Service'];
+	readonly org: CurrentOrg['Service'];
 }
 
-export const createInternals = ({ sql, blobs, config }: CoreDeps) => {
+export const createInternals = ({ sql, blobs, config, org }: CoreDeps) => {
 	const all = <A, I>(
 		statement: Effect.Effect<ReadonlyArray<unknown>, unknown>,
 		schema: Schema.Codec<A, I, never>,
@@ -277,7 +279,8 @@ export const createInternals = ({ sql, blobs, config }: CoreDeps) => {
 		sweepPendingDeletes,
 		sql,
 		blobs,
-		config
+		config,
+		org
 	};
 };
 

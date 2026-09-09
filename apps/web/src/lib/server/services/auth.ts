@@ -22,6 +22,8 @@ import {
 	validate
 } from '../errors';
 import { PgSql } from '../pg';
+import { BOOTSTRAP_TENANT, ensureTenant } from '../tenants';
+import { CurrentOrg, CurrentUser } from './current-org';
 
 const ApiKeyRow = Schema.Struct({
 	id: Schema.String,
@@ -251,6 +253,8 @@ const toApiKey = (row: typeof ApiKeyRow.Type): ApiKey => ({
 const makeAuth = Effect.gen(function* () {
 	const sql = yield* PgSql;
 	const config = yield* AppConfig;
+	const org = yield* CurrentOrg;
+	const user = yield* CurrentUser;
 
 	const storageError = (operation: string) =>
 		Effect.mapError((cause: unknown) => new StorageError({ operation, cause }));
@@ -418,6 +422,12 @@ const makeAuth = Effect.gen(function* () {
 			const expiresAt = new Date(
 				createdAt.getTime() + SESSION_MAX_AGE_SECONDS * 1000
 			);
+			yield* ensureTenant(sql, BOOTSTRAP_TENANT).pipe(
+				Effect.mapError(
+					(cause) =>
+						new StorageError({ operation: 'ensure bootstrap tenant', cause })
+				)
+			);
 			yield* sql`
 				INSERT INTO dashboard_sessions (
 					token_hash, created_at, expires_at, last_used_at
@@ -459,11 +469,12 @@ const makeAuth = Effect.gen(function* () {
 			const generated = yield* makeApiKey(name);
 			yield* sql`
 				INSERT INTO api_keys (
-					id, name, prefix, scope, secret_hash, created_at, expires_at
+					id, name, prefix, scope, secret_hash, created_at, expires_at,
+					org_id, user_id
 				) VALUES (
 					${generated.row.id}, ${generated.row.name}, ${generated.row.prefix},
 					${scope}, ${generated.secretHash}, ${generated.row.createdAt},
-					${expiresAt}
+					${expiresAt}, ${org.id}, ${user.id}
 				)
 			`.pipe(
 				Effect.mapError(
@@ -537,9 +548,12 @@ const makeAuth = Effect.gen(function* () {
 		approveDevice: Effect.fn('Auth.approveDevice')(function* (userCode) {
 			const code = yield* parseUserCode(userCode);
 			const now = new Date().toISOString();
+			// Approval binds the code to the approving user's org; the key
+			// minted when the CLI next polls copies both columns.
 			const rows = yield* sql`
 				UPDATE device_codes
-				SET status = 'approved', approved_at = ${now}
+				SET status = 'approved', approved_at = ${now},
+					org_id = ${org.id}, user_id = ${user.id}
 				WHERE user_code = ${code} AND status = 'pending' AND expires_at > ${now}
 				RETURNING user_code
 			`.pipe(storageError('approve device'));
@@ -650,14 +664,19 @@ const makeAuth = Effect.gen(function* () {
 							FOR UPDATE
 						`;
 						if (approved.length !== 1) return false;
-						yield* sql`
+						const inserted = yield* sql`
 							INSERT INTO api_keys (
-								id, name, prefix, secret_hash, created_at
+								id, name, prefix, secret_hash, created_at, org_id, user_id
 							)
-							VALUES (${generated.row.id}, ${generated.row.name},
+							SELECT ${generated.row.id}, ${generated.row.name},
 								${generated.row.prefix}, ${generated.secretHash},
-								${generated.row.createdAt})
+								${generated.row.createdAt}, org_id, user_id
+							FROM device_codes
+							WHERE device_code_hash = ${hash} AND status = 'approved'
+								AND org_id IS NOT NULL AND user_id IS NOT NULL
+							RETURNING id
 						`;
+						if (inserted.length !== 1) return false;
 						const consumed = yield* sql`
 							UPDATE device_codes
 							SET status = 'consumed', consumed_at = ${consumedAt},

@@ -15,7 +15,7 @@ import { decodeContentRows } from './types';
 export const uploadOps = (
 	internals: FileInternals
 ): Pick<FilesShape, 'upload' | 'uploadVersion' | 'restoreVersion'> => {
-	const { blobs, sql, config, tags } = internals;
+	const { blobs, sql, config, tags, org } = internals;
 	const {
 		checkStorageQuota,
 		compensateStoredBlob,
@@ -61,22 +61,23 @@ export const uploadOps = (
 				.withTransaction(
 					Effect.gen(function* () {
 						yield* sql`
-							INSERT INTO files (
-								id, display_name, content_type, kind, current_version, size_bytes,
-								public, is_site, created_at, updated_at, expires_at, index_state
-							) VALUES (
-								${id}, ${displayName}, ${contentType}, 'file', 1, ${stored.size},
-								${visibility.public}, false, ${createdAt}, ${createdAt},
-								${input.expiresAt}, 'pending'
-							)`;
+								INSERT INTO files (
+									id, org_id, display_name, content_type, kind, current_version,
+									size_bytes, public, is_site, created_at, updated_at, expires_at,
+									index_state
+								) VALUES (
+									${id}, ${org.id}, ${displayName}, ${contentType}, 'file', 1,
+									${stored.size}, ${visibility.public}, false, ${createdAt},
+									${createdAt}, ${input.expiresAt}, 'pending'
+								)`;
 						yield* sql`
-							INSERT INTO file_versions (
-								file_id, version, r2_key, size_bytes, sha256, content_type,
-								created_at, text_content
-							) VALUES (
-								${id}, 1, ${r2Key}, ${stored.size}, NULL, ${contentType},
-								${createdAt}, NULL
-							)`;
+								INSERT INTO file_versions (
+									file_id, org_id, version, r2_key, size_bytes, sha256,
+									content_type, created_at, text_content
+								) VALUES (
+									${id}, ${org.id}, 1, ${r2Key}, ${stored.size}, NULL,
+									${contentType}, ${createdAt}, NULL
+								)`;
 						if (resolvedTags.length > 0) {
 							yield* sql`
 								INSERT INTO file_tags ${sql.insert(
