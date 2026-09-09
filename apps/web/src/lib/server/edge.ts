@@ -34,6 +34,7 @@ import type { GrantSecrets } from './services/grant-secrets';
 import type { JobQueue } from './services/jobs';
 import type { Org } from './services/org';
 import type { RateLimits } from './services/rate-limits';
+import type { Admin } from './services/admin';
 import type { CloudflareCachePurge } from './services/cache-purge';
 import type { Scanner } from './services/scanner';
 import type { UrlReputation } from './services/url-reputation';
@@ -46,6 +47,7 @@ export type AppServices =
 	| UrlReputation
 	| CloudflareCachePurge
 	| Scanner
+	| Admin
 	| AuthGuardStore
 	| Auth
 	| Blobs

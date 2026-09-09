@@ -73,13 +73,16 @@ export const normalizeOrigins = (config: OriginConfig) => {
 	};
 };
 
+// Content hosts serve files, sites, thumbnails, and the abuse report form
+// for what they serve.
 export const classifyRoute = (pathname: string) =>
 	pathname === '/f' ||
 	pathname.startsWith('/f/') ||
 	pathname === '/t' ||
 	pathname.startsWith('/t/') ||
 	pathname === '/s' ||
-	pathname.startsWith('/s/')
+	pathname.startsWith('/s/') ||
+	pathname === '/report'
 		? 'content'
 		: 'dashboard';
 

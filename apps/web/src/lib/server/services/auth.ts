@@ -39,7 +39,8 @@ const MembershipRow = Schema.Struct({
 	role: Schema.String,
 	email: Schema.String,
 	org_name: Schema.String,
-	org_slug: Schema.String
+	org_slug: Schema.String,
+	org_trust: Schema.String
 });
 
 const ApiKeyCredentialRow = Schema.Struct({
@@ -53,7 +54,8 @@ const ApiKeyCredentialRow = Schema.Struct({
 	role: Schema.NullOr(Schema.String),
 	email: Schema.NullOr(Schema.String),
 	org_name: Schema.NullOr(Schema.String),
-	org_slug: Schema.NullOr(Schema.String)
+	org_slug: Schema.NullOr(Schema.String),
+	org_trust: Schema.NullOr(Schema.String)
 });
 
 const DeviceCodeRow = Schema.Struct({
@@ -224,6 +226,10 @@ const toApiKey = (row: typeof ApiKeyRow.Type): ApiKey => ({
 const invalidCredential = () =>
 	new Unauthorized({ message: 'A valid credential is required' });
 
+// The kill switch (services/admin.ts) stops every credential for the org.
+const suspendedOrg = () =>
+	new Unauthorized({ message: 'This organization is suspended' });
+
 const makeAuth = Effect.gen(function* () {
 	const sql = yield* PgSql;
 	const workos = yield* WorkOSClient;
@@ -235,7 +241,7 @@ const makeAuth = Effect.gen(function* () {
 
 	const membershipSelect = sql.literal(`
 		SELECT m.org_id, m.user_id, m.role, u.email,
-			o.name AS org_name, o.slug AS org_slug
+			o.name AS org_name, o.slug AS org_slug, o.trust AS org_trust
 		FROM memberships m
 		JOIN users u ON u.id = m.user_id
 		JOIN orgs o ON o.id = m.org_id
@@ -313,7 +319,7 @@ const makeAuth = Effect.gen(function* () {
 			const rows = yield* sql`
 				SELECT k.id, k.scope, k.secret_hash, k.expires_at, k.last_used_at,
 					k.org_id, k.user_id, m.role, u.email,
-					o.name AS org_name, o.slug AS org_slug
+					o.name AS org_name, o.slug AS org_slug, o.trust AS org_trust
 				FROM api_keys k
 				LEFT JOIN memberships m ON m.org_id = k.org_id AND m.user_id = k.user_id
 				LEFT JOIN users u ON u.id = k.user_id
@@ -347,6 +353,7 @@ const makeAuth = Effect.gen(function* () {
 					message: 'This API key no longer belongs to an organization member'
 				});
 			}
+			if (row.org_trust === 'suspended') return yield* suspendedOrg();
 			if (shouldTouchLastUsed(row.last_used_at, now)) {
 				yield* sql`
 					UPDATE api_keys
@@ -383,6 +390,7 @@ const makeAuth = Effect.gen(function* () {
 			// the webhook, or a session that predates the org bootstrap) has
 			// to go through the callback again.
 			if (!membership) return yield* invalidCredential();
+			if (membership.org_trust === 'suspended') return yield* suspendedOrg();
 			// Organization-bearing sessions carry the verified provider role.
 			// Keep the mirror current so API keys follow the same permissions.
 			const role =
