@@ -29,6 +29,9 @@ const config: AppConfigShape = {
 		cookiePassword: '',
 		webhookSecret: ''
 	},
+	urlScanner: null,
+	cloudflareZone: null,
+	adminUserIds: new Set(),
 	semanticSearch: 'off',
 	embeddingModel: '@cf/baai/bge-small-en-v1.5',
 	embeddingPooling: 'cls',

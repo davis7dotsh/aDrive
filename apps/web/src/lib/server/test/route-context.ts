@@ -165,7 +165,14 @@ export const createRouteContext = async (): Promise<RouteTestContext> => {
 		WORKOS_DEV_FAKE: 'true',
 		WORKOS_CLIENT_ID: 'client_test',
 		WORKOS_COOKIE_PASSWORD: 'route-test-cookie-password-of-32-characters!',
-		WORKOS_WEBHOOK_SECRET: 'route-test-webhook'
+		WORKOS_WEBHOOK_SECRET: 'route-test-webhook',
+		// Abuse controls default to their Null services; a test sets
+		// URLSCAN_API_KEY to `fake:<verdict>` or ADMIN_USER_IDS on ctx.env.
+		URLSCAN_API_KEY: '',
+		CF_ACCOUNT_ID: '',
+		CF_API_TOKEN: '',
+		CF_ZONE_ID: '',
+		ADMIN_USER_IDS: ''
 	} as Env;
 	const cookies = new TestCookieStore();
 

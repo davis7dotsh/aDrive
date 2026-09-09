@@ -28,9 +28,11 @@ export const mutationOps = (
 	const { sql, org } = internals;
 	const {
 		ensurePublishAllowed,
+		refuseQuarantined,
 		findDashboardFile,
 		sendIndexJob,
-		sendPurgeJob
+		sendPurgeJob,
+		sendScanJob
 	} = internals;
 	return {
 		setVisibility: Effect.fn('Files.setVisibility')(function* (id, isPublic) {
@@ -46,11 +48,18 @@ export const mutationOps = (
 				current.htmlForcedPublic ? 'text/html' : current.contentType,
 				isPublic
 			);
-			yield* ensurePublishAllowed(visibility.public && !current.public);
+			const publishing = visibility.public && !current.public;
+			if (publishing) yield* refuseQuarantined(current);
+			// A verified org's publish waits for the scanner: the row stays
+			// private with publish_pending set and the scan job flips it.
+			// Going private cancels any hold.
+			const hold = yield* ensurePublishAllowed(publishing);
+			const isPublicNow = visibility.public && !hold;
 			const updatedAt = new Date().toISOString();
 			yield* sql`
 				UPDATE files
-				SET public = ${visibility.public}, updated_at = ${updatedAt}
+				SET public = ${isPublicNow}, publish_pending = ${hold},
+					updated_at = ${updatedAt}
 				WHERE id = ${id} AND org_id = ${org.id}
 			`.pipe(
 				Effect.mapError(
@@ -58,10 +67,12 @@ export const mutationOps = (
 						new StorageError({ operation: 'update file visibility', cause })
 				)
 			);
+			if (visibility.public) yield* sendScanJob(id, current.version);
 			return {
 				file: {
 					...current,
-					public: visibility.public,
+					public: isPublicNow,
+					publishPending: hold,
 					updatedAt
 				},
 				forcedPublic: visibility.forcedPublic
@@ -157,13 +168,18 @@ export const mutationOps = (
 				current.contentType,
 				current.public
 			);
-			yield* ensurePublishAllowed(visibility.public && !current.public);
+			const publishing = visibility.public && !current.public;
+			if (publishing) yield* refuseQuarantined(current);
+			const hold = yield* ensurePublishAllowed(publishing);
+			const isPublicNow = visibility.public && !hold;
+			const stillHeld = hold || (current.publishPending && !publishing);
 			const updatedAt = new Date().toISOString();
 			const rows = yield* sql
 				.withTransaction(
 					sql<{ current_version: number }>`
 						UPDATE files
-						SET display_name = ${displayName}, public = ${visibility.public},
+						SET display_name = ${displayName}, public = ${isPublicNow},
+							publish_pending = ${stillHeld},
 							updated_at = ${updatedAt}, index_state = 'pending',
 							index_cursor = 0, index_attempts = 0, index_error = NULL,
 							index_next_run_at = NULL, index_lease_token = NULL
@@ -181,11 +197,13 @@ export const mutationOps = (
 			// A version upload may have committed after the initial dashboard
 			// read. Index the version whose state this rename actually reset.
 			yield* sendIndexJob(id, renamed.current_version);
+			if (publishing) yield* sendScanJob(id, renamed.current_version);
 			return {
 				file: {
 					...current,
 					displayName,
-					public: visibility.public,
+					public: isPublicNow,
+					publishPending: stillHeld,
 					htmlForcedPublic:
 						current.htmlForcedPublic || /\.html?$/i.test(displayName),
 					updatedAt,

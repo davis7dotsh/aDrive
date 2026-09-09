@@ -34,12 +34,18 @@ import type { GrantSecrets } from './services/grant-secrets';
 import type { JobQueue } from './services/jobs';
 import type { Org } from './services/org';
 import type { RateLimits } from './services/rate-limits';
+import type { CloudflareCachePurge } from './services/cache-purge';
+import type { Scanner } from './services/scanner';
+import type { UrlReputation } from './services/url-reputation';
 import type { WorkOSClient } from './services/workos';
 
 export type AppServices =
 	| PgSql
 	| AppConfig
 	| RateLimits
+	| UrlReputation
+	| CloudflareCachePurge
+	| Scanner
 	| AuthGuardStore
 	| Auth
 	| Blobs

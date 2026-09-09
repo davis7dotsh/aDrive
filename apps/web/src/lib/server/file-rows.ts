@@ -9,6 +9,8 @@ export const DashboardFileRow = Schema.Struct({
 	current_version: Schema.Int,
 	size_bytes: Schema.Int,
 	is_public: Schema.Boolean,
+	quarantined: Schema.Boolean,
+	publish_pending: Schema.Boolean,
 	has_html: Schema.Boolean,
 	created_at: Schema.String,
 	updated_at: Schema.String,
@@ -40,6 +42,8 @@ export const dashboardFileColumns = `
 	f.current_version,
 	f.size_bytes,
 	f.public AS is_public,
+	f.quarantined,
+	f.publish_pending,
 	EXISTS (
 		SELECT 1 FROM file_versions html_version
 		WHERE html_version.file_id = f.id

@@ -234,3 +234,209 @@ describe('trust levels (local platform)', () => {
 		expect(await trustOf()).toBe('established');
 	});
 });
+
+describe('scan pipeline (local platform)', () => {
+	let shared: RouteTestContext | undefined;
+	const setup = async () => {
+		shared ??= await createRouteContext();
+		shared.jobs.splice(0);
+		shared.env.URLSCAN_API_KEY = '';
+		return shared;
+	};
+
+	const fileRow = (ctx: RouteTestContext, id: string) =>
+		queryPg(
+			ctx.env,
+			(sql) => sql<{
+				public: boolean;
+				publish_pending: boolean;
+				quarantined: boolean;
+			}>`
+				SELECT public, publish_pending, quarantined FROM files WHERE id = ${id}`
+		).then((rows) => rows[0]);
+	const verdicts = (ctx: RouteTestContext, id: string) =>
+		queryPg(
+			ctx.env,
+			(sql) => sql<{ source: string; verdict: string }>`
+				SELECT source, verdict FROM scan_verdicts
+				WHERE file_id = ${id} ORDER BY source`
+		);
+	const notifications = (ctx: RouteTestContext, id: string) =>
+		queryPg(
+			ctx.env,
+			(sql) => sql<{ kind: string }>`
+				SELECT kind FROM notifications WHERE file_id = ${id} ORDER BY created_at`
+		).then((rows) => rows.map((row) => row.kind));
+	const serve = async (ctx: RouteTestContext, id: string) => {
+		const { orgSlug } = await currentIdentity(ctx);
+		const { GET } = await import('../../../routes/f/[id]/+server.js');
+		return call(
+			GET,
+			await ctx.contentEvent({
+				slug: orgSlug,
+				path: `/f/${id}`,
+				params: { id }
+			})
+		);
+	};
+
+	it('holds a verified publish until the scan clears it', async () => {
+		const ctx = await setup();
+		await loginAs(ctx, { userId: 'user_scan_hold' });
+		const { orgId } = await currentIdentity(ctx);
+		const file = await uploadFile(ctx, {
+			name: 'held.txt',
+			content: 'nothing to see',
+			isPublic: false
+		});
+		ctx.jobs.splice(0);
+		const result = await mutateFile(ctx, file.id, {
+			action: 'visibility',
+			public: true
+		});
+		expect(result.file).toMatchObject({ public: false });
+		expect(await fileRow(ctx, file.id)).toEqual({
+			public: false,
+			publish_pending: true,
+			quarantined: false
+		});
+		await expect(serve(ctx, file.id)).rejects.toMatchObject({ status: 404 });
+		expect(ctx.jobs.map((job) => job.body)).toEqual([
+			{ kind: 'scan', orgId, fileId: file.id, version: 1 }
+		]);
+
+		await ctx.drainJobs();
+		expect(await fileRow(ctx, file.id)).toEqual({
+			public: true,
+			publish_pending: false,
+			quarantined: false
+		});
+		expect(await verdicts(ctx, file.id)).toEqual([
+			{ source: 'hash', verdict: 'clean' },
+			{ source: 'sniff', verdict: 'clean' },
+			{ source: 'urlscan', verdict: 'clean' }
+		]);
+		expect(await notifications(ctx, file.id)).toEqual(['published']);
+		expect((await serve(ctx, file.id)).status).toBe(200);
+
+		// An established org publishes at once and is scanned after.
+		await setTrust(ctx.env, orgId, 'established');
+		const quick = await uploadFile(ctx, {
+			name: 'quick.txt',
+			content: 'fine',
+			isPublic: false
+		});
+		ctx.jobs.splice(0);
+		await mutateFile(ctx, quick.id, { action: 'visibility', public: true });
+		expect(await fileRow(ctx, quick.id)).toMatchObject({
+			public: true,
+			publish_pending: false
+		});
+		expect(ctx.jobs.map((job) => job.body.kind)).toEqual(['scan']);
+	});
+
+	it('quarantines a page whose links the URL scanner calls malicious', async () => {
+		const ctx = await setup();
+		await loginAs(ctx, { userId: 'user_scan_links' });
+		const { orgId } = await currentIdentity(ctx);
+		await setTrust(ctx.env, orgId, 'established');
+		ctx.env.URLSCAN_API_KEY = 'fake:malicious';
+		const file = await uploadFile(ctx, {
+			name: 'phish.html',
+			content:
+				'<html><body><a href="https://evil.example/login">sign in</a></body></html>',
+			contentType: 'text/html'
+		});
+		expect((await serve(ctx, file.id)).status).toBe(200);
+
+		// First run submits the link and re-sends itself to poll; the poll
+		// is delayed, so it runs on the next drain.
+		await ctx.drainJobs();
+		expect(ctx.jobs.map((job) => job.body)).toMatchObject([
+			{
+				kind: 'scan',
+				fileId: file.id,
+				version: 1,
+				urlScan: { ids: ['fake-scan:https://evil.example/login'], attempt: 1 }
+			}
+		]);
+		expect(await fileRow(ctx, file.id)).toMatchObject({ quarantined: false });
+		await ctx.drainJobs();
+		expect(await fileRow(ctx, file.id)).toEqual({
+			public: false,
+			publish_pending: false,
+			quarantined: true
+		});
+		expect(await verdicts(ctx, file.id)).toEqual([
+			{ source: 'hash', verdict: 'clean' },
+			{ source: 'sniff', verdict: 'clean' },
+			{ source: 'urlscan', verdict: 'malicious' }
+		]);
+		expect(await notifications(ctx, file.id)).toEqual(['quarantined']);
+		await expect(serve(ctx, file.id)).rejects.toMatchObject({ status: 404 });
+		// The owner cannot simply flip it back on.
+		await expect(
+			mutateFile(ctx, file.id, { action: 'visibility', public: true })
+		).rejects.toMatchObject({ status: 403 });
+	});
+
+	it('quarantines a known-bad hash and flags active content under a benign type', async () => {
+		const ctx = await setup();
+		await loginAs(ctx, { userId: 'user_scan_hash' });
+		const { orgId } = await currentIdentity(ctx);
+		await setTrust(ctx.env, orgId, 'established');
+		const payload = `malware sample ${crypto.randomUUID()}`;
+		const sha256 = Array.from(
+			new Uint8Array(
+				await crypto.subtle.digest('SHA-256', new TextEncoder().encode(payload))
+			),
+			(byte) => byte.toString(16).padStart(2, '0')
+		).join('');
+		await queryPg(
+			ctx.env,
+			(sql) => sql`
+				INSERT INTO blocked_hashes (sha256, reason) VALUES (${sha256}, 'test')`
+		);
+		const bad = await uploadFile(ctx, { name: 'sample.bin', content: payload });
+		await ctx.drainJobs();
+		expect(await fileRow(ctx, bad.id)).toMatchObject({
+			public: false,
+			quarantined: true
+		});
+		expect(await verdicts(ctx, bad.id)).toContainEqual({
+			source: 'hash',
+			verdict: 'malicious'
+		});
+		expect(
+			(
+				await queryPg(
+					ctx.env,
+					(sql) => sql<{ sha256: string | null }>`
+						SELECT sha256 FROM file_versions WHERE file_id = ${bad.id}`
+				)
+			)[0]?.sha256
+		).toBe(sha256);
+
+		// HTML declared as plain text is suspicious: a scan-after file stays
+		// up for review, a held one stays held.
+		const sneaky = await uploadFile(ctx, {
+			name: 'notes.txt',
+			content: '<html><script>steal()</script></html>',
+			contentType: 'text/plain',
+			isPublic: false
+		});
+		await setTrust(ctx.env, orgId, 'verified');
+		await mutateFile(ctx, sneaky.id, { action: 'visibility', public: true });
+		await ctx.drainJobs();
+		expect(await fileRow(ctx, sneaky.id)).toEqual({
+			public: false,
+			publish_pending: true,
+			quarantined: false
+		});
+		expect(await verdicts(ctx, sneaky.id)).toContainEqual({
+			source: 'sniff',
+			verdict: 'suspicious'
+		});
+		expect(await notifications(ctx, sneaky.id)).toEqual(['held']);
+	});
+});

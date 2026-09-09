@@ -5,6 +5,7 @@ import { delaySecondsUntil } from '../../job-policy';
 import { refreshSearchDocument } from '../../search-index';
 import { ensureStorageHeadroom, reserveWithinPlan } from '../../storage-quota';
 import { requirePublishAllowed } from '../../trust';
+import { scanBeforePublish } from '../../trust-policy';
 import {
 	assertOpenSiteSession,
 	prepareSiteManifest,
@@ -243,7 +244,9 @@ export const sessionOps = (
 								message: 'Site upload session is unavailable'
 							})
 			});
-			yield* requirePublishAllowed(sql, org.id);
+			// A verified org's site goes live once the scanner clears it; an
+			// established org's is live now and scanned after.
+			const hold = scanBeforePublish(yield* requirePublishAllowed(sql, org.id));
 			const assets = yield* stagedAssets(session.id);
 			const totalSize = yield* Effect.try({
 				try: () => validateCommittedAssets(assets),
@@ -276,6 +279,7 @@ export const sessionOps = (
 									WHERE id = ${session.fileId} AND org_id = ${org.id}
 										AND is_site = true
 										AND deleted_at IS NULL
+										AND quarantined = false
 										AND current_version = ${session.version - 1}
 								)
 							RETURNING id`;
@@ -320,17 +324,20 @@ export const sessionOps = (
 						yield* sql`
 								INSERT INTO files (
 									id, org_id, display_name, content_type, kind, current_version,
-									size_bytes, public, is_site, created_at, updated_at, index_state
+									size_bytes, public, publish_pending, is_site, created_at,
+									updated_at, index_state
 								)
 								SELECT file_id, org_id, display_name, 'text/html', 'site', 1,
-									${totalSize}, true, true, ${publishedAt}, ${publishedAt}, 'pending'
+									${totalSize}, ${!hold}, ${hold}, true, ${publishedAt},
+									${publishedAt}, 'pending'
 								FROM site_upload_sessions
 								WHERE id = ${session.id} AND status = 'committing' AND version = 1
 								ON CONFLICT (id) DO NOTHING`;
 						yield* sql`
 							UPDATE files
 							SET current_version = ${session.version}, size_bytes = ${totalSize},
-								content_type = 'text/html', public = true,
+								content_type = 'text/html', public = ${!hold},
+								publish_pending = ${hold},
 								updated_at = ${publishedAt}, index_state = 'pending',
 								index_cursor = 0, index_attempts = 0, index_error = NULL,
 								index_next_run_at = NULL, index_lease_token = NULL
@@ -436,6 +443,12 @@ export const sessionOps = (
 				fileId: session.fileId,
 				version: session.version
 			});
+			yield* jobs.trySend({
+				kind: 'scan',
+				orgId: org.id,
+				fileId: session.fileId,
+				version: session.version
+			});
 			const cleanupPending = yield* drainDeletes(session.fileId).pipe(
 				Effect.catchCause((cause) =>
 					Effect.sync(() => {
@@ -476,7 +489,7 @@ export const sessionOps = (
 					kind: 'site',
 					version: file.current_version,
 					sizeBytes: file.size_bytes,
-					public: true,
+					public: !hold,
 					createdAt: file.created_at,
 					expiresAt: file.expires_at,
 					downloadCount: file.download_count,

@@ -252,12 +252,15 @@ describe('route integration (local platform)', () => {
 		);
 		expect(committed.status).toBe(201);
 		const commit = (await committed.json()) as {
-			file: { id: string };
+			file: { id: string; public: boolean };
 			assetCount: number;
 		};
 		expect(commit.file.id).toBe(session.fileId);
 		expect(commit.assetCount).toBe(2);
 		await ctx.drainWaitUntil();
+		// A verified org's site is held until the scanner clears it.
+		expect(commit.file.public).toBe(false);
+		await ctx.drainJobs();
 
 		const { orgSlug } = await currentIdentity(ctx);
 		const siteOrigin = await currentContentOrigin(ctx);

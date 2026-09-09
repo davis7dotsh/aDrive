@@ -11,6 +11,20 @@ export interface WorkOSConfig {
 	readonly webhookSecret: string;
 }
 
+// Cloudflare URL Scanner (services/url-reputation.ts). Null when
+// URLSCAN_API_KEY is unset; a `fake:<verdict>` key selects the fake.
+export interface UrlScannerConfig {
+	readonly apiKey: string;
+	readonly accountId: string;
+}
+
+// Zone-level cache purge (services/cache-purge.ts). Null when either
+// CF_API_TOKEN or CF_ZONE_ID is unset.
+export interface CloudflareZoneConfig {
+	readonly apiToken: string;
+	readonly zoneId: string;
+}
+
 export interface AppConfigShape {
 	readonly dashboardOrigin: string;
 	// Tenant content is served from `<slug>.<contentDomain>` over the
@@ -22,6 +36,10 @@ export interface AppConfigShape {
 	// Signs the Worker facade's cron and queue self-requests.
 	readonly maintenanceSecret: string;
 	readonly workos: WorkOSConfig;
+	readonly urlScanner: UrlScannerConfig | null;
+	readonly cloudflareZone: CloudflareZoneConfig | null;
+	// WorkOS user ids allowed on /admin (ADMIN_USER_IDS, comma-separated).
+	readonly adminUserIds: ReadonlySet<string>;
 	readonly semanticSearch: 'off' | 'auto' | 'required';
 	readonly embeddingModel: '@cf/baai/bge-small-en-v1.5';
 	readonly embeddingPooling: 'cls';
@@ -78,6 +96,30 @@ const workosFromEnv = (env: Env): WorkOSConfig => {
 	return { apiKey: rawApiKey, clientId, cookiePassword, webhookSecret };
 };
 
+const urlScannerFromEnv = (env: Env): UrlScannerConfig | null => {
+	const apiKey = optionalString(env.URLSCAN_API_KEY);
+	if (apiKey === '') return null;
+	const accountId = optionalString(env.CF_ACCOUNT_ID);
+	if (!accountId && !apiKey.startsWith('fake:')) {
+		throw new Error('CF_ACCOUNT_ID is required alongside URLSCAN_API_KEY');
+	}
+	return { apiKey, accountId };
+};
+
+const cloudflareZoneFromEnv = (env: Env): CloudflareZoneConfig | null => {
+	const apiToken = optionalString(env.CF_API_TOKEN);
+	const zoneId = optionalString(env.CF_ZONE_ID);
+	return apiToken && zoneId ? { apiToken, zoneId } : null;
+};
+
+const adminUserIdsFromEnv = (env: Env) =>
+	new Set(
+		optionalString(env.ADMIN_USER_IDS)
+			.split(',')
+			.map((id) => id.trim())
+			.filter((id) => id.length > 0)
+	);
+
 export const configFromEnv = (env: Env) => {
 	const origins = normalizeOrigins({
 		dashboardOrigin: env.DASHBOARD_ORIGIN,
@@ -111,6 +153,9 @@ export const configFromEnv = (env: Env) => {
 		maxUploadBytes,
 		maintenanceSecret: env.MAINTENANCE_SECRET,
 		workos: workosFromEnv(env),
+		urlScanner: urlScannerFromEnv(env),
+		cloudflareZone: cloudflareZoneFromEnv(env),
+		adminUserIds: adminUserIdsFromEnv(env),
 		semanticSearch,
 		embeddingModel: '@cf/baai/bge-small-en-v1.5',
 		embeddingPooling: 'cls',

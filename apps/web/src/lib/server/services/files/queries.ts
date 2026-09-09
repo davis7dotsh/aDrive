@@ -145,7 +145,9 @@ export const queryOps = (
 					AND (f.expires_at IS NULL OR f.expires_at > ${now})
 				)
 			)`;
-			const siteFilter = sql`(${includeSites}::boolean OR f.is_site = false)`;
+			// A quarantined file is gone from every content route, grant or not.
+			const siteFilter = sql`(${includeSites}::boolean OR f.is_site = false)
+				AND f.quarantined = false`;
 			const rows =
 				version === undefined
 					? yield* sql`
