@@ -1,6 +1,10 @@
 # Copy to apps/web/.dev.vars and replace this with a long local-only passcode.
 PASSCODE="replace-with-at-least-12-characters"
 
+# Local Postgres. `docker compose up -d` at the repo root starts one with
+# these credentials. Wrangler points the HYPERDRIVE binding at it.
+CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE="postgres://adrive:adrive@127.0.0.1:5432/adrive"
+
 # Optional: develop from other devices (e.g. over Tailscale). The dev
 # server binds 0.0.0.0, so any hostname that reaches this machine works —
 # set both origins to how the BROWSER will address it. With Tailscale

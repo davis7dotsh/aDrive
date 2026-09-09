@@ -98,6 +98,13 @@ const placeholderIds = (block, label, drift) => {
 			);
 		}
 	}
+	for (const entry of block.hyperdrive ?? []) {
+		if (String(entry.id ?? '').includes('replace-with-')) {
+			drift.push(
+				`${label} Hyperdrive ${entry.binding ?? 'HYPERDRIVE'}: still has a placeholder id`
+			);
+		}
+	}
 };
 
 const main = () => {
@@ -170,7 +177,12 @@ const main = () => {
 
 		const bindingNames = (entries) =>
 			(entries ?? []).map((entry) => entry.binding).sort();
-		for (const key of ['d1_databases', 'r2_buckets', 'kv_namespaces']) {
+		for (const key of [
+			'd1_databases',
+			'r2_buckets',
+			'kv_namespaces',
+			'hyperdrive'
+		]) {
 			if (!sameJson(bindingNames(config[key]), bindingNames(prod[key]))) {
 				drift.push(
 					`${key} bindings: local=${JSON.stringify(bindingNames(config[key]))} production=${JSON.stringify(bindingNames(prod[key]))}`

@@ -49,10 +49,16 @@ Requirements: Node 26+ and Bun 1.4+.
 
 ```bash
 bun install
+bun db:pg:up              # local Postgres via docker compose
+bun db:pg:migrate:local
 bun db:migrate:local
 cp apps/web/.dev.vars.example apps/web/.dev.vars
 bun key:create:local
 ```
+
+Postgres (via a Hyperdrive binding) is being introduced beside D1; see
+`docs/plans/hosted-product.md` for the port sequence. The route test suite
+needs the docker compose Postgres running.
 
 Replace the example `PASSCODE` with a long local-only value. Copy the API key
 printed by the final command, then start both local origins:

@@ -3,7 +3,8 @@ import { Effect, Layer } from 'effect';
 import { ConfigLive } from './config';
 import { AuthGuardLive } from './services/auth-guard';
 import { AuthLive } from './services/auth';
-import { AuthGuardStore, Db, Bucket } from './services/bindings';
+import { AuthGuardStore, Db, Bucket, Pg } from './services/bindings';
+import { pgLayer } from './pg';
 import { BlobsLive } from './services/blobs';
 import { FilesLive } from './services/files';
 import { SearchLive } from './services/search';
@@ -15,17 +16,24 @@ import { LifecycleLive } from './services/lifecycle';
 import { GrantSecretsLive } from './services/grant-secrets';
 
 const SqlLive = Layer.unwrap(Effect.map(Db, (db) => D1.layer({ db })));
+// Postgres runs beside D1 until the port is complete. Services move over
+// one cluster at a time by yielding PgSql instead of SqlClient.
+export const PgLive = Layer.unwrap(
+	Effect.map(Pg, (hyperdrive) => pgLayer(hyperdrive))
+);
 
 export const requestLayer = (env: Env) => {
 	const bindings = Layer.mergeAll(
 		Layer.succeed(Db, env.DB),
+		Layer.succeed(Pg, env.HYPERDRIVE),
 		Layer.succeed(Bucket, env.BUCKET),
 		Layer.succeed(AuthGuardStore, env.AUTH_GUARD),
 		ConfigLive(env)
 	);
 	const sql = SqlLive.pipe(Layer.provide(bindings));
+	const pg = PgLive.pipe(Layer.provide(bindings));
 	const blobs = BlobsLive.pipe(Layer.provide(bindings));
-	const infrastructure = Layer.mergeAll(bindings, sql, blobs);
+	const infrastructure = Layer.mergeAll(bindings, sql, pg, blobs);
 	const semantic = SemanticBindingsLive(env);
 	const auth = AuthLive.pipe(Layer.provide(infrastructure));
 	const authGuard = AuthGuardLive().pipe(Layer.provide(bindings));
