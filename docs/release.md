@@ -6,8 +6,18 @@ App Worker commands run from `apps/web`. Landing-site commands run from
 `apps/site` (no `--env`). `bun release` and the backup installer run from
 the repository root.
 
-1. From `apps/web`: `wrangler d1 create adrive-production` — paste the id
-   into `wrangler.jsonc` `env.production.d1_databases[0].database_id`.
+1. Create a PlanetScale Postgres database (region close to most users)
+   with the `vector` and `pg_trgm` extensions available, then a Hyperdrive
+   config pointing at its direct port 5432 with caching disabled:
+
+   ```
+   wrangler hyperdrive create adrive-production --connection-string="postgres://..." --caching-disabled
+   ```
+
+   Paste the id into `wrangler.jsonc` `env.production.hyperdrive[0].id`.
+   Export the same connection string as `DATABASE_URL` when releasing;
+   `bun release` runs `apps/web/scripts/pg-migrate.mjs` against it.
+
 2. From `apps/web`: `wrangler r2 bucket create adrive-production`
 3. From `apps/web`: `wrangler kv namespace create AUTH_GUARD --env production`
    — paste the id into `env.production.kv_namespaces[0].id`.
@@ -53,7 +63,7 @@ bun release
 
 The script refuses a dirty tree or placeholder ids in the target env,
 then runs format check → type/lint checks → tests → audit → build →
-app deploy dry run → landing-site dry run → D1 migrations → app deploy →
+app deploy dry run → landing-site dry run → Postgres migrations → app deploy →
 landing-site deploy, and appends the deployed commit to
 `.release-history`. If the landing site fails after the app Worker is
 live, the script still records the app commit and prints rollback
@@ -82,8 +92,8 @@ bun x wrangler deployments list --env production   # find the previous version
 bun x wrangler rollback --env production           # interactive picker
 ```
 
-Rollback redeploys the previous Worker bundle. It does not touch D1, R2,
-KV, or secrets — which is why the migration rule above matters.
+Rollback redeploys the previous Worker bundle. It does not touch
+Postgres, R2, KV, or secrets — which is why the migration rule above matters.
 
 ### Landing site
 
@@ -96,14 +106,13 @@ bun x wrangler deployments list
 bun x wrangler rollback
 ```
 
-### D1
+### Postgres
 
 There is no in-place downgrade. Recovery options, in order of blast
 radius:
 
-1. **Cloudflare Time Travel** (point-in-time restore, 30-day window):
-   `wrangler d1 time-travel info DB --env production` then
-   `wrangler d1 time-travel restore DB --env production --timestamp <unix>`.
+1. **PlanetScale backups** (automatic daily, plus point-in-time):
+   PlanetScale point-in-time restore from the database's Backups page.
    This rewinds the whole database — anything written after the
    timestamp is lost.
 2. **Nightly export**: restore per `docs/backup-restore.md` (full
@@ -120,3 +129,22 @@ pending device codes automatically (API keys stay).
 `.release-history` in the repo root accumulates
 `<timestamp> <env> <commit>` lines locally. The deployed commit is also
 visible via `wrangler deployments list --env production`.
+
+## One-off move from D1
+
+The single existing instance moves its metadata from D1 to Postgres once.
+R2 does not move. Sessions, device codes, and the passcode hash are not
+carried over; sign in again afterwards. Semantic vectors are not carried
+over either; every file is left `pending` and re-embeds through the
+indexing sweep.
+
+```
+cd apps/web
+bun x wrangler d1 export DB --env production --remote --output /tmp/adrive-d1.sql   # from the last D1 deploy
+DATABASE_URL=postgres://... bun scripts/pg-migrate.mjs --url "$DATABASE_URL"
+bun scripts/d1-to-postgres.mjs --dump /tmp/adrive-d1.sql --url "$DATABASE_URL"
+```
+
+The script prints per-table counts and the Postgres totals at the end.
+Compare them with `SELECT COUNT(*)` on the D1 export before flipping
+DNS. Run it with `--wipe` to truncate and retry.

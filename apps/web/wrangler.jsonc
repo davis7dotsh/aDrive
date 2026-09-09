@@ -30,14 +30,6 @@
 			"localConnectionString": "postgres://adrive:adrive@127.0.0.1:5432/adrive"
 		}
 	],
-	"d1_databases": [
-		{
-			"binding": "DB",
-			"database_name": "adrive",
-			"database_id": "replace-with-your-d1-database-id",
-			"migrations_dir": "migrations"
-		}
-	],
 	"r2_buckets": [
 		{
 			"binding": "BUCKET",
@@ -72,7 +64,7 @@
 	//   2. Create the production R2 bucket and KV namespace; paste the KV id.
 	//   3. Point DNS for both hostnames at the Worker (routes below).
 	//   4. `wrangler secret put PASSCODE --env production`
-	//   5. `wrangler d1 migrations apply DB --env production --remote`
+	//   5. `DATABASE_URL=postgres://... bun db:pg:migrate` (see docs/release.md)
 	"env": {
 		"production": {
 			// Place the Worker near D1 for dashboard/search queries. Content
@@ -105,14 +97,6 @@
 				{
 					"binding": "HYPERDRIVE",
 					"id": "replace-with-production-hyperdrive-id"
-				}
-			],
-			"d1_databases": [
-				{
-					"binding": "DB",
-					"database_name": "adrive-production",
-					"database_id": "29891a68-07c7-47e4-94db-b0123982fc1f",
-					"migrations_dir": "migrations"
 				}
 			],
 			"r2_buckets": [

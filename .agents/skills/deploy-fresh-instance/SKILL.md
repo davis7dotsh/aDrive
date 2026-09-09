@@ -1,6 +1,6 @@
 ---
 name: deploy-fresh-instance
-description: Deploy a fresh a-drive instance to Cloudflare Workers — provision D1, R2, KV, and Postgres plus Workers AI, set the PASSCODE secret, attach the two custom domains, and cut the first release. Use for the first-ever deploy to a new Cloudflare account or a new operator domain (not for routine redeploys, which are just `bun release`).
+description: Deploy a fresh a-drive instance to Cloudflare Workers — provision Postgres (PlanetScale + Hyperdrive), R2, and KV plus Workers AI, set the PASSCODE secret, attach the two custom domains, and cut the first release. Use for the first-ever deploy to a new Cloudflare account or a new operator domain (not for routine redeploys, which are just `bun release`).
 ---
 
 # Deploy a fresh a-drive instance to Cloudflare
@@ -35,8 +35,10 @@ Wrangler runs **non-interactively** here: each create prints an id and
 exits. It does **not** edit `wrangler.jsonc` for you — you paste each id
 into `env.production` by hand.
 
-1. `wrangler d1 create adrive-production`
-   → paste the printed id into `env.production.d1_databases[0].database_id`.
+1. Create the PlanetScale Postgres database and a Hyperdrive config for it
+   (`wrangler hyperdrive create adrive-production --connection-string=... --caching-disabled`)
+   → paste the printed id into `env.production.hyperdrive[0].id`. Keep the
+   connection string; `bun release` needs it as `DATABASE_URL`.
 2. `wrangler r2 bucket create adrive-production`
    (no id to paste — the bucket is bound by name.)
 3. `wrangler kv namespace create AUTH_GUARD --env production`
@@ -73,7 +75,7 @@ before the first deploy.
 
 ## 4. Commit the provisioned ids
 
-The D1 `database_id` and KV `id` are **configuration, not secrets** —
+The Hyperdrive `id` and KV `id` are **configuration, not secrets** —
 commit the edited `wrangler.jsonc`. Two `bun release` preflight gates
 depend on it:
 
@@ -92,7 +94,7 @@ bun release
 ```
 
 `scripts/release.sh` runs the full gate → format check → type/lint →
-tests → audit → build → deploy dry-run → D1 migrations → deploy → append
+tests → audit → build → deploy dry-run → Postgres migrations → deploy → append
 the commit to `.release-history`. The two custom domains attach from the
 `routes` in `env.production` automatically, provided the zone from step 1
 exists.
@@ -100,7 +102,7 @@ exists.
 ## 6. Post-deploy verification gotchas (both hit on the davis7.space run)
 
 - **Transient 500s right after deploy.** The very first requests can 500
-  for a few seconds while D1 migrations settle against the first live
+  for a few seconds while the Hyperdrive pool warms against the first live
   request. Recheck once things settle — it clears on its own.
 - **The second (content) custom domain lags the first.** The content
   origin's DNS record and edge certificate propagate minutes behind the
