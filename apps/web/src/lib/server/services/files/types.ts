@@ -10,8 +10,8 @@ const FileContentRow = Schema.Struct({
 	content_type: Schema.String,
 	version: Schema.Int,
 	size_bytes: Schema.Int,
-	is_public: Schema.Int,
-	is_site: Schema.Int,
+	is_public: Schema.Boolean,
+	is_site: Schema.Boolean,
 	r2_key: Schema.String,
 	thumbnail_r2_key: Schema.NullOr(Schema.String),
 	created_at: Schema.String

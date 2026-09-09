@@ -19,6 +19,7 @@ import {
 	SEARCH_CANDIDATE_LIMIT,
 	type SearchCommand
 } from '../search-candidates';
+import { PgSql } from '../pg';
 import { Db } from './bindings';
 import { Embedder, VectorIndex } from './semantic';
 
@@ -64,8 +65,19 @@ const decodeCursor = (cursor: string | null | undefined) => {
 
 const makeSearch = Effect.gen(function* () {
 	const db = yield* Db;
+	// Files rows live in Postgres now; the FTS and trigram indexes still
+	// live in D1 until the keyword search rewrite moves them over.
+	const sql = yield* PgSql;
 	const embedder = yield* Embedder;
 	const vectorIndex = yield* VectorIndex;
+	const selectedTagFilter = (tagIds: ReadonlyArray<string>) =>
+		tagIds.length === 0
+			? sql``
+			: sql`AND EXISTS (
+				SELECT 1 FROM file_tags selected
+				WHERE selected.file_id = f.id
+					AND ${sql.in('selected.tag_id', tagIds)}
+			)`;
 
 	const runRanked = (
 		command: SearchCommand
@@ -112,35 +124,18 @@ const makeSearch = Effect.gen(function* () {
 		tagIds: ReadonlyArray<string>
 	) {
 		if (fileIds.length === 0) return [];
-		const idPlaceholders = fileIds.map(() => '?').join(', ');
-		const tagFilter =
-			tagIds.length === 0
-				? ''
-				: `AND EXISTS (
-					SELECT 1 FROM file_tags selected
-					WHERE selected.file_id = f.id
-						AND selected.tag_id IN (${tagIds.map(() => '?').join(', ')})
-				)`;
-		const result = yield* Effect.tryPromise({
-			try: async () => {
-				const response = await db
-					.prepare(
-						`SELECT ${dashboardFileColumns}
-						FROM files f
-						WHERE f.id IN (${idPlaceholders})
-							AND f.deleted_at IS NULL
-							AND (f.expires_at IS NULL OR f.expires_at > ?)
-							${tagFilter}`
-					)
-					.bind(...fileIds, new Date().toISOString(), ...tagIds)
-					.all();
-				if (!response.success)
-					throw new Error(response.error ?? 'Hydration failed');
-				return response.results;
-			},
-			catch: (cause) =>
-				new StorageError({ operation: 'hydrate search results', cause })
-		});
+		const result = yield* sql`
+			SELECT ${sql.literal(dashboardFileColumns)}
+			FROM files f
+			WHERE ${sql.in('f.id', fileIds)}
+				AND f.deleted_at IS NULL
+				AND (f.expires_at IS NULL OR f.expires_at > ${new Date().toISOString()})
+				${selectedTagFilter(tagIds)}`.pipe(
+			Effect.mapError(
+				(cause) =>
+					new StorageError({ operation: 'hydrate search results', cause })
+			)
+		);
 		const byId = new Map(
 			decodeDashboardRows(result)
 				.map(toDashboardFile)
@@ -157,35 +152,18 @@ const makeSearch = Effect.gen(function* () {
 		limit: number,
 		offset: number
 	) {
-		const tagFilter =
-			tagIds.length === 0
-				? ''
-				: `AND EXISTS (
-					SELECT 1 FROM file_tags selected
-					WHERE selected.file_id = f.id
-						AND selected.tag_id IN (${tagIds.map(() => '?').join(', ')})
-				)`;
-		const rows = yield* Effect.tryPromise({
-			try: async () => {
-				const response = await db
-					.prepare(
-						`SELECT ${dashboardFileColumns}
-						FROM files f
-						WHERE f.deleted_at IS NULL
-							AND (f.expires_at IS NULL OR f.expires_at > ?)
-							${tagFilter}
-						ORDER BY f.updated_at DESC, f.id
-						LIMIT ? OFFSET ?`
-					)
-					.bind(new Date().toISOString(), ...tagIds, limit, offset)
-					.all();
-				if (!response.success)
-					throw new Error(response.error ?? 'File listing failed');
-				return response.results;
-			},
-			catch: (cause) =>
-				new StorageError({ operation: 'list filtered files', cause })
-		});
+		const rows = yield* sql`
+			SELECT ${sql.literal(dashboardFileColumns)}
+			FROM files f
+			WHERE f.deleted_at IS NULL
+				AND (f.expires_at IS NULL OR f.expires_at > ${new Date().toISOString()})
+				${selectedTagFilter(tagIds)}
+			ORDER BY f.updated_at DESC, f.id
+			LIMIT ${limit} OFFSET ${offset}`.pipe(
+			Effect.mapError(
+				(cause) => new StorageError({ operation: 'list filtered files', cause })
+			)
+		);
 		return decodeDashboardRows(rows).map(toDashboardFile);
 	});
 

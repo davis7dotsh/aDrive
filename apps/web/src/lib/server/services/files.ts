@@ -1,8 +1,7 @@
 import { Context, Effect, Layer } from 'effect';
-import { SqlClient } from 'effect/unstable/sql';
 import { AppConfig } from '../config';
+import { PgSql } from '../pg';
 import { Blobs } from './blobs';
-import { Db } from './bindings';
 import { Tags } from './tags';
 import { createInternals } from './files/internals';
 import { mutationOps } from './files/mutations';
@@ -24,12 +23,11 @@ export type {
 export class Files extends Context.Service<Files, FilesShape>()('app/Files') {}
 
 const makeFiles = Effect.gen(function* () {
-	const db = yield* Db;
+	const sql = yield* PgSql;
 	const blobs = yield* Blobs;
-	const sql = (yield* SqlClient.SqlClient).withoutTransforms();
 	const config = yield* AppConfig;
 	const tags = yield* Tags;
-	const internals = createInternals({ db, blobs, sql, config, tags });
+	const internals = createInternals({ sql, blobs, config, tags });
 
 	return Files.of({
 		...uploadOps(internals),
