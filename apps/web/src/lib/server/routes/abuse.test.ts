@@ -635,3 +635,276 @@ describe('reports and the kill switch (local platform)', () => {
 		expect(await served.text()).toBe('live');
 	});
 });
+
+describe('admin surface (local platform)', () => {
+	let shared: RouteTestContext | undefined;
+	const setup = async () => (shared ??= await createRouteContext());
+
+	const adminCall = async (
+		ctx: RouteTestContext,
+		method: 'GET' | 'PATCH' | 'POST',
+		path: string,
+		params: Record<string, string> = {},
+		body?: unknown
+	) => {
+		const handlers: Record<string, () => Promise<Record<string, unknown>>> = {
+			'/api/admin/overview': () =>
+				import('../../../routes/api/admin/overview/+server.js'),
+			'/api/admin/reports': () =>
+				import('../../../routes/api/admin/reports/[id]/+server.js'),
+			'/api/admin/orgs': () =>
+				import('../../../routes/api/admin/orgs/[id]/+server.js'),
+			'/api/admin/files': () =>
+				import('../../../routes/api/admin/files/[id]/+server.js'),
+			'/api/admin/hashes': () =>
+				import('../../../routes/api/admin/hashes/+server.js')
+		};
+		const key = Object.keys(handlers).find((prefix) => path.startsWith(prefix));
+		const loader = key ? handlers[key] : undefined;
+		if (!loader) throw new Error(`No handler for ${path}`);
+		const module = await loader();
+		const handler = module[method];
+		if (typeof handler !== 'function') throw new Error(`No ${method} ${path}`);
+		return call(
+			handler as (event: Parameters<typeof call>[1]) => Promise<Response>,
+			ctx.event({
+				method,
+				path,
+				params,
+				...(body === undefined
+					? {}
+					: {
+							body: JSON.stringify(body),
+							headers: { 'content-type': 'application/json' }
+						})
+			})
+		);
+	};
+
+	it('rejects everyone but the listed admins, then works the queues', async () => {
+		const ctx = await setup();
+		// The reported org and file.
+		await loginAs(ctx, { userId: 'user_admin_target' });
+		const target = await currentIdentity(ctx);
+		const file = await uploadFile(ctx, {
+			name: 'reported.html',
+			content: '<html><body>hi</body></html>',
+			contentType: 'text/html'
+		});
+		const { POST: reportPOST } =
+			await import('../../../routes/report/+server.js');
+		await call(
+			reportPOST,
+			await ctx.contentEvent({
+				slug: target.orgSlug,
+				method: 'POST',
+				path: '/report',
+				body: JSON.stringify({ fileId: file.id, reason: 'malware' }),
+				headers: { 'content-type': 'application/json' }
+			})
+		);
+		const { POST: keysPOST } =
+			await import('../../../routes/api/auth/keys/+server.js');
+		const { token } = (await (
+			await call(
+				keysPOST,
+				ctx.event({
+					method: 'POST',
+					path: '/api/auth/keys',
+					body: JSON.stringify({ name: 'admin probe' }),
+					headers: { 'content-type': 'application/json' }
+				})
+			)
+		).json()) as { token: string };
+
+		// Nobody is an admin until ADMIN_USER_IDS says so; a session that is
+		// listed still cannot use an API key for it.
+		ctx.env.ADMIN_USER_IDS = '';
+		await expect(
+			adminCall(ctx, 'GET', '/api/admin/overview')
+		).rejects.toMatchObject({ status: 403 });
+		await loginAs(ctx, { userId: 'user_operator' });
+		await expect(
+			adminCall(ctx, 'GET', '/api/admin/overview')
+		).rejects.toMatchObject({ status: 403 });
+		ctx.env.ADMIN_USER_IDS = ' user_operator, user_other ';
+		const { GET: overviewGET } =
+			await import('../../../routes/api/admin/overview/+server.js');
+		await expect(
+			call(
+				overviewGET,
+				ctx.event({
+					path: '/api/admin/overview',
+					headers: { authorization: `Bearer ${token}` }
+				})
+			)
+		).rejects.toMatchObject({ status: 403 });
+		ctx.cookies.delete('__Host-adrive-wos');
+		await expect(
+			adminCall(ctx, 'GET', '/api/admin/overview')
+		).rejects.toMatchObject({ status: 401 });
+		await loginAs(ctx, { userId: 'user_operator' });
+
+		const overview = (await (
+			await adminCall(ctx, 'GET', '/api/admin/overview')
+		).json()) as {
+			reports: Array<{ id: string; fileId: string; reason: string }>;
+			held: Array<{ id: string }>;
+			failedJobs: Array<unknown>;
+			orgs: Array<{ id: string; slug: string; trust: string }>;
+		};
+		const report = overview.reports.find((entry) => entry.fileId === file.id);
+		expect(report).toMatchObject({ reason: 'malware' });
+		expect(overview.orgs.map((org) => org.id)).toContain(target.orgId);
+
+		// Quarantine the reported file, resolve the report, block its hash.
+		expect(
+			(
+				await adminCall(
+					ctx,
+					'PATCH',
+					`/api/admin/files/${file.id}`,
+					{
+						id: file.id
+					},
+					{ verdict: 'malicious' }
+				)
+			).status
+		).toBe(200);
+		expect(
+			(
+				await queryPg(
+					ctx.env,
+					(sql) => sql<{ quarantined: boolean; public: boolean }>`
+						SELECT quarantined, public FROM files WHERE id = ${file.id}`
+				)
+			)[0]
+		).toEqual({ quarantined: true, public: false });
+		expect(
+			(
+				await adminCall(
+					ctx,
+					'PATCH',
+					`/api/admin/reports/${report?.id ?? ''}`,
+					{
+						id: report?.id ?? ''
+					},
+					{ resolution: 'quarantined' }
+				)
+			).status
+		).toBe(200);
+		await expect(
+			adminCall(
+				ctx,
+				'PATCH',
+				`/api/admin/reports/${report?.id ?? ''}`,
+				{
+					id: report?.id ?? ''
+				},
+				{ resolution: 'dismissed' }
+			)
+		).rejects.toMatchObject({ status: 404 });
+		const afterResolve = (await (
+			await adminCall(ctx, 'GET', '/api/admin/overview')
+		).json()) as {
+			reports: Array<{ id: string }>;
+			held: Array<{ id: string; quarantined: boolean }>;
+		};
+		expect(afterResolve.reports.map((entry) => entry.id)).not.toContain(
+			report?.id
+		);
+		expect(
+			afterResolve.held.find((entry) => entry.id === file.id)
+		).toMatchObject({ quarantined: true });
+
+		// Cleared again: private, no longer quarantined, owner may republish.
+		await adminCall(
+			ctx,
+			'PATCH',
+			`/api/admin/files/${file.id}`,
+			{
+				id: file.id
+			},
+			{ verdict: 'clean' }
+		);
+		expect(
+			(
+				await queryPg(
+					ctx.env,
+					(sql) => sql<{ quarantined: boolean; public: boolean }>`
+						SELECT quarantined, public FROM files WHERE id = ${file.id}`
+				)
+			)[0]
+		).toEqual({ quarantined: false, public: false });
+
+		expect(
+			(
+				await adminCall(
+					ctx,
+					'POST',
+					'/api/admin/hashes',
+					{},
+					{
+						sha256: 'A'.repeat(64),
+						reason: 'test list'
+					}
+				)
+			).status
+		).toBe(201);
+		await expect(
+			adminCall(ctx, 'POST', '/api/admin/hashes', {}, { sha256: 'nope' })
+		).rejects.toMatchObject({ status: 400 });
+
+		// Org actions: bump, suspend, restore.
+		const bumped = (await (
+			await adminCall(
+				ctx,
+				'PATCH',
+				`/api/admin/orgs/${target.orgId}`,
+				{
+					id: target.orgId
+				},
+				{ action: 'trust', trust: 'established' }
+			)
+		).json()) as { org: { trust: string } };
+		expect(bumped.org.trust).toBe('established');
+		const suspended = (await (
+			await adminCall(
+				ctx,
+				'PATCH',
+				`/api/admin/orgs/${target.orgId}`,
+				{
+					id: target.orgId
+				},
+				{ action: 'suspend' }
+			)
+		).json()) as { org: { trust: string } };
+		expect(suspended.org.trust).toBe('suspended');
+		await expect(
+			ctx.contentEvent({ slug: target.orgSlug, path: `/f/${file.id}` })
+		).rejects.toMatchObject({ status: 404 });
+		const restored = (await (
+			await adminCall(
+				ctx,
+				'PATCH',
+				`/api/admin/orgs/${target.orgId}`,
+				{
+					id: target.orgId
+				},
+				{ action: 'restore' }
+			)
+		).json()) as { org: { trust: string } };
+		expect(restored.org.trust).toBe('verified');
+		await expect(
+			adminCall(
+				ctx,
+				'PATCH',
+				'/api/admin/orgs/org_missing',
+				{
+					id: 'org_missing'
+				},
+				{ action: 'suspend' }
+			)
+		).rejects.toMatchObject({ status: 404 });
+	});
+});

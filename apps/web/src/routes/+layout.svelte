@@ -66,6 +66,14 @@
 					<span class="truncate px-3 py-2 text-sm text-zinc-500">
 						{data.session.org.name}
 					</span>
+					{#if data.session.user.admin}
+						<a
+							href="/admin"
+							class="rounded-md px-3 py-2 text-sm text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900"
+						>
+							Admin
+						</a>
+					{/if}
 					<a
 						href="/settings"
 						class="rounded-md px-3 py-2 text-sm text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900"

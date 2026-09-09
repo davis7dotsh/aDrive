@@ -7,7 +7,7 @@ declare global {
 		// Set by the root layout load for every page.
 		interface PageData {
 			session?: {
-				readonly user: { readonly email: string };
+				readonly user: { readonly email: string; readonly admin: boolean };
 				readonly role: AuthContext['role'];
 				readonly org: { readonly name: string; readonly slug: string };
 			} | null;

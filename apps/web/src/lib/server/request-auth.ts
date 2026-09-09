@@ -9,7 +9,7 @@ import { AppConfig } from './config';
 import { runWorkerProgram } from './edge';
 import { InvalidRequest, MisdirectedRequest, Unauthorized } from './errors';
 import { classifyRoute } from './host-gate';
-import type { ResolvedCredential } from './identity';
+import type { AuthContext, ResolvedCredential } from './identity';
 import { Auth } from './services/auth';
 
 type AuthEvent = Pick<RequestEvent, 'locals' | 'url'>;
@@ -29,6 +29,27 @@ export const requireAuth = (event: AuthEvent) =>
 		if (!auth) {
 			return yield* new Unauthorized({
 				message: 'A valid credential is required'
+			});
+		}
+		return auth;
+	});
+
+// Operator routes (/admin, /api/admin/*): a signed-in browser session
+// whose WorkOS user id is listed in ADMIN_USER_IDS. API keys never
+// qualify, so a leaked key cannot reach the kill switch.
+export const isAdmin = (
+	auth: Pick<AuthContext, 'userId' | 'via'>,
+	adminUserIds: ReadonlySet<string>
+) => auth.via === 'session' && adminUserIds.has(auth.userId);
+
+export const requireAdmin = (event: AuthEvent) =>
+	Effect.gen(function* () {
+		const auth = yield* requireAuth(event);
+		const config = yield* AppConfig;
+		if (!isAdmin(auth, config.adminUserIds)) {
+			return yield* new InvalidRequest({
+				status: 403,
+				message: 'Admin access is required'
 			});
 		}
 		return auth;
