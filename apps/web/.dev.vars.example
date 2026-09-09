@@ -21,8 +21,12 @@ CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE="postgres://adrive:adri
 
 # Optional: develop from other devices (e.g. over Tailscale). The dev
 # server binds 0.0.0.0, so any hostname that reaches this machine works —
-# set both origins to how the BROWSER will address it. With Tailscale
-# MagicDNS that's your machine name plus your tailnet domain, e.g.:
+# set both values to how the BROWSER will address it. Content is served
+# from `<org slug>.<CONTENT_DOMAIN>` (no scheme; it follows the dashboard),
+# so the browser must resolve `<slug>.<CONTENT_DOMAIN>` to this machine:
+# `*.localhost` does so out of the box, other domains need a wildcard DNS
+# entry. With Tailscale MagicDNS that's your machine name plus your
+# tailnet domain, e.g.:
 #   DASHBOARD_ORIGIN="http://<machine>.<tailnet>.ts.net:5173"
-#   CONTENT_ORIGIN="http://<machine>.<tailnet>.ts.net:5174"
+#   CONTENT_DOMAIN="<machine>.<tailnet>.ts.net:5174"
 # (find yours with `tailscale status`; omit these lines for localhost-only)

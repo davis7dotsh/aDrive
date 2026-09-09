@@ -1,8 +1,8 @@
 import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
-import { AppConfig } from '$lib/server/config';
 import { runEdgeWithEvent, runWorkerProgram } from '$lib/server/edge';
 import { requireWrite } from '$lib/server/request-auth';
+import { currentContentOrigin } from '$lib/server/services/current-org';
 import { Indexing } from '$lib/server/services/indexing';
 import { Sites } from '$lib/server/services/sites';
 
@@ -11,7 +11,6 @@ export const POST: RequestHandler = async (event) => {
 	const output = await runEdgeWithEvent(
 		event,
 		Effect.gen(function* () {
-			const config = yield* AppConfig;
 			const sites = yield* Sites;
 			yield* requireWrite(event);
 			const result = yield* sites.commit(params.id);
@@ -20,7 +19,7 @@ export const POST: RequestHandler = async (event) => {
 				response: Response.json(
 					{
 						...result,
-						url: `${config.contentOrigin}/s/${result.file.id}/`
+						url: `${yield* currentContentOrigin}/s/${result.file.id}/`
 					},
 					{ status: 201 }
 				)

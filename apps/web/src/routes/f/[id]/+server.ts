@@ -54,7 +54,6 @@ const serveFile: RequestHandler = ({ params, platform, request, url }) =>
 				const expiresAtSeconds = Number(url.searchParams.get('e'));
 				const signature = url.searchParams.get('g') ?? '';
 				const granted = yield* grantSecrets.verify({
-					contentOrigin: config.contentOrigin,
 					orgId: content.orgId,
 					requestOrigin: url.origin,
 					fileId: params.id,

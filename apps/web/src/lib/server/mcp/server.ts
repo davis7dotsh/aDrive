@@ -10,6 +10,7 @@ import { resolveFileContentLink } from '../file-content-link';
 import type { AuthContext } from '../identity';
 import { AuthGuard } from '../services/auth-guard';
 import { Blobs } from '../services/blobs';
+import { currentContentOrigin } from '../services/current-org';
 import { Files } from '../services/files';
 import { Indexing } from '../services/indexing';
 import { Search } from '../services/search';
@@ -105,7 +106,7 @@ const registerReadTools = (server: McpServer, input: McpServerInput) => {
 						orgId: credential.orgId,
 						userId: credential.userId,
 						dashboardOrigin: config.dashboardOrigin,
-						contentOrigin: config.contentOrigin
+						contentOrigin: yield* currentContentOrigin
 					};
 				})
 			)
@@ -167,7 +168,7 @@ const registerReadTools = (server: McpServer, input: McpServerInput) => {
 						tags: (yield* tags.list).length,
 						maxUploadBytes: config.maxUploadBytes,
 						mcpMaxUploadBytes: MCP_MAX_UPLOAD_BYTES,
-						contentOrigin: config.contentOrigin,
+						contentOrigin: yield* currentContentOrigin,
 						semantic: yield* indexing.status
 					};
 				})
@@ -241,7 +242,6 @@ const registerReadTools = (server: McpServer, input: McpServerInput) => {
 				Effect.gen(function* () {
 					const files = yield* Files;
 					const blobs = yield* Blobs;
-					const config = yield* AppConfig;
 					const detail = yield* files.detail(id);
 					const now = new Date().toISOString();
 					if (!fileIsLive(detail.file, now)) {
@@ -255,7 +255,7 @@ const registerReadTools = (server: McpServer, input: McpServerInput) => {
 					if (detail.file.kind === 'site') {
 						return {
 							file: detail.file,
-							url: `${config.contentOrigin}/s/${detail.file.id}/`,
+							url: `${yield* currentContentOrigin}/s/${detail.file.id}/`,
 							expiresAt: null,
 							public: true
 						};
@@ -330,7 +330,6 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 				Effect.gen(function* () {
 					const authGuard = yield* AuthGuard;
 					const files = yield* Files;
-					const config = yield* AppConfig;
 					const rate = yield* authGuard.consume(
 						'upload',
 						credential.credentialId
@@ -362,7 +361,7 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 					return {
 						kind: 'ok' as const,
 						file: result.file,
-						url: `${config.contentOrigin}/f/${result.file.id}`,
+						url: `${yield* currentContentOrigin}/f/${result.file.id}`,
 						forcedPublic: result.forcedPublic
 					};
 				})
@@ -529,7 +528,6 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 				Effect.gen(function* () {
 					const authGuard = yield* AuthGuard;
 					const sites = yield* Sites;
-					const config = yield* AppConfig;
 					const rate = yield* authGuard.consume(
 						'upload',
 						credential.credentialId
@@ -570,7 +568,7 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 					return {
 						kind: 'ok' as const,
 						file: committed.file,
-						url: `${config.contentOrigin}/s/${committed.file.id}/`,
+						url: `${yield* currentContentOrigin}/s/${committed.file.id}/`,
 						assetCount: committed.assetCount,
 						cleanupPending: committed.cleanupPending
 					};

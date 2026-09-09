@@ -15,12 +15,13 @@ import {
 	Unauthorized,
 	type AppError
 } from './errors';
-import type { ProgramIdentity } from './identity';
+import type { ProgramIdentity, ProgramTenant } from './identity';
 import { requestLayer } from './layer';
 import { PgSql } from './pg';
 import type { AppConfig } from './config';
 import type { AuthGuard } from './services/auth-guard';
 import type { Auth } from './services/auth';
+import type { AuthGuardStore } from './services/bindings';
 import type { Blobs } from './services/blobs';
 import type { CurrentOrg, CurrentUser } from './services/current-org';
 import type { Files } from './services/files';
@@ -38,6 +39,7 @@ export type AppServices =
 	| PgSql
 	| AppConfig
 	| AuthGuard
+	| AuthGuardStore
 	| Auth
 	| Blobs
 	| CurrentOrg
@@ -146,10 +148,22 @@ const throwCauseAsHttp = (cause: Cause.Cause<unknown>): never => {
 	error(500, 'Internal error');
 };
 
-// The tenant comes from the request's resolved credential. A request
-// without one still gets a layer (sign-in, device polling, content routes
-// all run before or without a tenant); reading the org there is a bug and
-// surfaces as a defect, never as another org's rows.
+// The tenant comes from the request's resolved credential on the
+// dashboard origin, or from the host on a content origin (the hook
+// resolved `<slug>.<content domain>` to its org). A request with neither
+// still gets a layer (sign-in, device polling run before a tenant exists);
+// reading the org there is a bug and surfaces as a defect, never as
+// another org's rows.
+const eventTenant = (locals: App.Locals): ProgramTenant | null =>
+	locals.auth ??
+	(locals.content
+		? {
+				orgId: locals.content.orgId,
+				orgSlug: locals.content.slug,
+				userId: null
+			}
+		: null);
+
 const runWithEvent = async <A, E>(
 	event: RequestEvent,
 	program: Effect.Effect<A, E, AppServices>
@@ -158,7 +172,7 @@ const runWithEvent = async <A, E>(
 	if (!env) error(500, 'Cloudflare bindings unavailable');
 
 	const exit = await Effect.runPromiseExit(
-		program.pipe(Effect.provide(requestLayer(env, event.locals.auth)))
+		program.pipe(Effect.provide(requestLayer(env, eventTenant(event.locals))))
 	);
 	if (Exit.isSuccess(exit)) return exit.value;
 	return throwCauseAsHttp(exit.cause);
@@ -197,23 +211,24 @@ export const runAcrossOrgs = async <A, E>(
 	options: { readonly limit?: number } = {}
 ) => {
 	const limit = Math.max(1, Math.min(options.limit ?? 20, 100));
-	const orgIds = await runWorkerProgram(
+	const orgs = await runWorkerProgram(
 		env,
 		Effect.flatMap(
 			PgSql,
-			(sql) => sql<{ id: string }>`
-				SELECT id FROM orgs
+			(sql) => sql<{ id: string; slug: string }>`
+				SELECT id, slug FROM orgs
 				WHERE trust <> 'suspended'
 				ORDER BY random()
 				LIMIT ${limit}`
-		).pipe(Effect.map((rows) => rows.map((row) => row.id)))
+		)
 	);
 	const results: Array<{ readonly orgId: string; readonly value: A }> = [];
-	for (const orgId of orgIds) {
+	for (const { id: orgId, slug } of orgs) {
 		try {
 			const value = await runWorkerProgram(env, program, {
 				orgId,
-				userId: 'system'
+				userId: 'system',
+				orgSlug: slug
 			});
 			results.push({ orgId, value });
 		} catch (cause) {

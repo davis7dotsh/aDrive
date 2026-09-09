@@ -70,7 +70,7 @@ the repository root.
    ```
 
 6. In the Cloudflare dashboard, open **Images → Transformations**, select
-   the zone that owns `CONTENT_ORIGIN` (`davis7.space` for
+   the zone that owns `CONTENT_DOMAIN` (`davis7.space` for
    `files.davis7.space`), and enable transformations. Dashboard thumbnails
    require this zone-level setting.
 7. From `apps/web`, set each secret with `wrangler secret put <NAME> --env production`:

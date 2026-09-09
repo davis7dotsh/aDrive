@@ -1,9 +1,18 @@
 import type { ApiKeyScope } from '@adrive/shared';
 
+// The org a program runs for. userId is null for programs that act for
+// an org without a signed-in member: content requests, whose host names
+// the org. orgSlug names the org's content host (`<slug>.<content
+// domain>`); when a caller does not know it, the layer looks it up once.
+export interface ProgramTenant {
+	readonly orgId: string;
+	readonly orgSlug?: string;
+	readonly userId: string | null;
+}
+
 // The tenant a program acts for. Requests take it from locals.auth,
 // background work names it explicitly.
-export interface ProgramIdentity {
-	readonly orgId: string;
+export interface ProgramIdentity extends ProgramTenant {
 	readonly userId: string;
 }
 

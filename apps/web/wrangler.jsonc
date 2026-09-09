@@ -8,11 +8,14 @@
 	},
 	"compatibility_date": "2026-07-27",
 	"compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
-	// Local dev defaults. To develop over Tailscale (or any LAN hostname),
-	// override both origins in apps/web/.dev.vars — see README "Local setup".
+	// Local dev defaults. Tenant content is served from
+	// `<slug>.<CONTENT_DOMAIN>` over the dashboard's scheme; browsers resolve
+	// `*.localhost` to loopback, so no DNS setup is needed. To develop over
+	// Tailscale (or any LAN hostname), override both values in
+	// apps/web/.dev.vars — see README "Local setup".
 	"vars": {
 		"DASHBOARD_ORIGIN": "http://localhost:5173",
-		"CONTENT_ORIGIN": "http://localhost:5174",
+		"CONTENT_DOMAIN": "localhost:5174",
 		"MAX_UPLOAD_BYTES": "99614720",
 		"SEMANTIC_SEARCH": "auto",
 		"EMBEDDING_MODEL": "@cf/baai/bge-small-en-v1.5",
@@ -75,7 +78,10 @@
 	//   2. Create the production R2 bucket and KV namespace; paste the KV id.
 	//   3. Create the production job queue and its dead-letter queue
 	//      (docs/release.md, "Queues").
-	//   4. Point DNS for both hostnames at the Worker (routes below).
+	//   4. Point DNS at the Worker: the dashboard custom domain, plus one
+	//      proxied wildcard record (`AAAA *.<CONTENT_DOMAIN> 100::`) for
+	//      tenant content (routes below). Universal SSL covers a
+	//      first-level wildcard, so slugs stay one label deep.
 	//   5. `wrangler secret put` MAINTENANCE_SECRET, WORKOS_API_KEY,
 	//      WORKOS_CLIENT_ID, WORKOS_COOKIE_PASSWORD, WORKOS_WEBHOOK_SECRET
 	//      (all `--env production`)
@@ -86,13 +92,20 @@
 			// routes still check visibility in Postgres, then serve from R2 or the
 			// Cache API.
 			"placement": { "mode": "smart" },
+			// Content lives on a wildcard under CONTENT_DOMAIN: one proxied
+			// `*.files.davis7.space` DNS record and the route below. The bare
+			// custom domain stays until the throwaway content domain replaces
+			// files.davis7.space; tenant content is never served from the
+			// brand domain.
 			"routes": [
 				{ "pattern": "drive.davis7.space", "custom_domain": true },
-				{ "pattern": "files.davis7.space", "custom_domain": true }
+				{ "pattern": "files.davis7.space", "custom_domain": true },
+				{ "pattern": "*.files.davis7.space/*", "zone_name": "davis7.space" }
 			],
 			"vars": {
 				"DASHBOARD_ORIGIN": "https://drive.davis7.space",
-				"CONTENT_ORIGIN": "https://files.davis7.space",
+				// A throwaway domain replaces this before launch.
+				"CONTENT_DOMAIN": "files.davis7.space",
 				"MAX_UPLOAD_BYTES": "99614720",
 				// required (not auto) so a missing AI binding fails the deploy
 				// loudly instead of silently degrading to keyword search.
