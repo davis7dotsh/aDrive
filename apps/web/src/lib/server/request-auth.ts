@@ -71,6 +71,21 @@ export const requireWrite = (event: AuthEvent) =>
 		)
 	);
 
+// For changes only an owner may make (billing, the content slug).
+export const requireOwner = (event: AuthEvent, action: string) =>
+	requireWrite(event).pipe(
+		Effect.flatMap((auth) =>
+			auth.role === 'owner'
+				? Effect.succeed(auth)
+				: Effect.fail(
+						new InvalidRequest({
+							status: 403,
+							message: `Only an owner can ${action}`
+						})
+					)
+		)
+	);
+
 export interface CredentialInput {
 	readonly authorization: string | null;
 	readonly sessionCookie: string | undefined;

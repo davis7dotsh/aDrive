@@ -10,6 +10,8 @@ import type {
 import {
 	parseApiKeyCreateResponse,
 	parseApiKeyListResponse,
+	parseBillingLink,
+	parseBillingSummary,
 	parseFileContentLink,
 	parseFileDetailResponse,
 	parseFileListResponse,
@@ -88,6 +90,25 @@ export const changeOrgSlug = async (token: string, slug: string) => {
 		body: JSON.stringify({ slug })
 	});
 	return json(parseOrgSettings, response);
+};
+
+export const getBilling = async (token: string, signal?: AbortSignal) => {
+	const response = await request('/api/billing', token, { signal });
+	return json(parseBillingSummary, response);
+};
+
+export const startCheckout = async (token: string) => {
+	const response = await request('/api/billing/checkout', token, {
+		method: 'POST'
+	});
+	return (await json(parseBillingLink, response)).url;
+};
+
+export const openBillingPortal = async (token: string) => {
+	const response = await request('/api/billing/portal', token, {
+		method: 'POST'
+	});
+	return (await json(parseBillingLink, response)).url;
 };
 
 export const listApiKeys = async (token: string, signal?: AbortSignal) => {

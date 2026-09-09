@@ -158,6 +158,97 @@ describe('billing gates and usage sync (local platform)', () => {
 		});
 	});
 
+	it('shows the plan and usage and hands out checkout and portal links', async () => {
+		const ctx = await setup();
+		await login(ctx);
+		const identity = await currentIdentity(ctx);
+		const { GET } = await import('../../../routes/api/billing/+server.js');
+		const summary = await call(GET, ctx.event({ path: '/api/billing' }));
+		expect(summary.status).toBe(200);
+		const usage = await queryPg(
+			ctx.env,
+			(sql) => sql<{ stored_bytes: number }>`
+				SELECT stored_bytes FROM org_usage WHERE org_id = ${identity.orgId}`
+		);
+		const { planLimits } = await import('$lib/server/plans');
+		expect(await summary.json()).toMatchObject({
+			plan: 'free',
+			planName: 'Free',
+			billingEnabled: true,
+			storage: {
+				used: usage[0]?.stored_bytes,
+				limit: planLimits('free').storedBytes
+			},
+			aiOps: { limit: planLimits('free').aiOpsPerMonth }
+		});
+
+		const { POST: checkout } =
+			await import('../../../routes/api/billing/checkout/+server.js');
+		const started = await call(
+			checkout,
+			ctx.event({ method: 'POST', path: '/api/billing/checkout' })
+		);
+		expect(started.status).toBe(200);
+		expect(await started.json()).toEqual({
+			url: `https://checkout.autumn.invalid/${identity.orgId}/pro`
+		});
+		const { POST: portal } =
+			await import('../../../routes/api/billing/portal/+server.js');
+		const opened = await call(
+			portal,
+			ctx.event({ method: 'POST', path: '/api/billing/portal' })
+		);
+		expect(await opened.json()).toEqual({
+			url: `https://portal.autumn.invalid/${identity.orgId}`
+		});
+		expect(
+			(await autumnCalls(identity.orgId)).map((entry) => [
+				entry.method,
+				entry.input
+			])
+		).toEqual([
+			[
+				'checkoutUrl',
+				{
+					customerId: identity.orgId,
+					planId: 'pro',
+					successUrl: 'http://localhost:5173/settings/billing'
+				}
+			],
+			[
+				'portalUrl',
+				{
+					customerId: identity.orgId,
+					returnUrl: 'http://localhost:5173/settings/billing'
+				}
+			]
+		]);
+
+		// A read-only key can see the summary but not change the plan.
+		const { POST: createKey } =
+			await import('../../../routes/api/auth/keys/+server.js');
+		const created = await call(
+			createKey,
+			ctx.event({
+				method: 'POST',
+				path: '/api/auth/keys',
+				body: JSON.stringify({ name: 'billing-ro', scope: 'read-only' }),
+				headers: { 'content-type': 'application/json' }
+			})
+		);
+		const { token } = (await created.json()) as { token: string };
+		const asKey = (method: string, path: string) =>
+			ctx.event({
+				method,
+				path,
+				headers: { authorization: `Bearer ${token}` }
+			});
+		expect((await call(GET, asKey('GET', '/api/billing'))).status).toBe(200);
+		await expect(
+			call(checkout, asKey('POST', '/api/billing/checkout'))
+		).rejects.toMatchObject({ status: 403 });
+	});
+
 	it('finishes keyword-only when the AI quota is exhausted', async () => {
 		const ctx = await setup();
 		await login(ctx);

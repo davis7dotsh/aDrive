@@ -113,7 +113,7 @@ export const requestLayer = (env: Env, tenant: ProgramTenant | null) => {
 	const autumn = AutumnLive.pipe(Layer.provide(bindings));
 	const billingGates = BillingGatesLive.pipe(Layer.provide(autumn));
 	const billing = BillingLive.pipe(
-		Layer.provide(Layer.merge(infrastructure, autumn))
+		Layer.provide(Layer.mergeAll(infrastructure, autumn))
 	);
 	const auth = AuthLive.pipe(
 		Layer.provide(Layer.mergeAll(infrastructure, workos, autumn))

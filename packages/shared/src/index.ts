@@ -352,6 +352,26 @@ export const OrgUpdateSchema = Schema.Struct({
 	slug: Schema.String
 });
 
+// The org's plan and how much of it is used, as the billing page shows.
+export const BillingSummarySchema = Schema.Struct({
+	plan: Schema.String,
+	planName: Schema.String,
+	// Whether checkout and the portal are reachable (Autumn configured).
+	billingEnabled: Schema.Boolean,
+	storage: Schema.Struct({ used: Schema.Int, limit: Schema.Int }),
+	aiOps: Schema.Struct({ used: Schema.Int, limit: Schema.Int })
+});
+
+export type BillingSummary = typeof BillingSummarySchema.Type;
+
+// A hosted checkout or portal page to send the browser to; null when no
+// step is needed (the plan attached without payment) or billing is off.
+export const BillingLinkResponseSchema = Schema.Struct({
+	url: Schema.NullOr(Schema.String)
+});
+
+export type BillingLinkResponse = typeof BillingLinkResponseSchema.Type;
+
 export const DeviceAuthorizationCreateSchema = Schema.Struct({
 	name: Schema.String
 });

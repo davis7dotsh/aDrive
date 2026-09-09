@@ -1,7 +1,8 @@
 import { Effect, Layer } from 'effect';
 import { describe, expect, it } from 'vitest';
+import { AppConfig, type AppConfigShape } from '../config';
 import { PgSql } from '../pg';
-import { ensureTestOrg, testTenant } from '../test/org';
+import { testTenant } from '../test/org';
 import { testPgLayer } from '../test/pg';
 import { ensureTenant } from '../tenants';
 import { readOrgUsage, recordAiOps, settleAiOps } from '../usage';
@@ -14,11 +15,30 @@ import {
 import { Billing, BillingLive } from './billing';
 import { CurrentOrg } from './current-org';
 
+const config: AppConfigShape = {
+	dashboardOrigin: 'https://drive.example.test',
+	contentDomain: 'content.example.test',
+	contentScheme: 'https:',
+	contentOriginFor: (slug) => `https://${slug}.content.example.test`,
+	maxUploadBytes: 1,
+	maintenanceSecret: 'test-maintenance-secret',
+	workos: { apiKey: null, clientId: '', cookiePassword: '', webhookSecret: '' },
+	urlScanner: null,
+	cloudflareZone: null,
+	adminUserIds: new Set(),
+	autumn: { secretKey: 'fake:test', webhookSecret: '' },
+	semanticSearch: 'off',
+	embeddingModel: '@cf/baai/bge-small-en-v1.5',
+	embeddingPooling: 'cls',
+	embeddingDimensions: 384
+};
+
 const billingLayer = (orgId: string) =>
 	BillingLive.pipe(
 		Layer.provideMerge(
 			Layer.mergeAll(
 				testPgLayer(),
+				Layer.succeed(AppConfig, config),
 				Layer.succeed(AutumnClient, autumnFake),
 				Layer.succeed(CurrentOrg, { id: orgId, slug: orgId })
 			)
@@ -42,8 +62,7 @@ describe('usage sync into Autumn', () => {
 			orgId,
 			Effect.gen(function* () {
 				const sql = yield* PgSql;
-				yield* ensureTestOrg(sql);
-				yield* ensureTenant(sql, testTenant(orgId, 'user_test'));
+				yield* ensureTenant(sql, testTenant(orgId, `user_${orgId}`));
 				yield* sql`
 					UPDATE org_usage SET stored_bytes = 4096 WHERE org_id = ${orgId}`;
 				yield* recordAiOps(sql, orgId, 3);
@@ -89,7 +108,7 @@ describe('usage sync into Autumn', () => {
 			orgId,
 			Effect.gen(function* () {
 				const sql = yield* PgSql;
-				yield* ensureTenant(sql, testTenant(orgId, 'user_test'));
+				yield* ensureTenant(sql, testTenant(orgId, `user_${orgId}`));
 				yield* recordAiOps(sql, orgId, 5);
 				yield* sql`
 					UPDATE org_usage
