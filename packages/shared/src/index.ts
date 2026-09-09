@@ -423,6 +423,12 @@ export const JobSchema = Schema.Union([
 		kind: Schema.Literal('site-cleanup'),
 		orgId: Schema.String,
 		sessionId: Schema.String
+	}),
+	// Pushes the org's current usage counters to billing; several sends
+	// coalesce because the consumer reads the row when it runs.
+	Schema.Struct({
+		kind: Schema.Literal('usage-sync'),
+		orgId: Schema.String
 	})
 ]);
 

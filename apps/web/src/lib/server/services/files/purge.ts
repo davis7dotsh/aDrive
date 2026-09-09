@@ -41,7 +41,7 @@ export const purgeDueAt = (row: {
 export const purgeOps = (
 	internals: FileInternals
 ): Pick<FilesShape, 'purgeOne' | 'sweepPurges'> => {
-	const { sql, blobs, org, sendPurgeJob } = internals;
+	const { sql, blobs, org, sendPurgeJob, sendUsageSync } = internals;
 	const storage = (operation: string) => (cause: unknown) =>
 		new StorageError({ operation, cause });
 
@@ -161,6 +161,7 @@ export const purgeOps = (
 
 		yield* completePurge(sql, org.id, fileId);
 		forgetTagListCache(org.id);
+		yield* sendUsageSync;
 	});
 
 	// Reconciliation: rows whose purge was due long ago and that no

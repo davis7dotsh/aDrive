@@ -19,12 +19,18 @@ import { isSearchableText, searchTextLimit } from '../search-text';
 import { createTtlCache } from '../isolate-cache';
 import { stuckBefore } from '../job-policy';
 import { PgSql } from '../pg';
+import { recordAiOps } from '../usage';
+import { BillingGates } from './billing-gates';
 import { Blobs } from './blobs';
 import { CurrentOrg } from './current-org';
 import { JobQueue } from './jobs';
 import { Embedder, VectorIndex } from './semantic';
 
 const INDEX_LEASE_MS = 5 * 60 * 1_000;
+// A file refused embeddings for want of AI quota is offered again once a
+// day; the monthly reset (or an upgrade) then lets it through.
+const AI_QUOTA_RETRY_MS = 24 * 60 * 60 * 1_000;
+export const AI_QUOTA_EXHAUSTED = 'AI quota exhausted';
 const EMBEDDING_MODEL = '@cf/baai/bge-small-en-v1.5';
 const SEMANTIC_STATUS_CACHE_TTL_MS = 10_000;
 // Per isolate, per org; the Postgres client is rebuilt per request so it
@@ -93,6 +99,31 @@ const makeIndexing = Effect.gen(function* () {
 	const embedder = yield* Embedder;
 	const vectors = yield* VectorIndex;
 	const jobs = yield* JobQueue;
+	const gates = yield* BillingGates;
+
+	// Suspended: the layer is also built for tenant-less programs, where
+	// reading the org is a defect.
+	const sendUsageSync = Effect.suspend(() =>
+		jobs.trySend({ kind: 'usage-sync', orgId: org.id })
+	);
+
+	// The embeddings are committed; what they cost is best effort on top.
+	const meterAiOps = (fileId: string, chunks: number) =>
+		recordAiOps(sql, org.id, chunks).pipe(
+			Effect.andThen(sendUsageSync),
+			Effect.catchCause((cause) =>
+				Effect.sync(() => {
+					console.error(
+						JSON.stringify({
+							message: 'AI usage could not be recorded',
+							fileId,
+							chunks,
+							cause: String(cause)
+						})
+					);
+				})
+			)
+		);
 
 	const storage = (operation: string) => (cause: unknown) =>
 		new StorageError({ operation, cause });
@@ -220,6 +251,18 @@ const makeIndexing = Effect.gen(function* () {
 			}
 
 			const chunks = chunkSearchText(initial.display_name, text);
+			const allowed = yield* gates.canEmbed(org.id, chunks.length);
+			if (!allowed) {
+				const finished = yield* finishKeywordOnly(sql, lease, {
+					error: AI_QUOTA_EXHAUSTED,
+					retryAt: new Date(now.getTime() + AI_QUOTA_RETRY_MS).toISOString()
+				}).pipe(Effect.mapError(storage('finish keyword-only indexing')));
+				if (!finished) {
+					yield* stale('stale keyword-only indexing completion ignored');
+					return 'skipped' as const;
+				}
+				return 'indexed' as const;
+			}
 			const embeddings = yield* embedder.documents(
 				chunks.map((chunk) => chunk.text)
 			);
@@ -246,6 +289,7 @@ const makeIndexing = Effect.gen(function* () {
 				yield* stale('stale semantic indexing completion rolled back');
 				return 'skipped' as const;
 			}
+			yield* meterAiOps(fileId, chunks.length);
 			return 'indexed' as const;
 		}).pipe(
 			Effect.catchCause((cause) =>
