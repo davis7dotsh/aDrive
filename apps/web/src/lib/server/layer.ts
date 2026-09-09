@@ -23,6 +23,7 @@ import { IndexingLive } from './services/indexing';
 import { LifecycleLive } from './services/lifecycle';
 import { GrantSecretsLive } from './services/grant-secrets';
 import { JobQueueLive } from './services/jobs';
+import { OrgLive } from './services/org';
 import { WorkOSLive } from './services/workos';
 
 export const PgLive = Layer.unwrap(
@@ -93,6 +94,7 @@ export const requestLayer = (env: Env, tenant: ProgramTenant | null) => {
 		Layer.provide(Layer.merge(infrastructure, workos))
 	);
 	const authGuard = AuthGuardLive().pipe(Layer.provide(bindings));
+	const orgService = OrgLive.pipe(Layer.provide(infrastructure));
 	const grantSecrets = GrantSecretsLive.pipe(Layer.provide(infrastructure));
 	const tags = TagsLive.pipe(Layer.provide(infrastructure));
 	const search = SearchLive.pipe(
@@ -115,6 +117,7 @@ export const requestLayer = (env: Env, tenant: ProgramTenant | null) => {
 		workos,
 		auth,
 		authGuard,
+		orgService,
 		grantSecrets,
 		tags,
 		search,

@@ -3,6 +3,7 @@ import { runWorkerProgram } from './edge';
 import { StorageError } from './errors';
 import { PgSql } from './pg';
 import { AuthGuardStore } from './services/bindings';
+import { SLUG_REDIRECT_WINDOW_MS } from './slug-policy';
 
 // The org a content request is served for, as resolved from its host.
 export interface ContentHost {
@@ -12,6 +13,9 @@ export interface ContentHost {
 
 export type ContentHostResolution =
 	| { readonly _tag: 'Found'; readonly host: ContentHost }
+	// A slug the org gave up within the redirect window: the hook answers
+	// 301 to the same path on the org's current host.
+	| { readonly _tag: 'Moved'; readonly slug: string }
 	// Unknown slug, or an org that is suspended: every path is a 404.
 	| { readonly _tag: 'Missing' };
 
@@ -27,6 +31,7 @@ const NEGATIVE_CACHE_TTL_SECONDS = 60;
 
 const CachedSlug = Schema.Union([
 	Schema.Struct({ orgId: Schema.String, trust: Schema.String }),
+	Schema.Struct({ movedTo: Schema.String }),
 	Schema.Struct({ missing: Schema.Literal(true) })
 ]);
 
@@ -43,10 +48,13 @@ const decodeCached = (value: string | null) => {
 const resolution = (
 	slug: string,
 	entry: typeof CachedSlug.Type
-): ContentHostResolution =>
-	'missing' in entry || entry.trust === 'suspended'
+): ContentHostResolution => {
+	if ('missing' in entry) return { _tag: 'Missing' };
+	if ('movedTo' in entry) return { _tag: 'Moved', slug: entry.movedTo };
+	return entry.trust === 'suspended'
 		? { _tag: 'Missing' }
 		: { _tag: 'Found', host: { orgId: entry.orgId, slug } };
+};
 
 export const resolveContentSlug = Effect.fn('resolveContentSlug')(function* (
 	slug: string
@@ -62,17 +70,40 @@ export const resolveContentSlug = Effect.fn('resolveContentSlug')(function* (
 		})
 	);
 	if (cached) return resolution(slug, cached);
-	const rows = yield* sql<{ id: string; trust: string }>`
-		SELECT id, trust FROM orgs WHERE slug = ${slug} LIMIT 1
+	// The live slug wins; otherwise a slug the org released within the
+	// redirect window points at its current one (a suspended org's old
+	// slug still redirects, to a host that then answers 404).
+	const redirectCutoff = new Date(
+		Date.now() - SLUG_REDIRECT_WINDOW_MS
+	).toISOString();
+	const rows = yield* sql<{
+		id: string | null;
+		trust: string | null;
+		moved_to: string | null;
+	}>`
+		SELECT id, trust, moved_to FROM (
+			SELECT o.id, o.trust, NULL AS moved_to, 0 AS rank
+			FROM orgs o WHERE o.slug = ${slug}
+			UNION ALL
+			SELECT NULL, NULL, o.slug, 1 AS rank
+			FROM org_slug_history h
+			JOIN orgs o ON o.id = h.org_id
+			WHERE h.slug = ${slug} AND h.released_at > ${redirectCutoff}
+		) candidates
+		ORDER BY rank
+		LIMIT 1
 	`.pipe(
 		Effect.mapError(
 			(cause) => new StorageError({ operation: 'resolve org slug', cause })
 		)
 	);
 	const row = rows[0];
-	const entry: typeof CachedSlug.Type = row
-		? { orgId: row.id, trust: row.trust }
-		: { missing: true };
+	const entry: typeof CachedSlug.Type =
+		row?.id !== null && row?.id !== undefined && row.trust !== null
+			? { orgId: row.id, trust: row.trust }
+			: row?.moved_to
+				? { movedTo: row.moved_to }
+				: { missing: true };
 	yield* Effect.tryPromise({
 		try: () =>
 			store.put(key, JSON.stringify(entry), {

@@ -179,9 +179,20 @@ export const createRouteContext = async (): Promise<RouteTestContext> => {
 		const slug = input.slug ?? contentSlugFromHost(url.host, CONTENT_DOMAIN);
 		if (slug === null) throw new Error(`Not a content host: ${url.host}`);
 		const resolved = await resolveContentHost(env, slug);
-		if (resolved._tag === 'Missing') {
-			const { error } = await import('@sveltejs/kit');
-			return error(404, 'Not found');
+		if (resolved._tag !== 'Found') {
+			// The hook answers 404 (unknown or suspended) or 301 (a released
+			// slug) before any route runs; the redirect is surfaced the same
+			// way so a test can assert on it.
+			const { error, redirect } = await import('@sveltejs/kit');
+			return resolved._tag === 'Missing'
+				? error(404, 'Not found')
+				: redirect(
+						301,
+						new URL(
+							`${url.pathname}${url.search}`,
+							contentOrigin(resolved.slug)
+						).href
+					);
 		}
 		const event = build({ ...input, url });
 		event.locals.content = resolved.host;

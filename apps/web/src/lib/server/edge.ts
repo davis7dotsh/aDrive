@@ -33,6 +33,7 @@ import type { Indexing } from './services/indexing';
 import type { Lifecycle } from './services/lifecycle';
 import type { GrantSecrets } from './services/grant-secrets';
 import type { JobQueue } from './services/jobs';
+import type { Org } from './services/org';
 import type { WorkOSClient } from './services/workos';
 
 export type AppServices =
@@ -54,6 +55,7 @@ export type AppServices =
 	| Lifecycle
 	| GrantSecrets
 	| JobQueue
+	| Org
 	| WorkOSClient;
 
 export const isAppError = (failure: unknown): failure is AppError =>
