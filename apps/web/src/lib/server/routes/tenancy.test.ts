@@ -17,6 +17,7 @@ import {
 	indexFile,
 	listFiles,
 	loginAs,
+	mutateFile,
 	uploadFile
 } from '../test/helpers';
 
@@ -147,6 +148,69 @@ describe('tenancy (local platform)', () => {
 		);
 		expect(served.status).toBe(200);
 		expect(await served.text()).toBe('zebra ledger for org a');
+	});
+
+	it('meters stored bytes per org and enforces the plan limit', async () => {
+		const ctx = await setup();
+		const usage = async (orgId: string) =>
+			(
+				await queryPg(
+					ctx.env,
+					(sql) => sql<{ stored_bytes: number }>`
+						SELECT stored_bytes FROM org_usage WHERE org_id = ${orgId}`
+				)
+			)[0]?.stored_bytes ?? -1;
+		const setUsage = (orgId: string, bytes: number) =>
+			queryPg(
+				ctx.env,
+				(sql) => sql`
+					UPDATE org_usage SET stored_bytes = ${bytes} WHERE org_id = ${orgId}`
+			);
+
+		await loginAs(ctx, ORG_A);
+		const a = await currentIdentity(ctx);
+		const before = await usage(a.orgId);
+		const file = await uploadFile(ctx, {
+			name: 'metered.txt',
+			content: '0123456789'
+		});
+		expect(await usage(a.orgId)).toBe(before + 10);
+
+		// Fill A to within a few bytes of its plan: the next upload is
+		// refused before any row or blob lands.
+		const { planLimits } = await import('$lib/server/plans');
+		await setUsage(a.orgId, planLimits('free').storedBytes - 5);
+		const { PUT } = await import('../../../routes/api/files/+server.js');
+		await expect(
+			call(
+				PUT,
+				ctx.event({
+					method: 'PUT',
+					path: '/api/files',
+					body: '0123456789',
+					headers: {
+						'content-type': 'text/plain',
+						'x-adrive-file-name': 'too-big.txt'
+					}
+				})
+			)
+		).rejects.toMatchObject({ status: 413 });
+		await setUsage(a.orgId, before + 10);
+
+		// B's counter is its own.
+		await loginAs(ctx, ORG_B);
+		const b = await currentIdentity(ctx);
+		const beforeB = await usage(b.orgId);
+		await uploadFile(ctx, { name: 'metered-b.txt', content: '0123456789' });
+		expect(await usage(b.orgId)).toBe(beforeB + 10);
+		expect(await usage(a.orgId)).toBe(before + 10);
+
+		// Purging hands the bytes back.
+		await loginAs(ctx, ORG_A);
+		await mutateFile(ctx, file.id, { action: 'trash' });
+		await mutateFile(ctx, file.id, { action: 'purge' });
+		await ctx.drainWaitUntil();
+		expect(await usage(a.orgId)).toBe(before);
 	});
 
 	it('binds a device-approved API key to the approving org', async () => {

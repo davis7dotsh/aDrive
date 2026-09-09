@@ -13,7 +13,7 @@ import {
 } from '../../file-rows';
 import { visibilityForFile } from '../../file-policy';
 import { refreshSearchDocument } from '../../search-index';
-import { ensureStoredBytesWithin } from '../../storage-quota';
+import { ensureStorageHeadroom, reserveWithinPlan } from '../../storage-quota';
 import type { AppConfig } from '../../config';
 import type { Blobs } from '../blobs';
 import type { Tags } from '../tags';
@@ -66,10 +66,12 @@ export const createInternals = (deps: CoreDeps) => {
 			}
 		);
 
-	// One aggregate query per upload; at personal scale this stays cheap
-	// and cannot drift the way a maintained counter can.
-	const checkStorageQuota = (incomingBytes: number) =>
-		ensureStoredBytesWithin(sql, config.maxTotalBytes, incomingBytes);
+	// Cheap read before a body streams; the reservation inside the commit
+	// transaction is what actually holds the bytes.
+	const ensureHeadroom = (incomingBytes: number) =>
+		ensureStorageHeadroom(sql, org.id, incomingBytes);
+	const reserveBytes = (orgId: string, delta: number) =>
+		reserveWithinPlan(sql, orgId, delta);
 
 	const findDashboardFile = Effect.fn('Files.findDashboardFile')(function* (
 		id: string
@@ -132,6 +134,8 @@ export const createInternals = (deps: CoreDeps) => {
 								${contentType}, ${updatedAt}, NULL
 							)`;
 					yield* refreshSearchDocument(sql, current.id, org.id);
+					yield* reserveBytes(org.id, size);
+
 				})
 			)
 			.pipe(
@@ -166,7 +170,8 @@ export const createInternals = (deps: CoreDeps) => {
 		tags,
 		org,
 		compensateStoredBlob,
-		checkStorageQuota,
+		ensureHeadroom,
+		reserveBytes,
 		findDashboardFile,
 		commitStoredVersion
 	};

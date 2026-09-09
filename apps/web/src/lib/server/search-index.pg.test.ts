@@ -3,7 +3,6 @@ import Pg from 'pg';
 import { describe, expect, it } from 'vitest';
 import { PgSql, pgLayer } from './pg';
 import { refreshAllIndexedTags, refreshSearchDocument } from './search-index';
-import { ensureStoredBytesWithin } from './storage-quota';
 import { TEST_DATABASE_URL } from './test/database';
 import { ensureTestOrg, TEST_ORG_ID } from './test/org';
 import { testPgLayer } from './test/pg';
@@ -35,17 +34,7 @@ describe('postgres search index helpers', () => {
 				yield* refreshAllIndexedTags(sql, TEST_ORG_ID);
 				const after = yield* sql<{ tags: string }>`
 					SELECT tags FROM search_documents WHERE file_id = ${id}`;
-				const quota = yield* ensureStoredBytesWithin(sql, 1_000_000, 5).pipe(
-					Effect.as('ok'),
-					Effect.catch(() => Effect.succeed('blocked'))
-				);
-				const blocked = yield* ensureStoredBytesWithin(sql, 1, 5).pipe(
-					Effect.as('ok'),
-					Effect.catchTag('InvalidRequest', (failure) =>
-						Effect.succeed(String(failure.status))
-					)
-				);
-				return { before: before[0], after: after[0], quota, blocked };
+				return { before: before[0], after: after[0] };
 			})
 		);
 		expect(result.before).toEqual({
@@ -54,8 +43,6 @@ describe('postgres search index helpers', () => {
 			hit: true
 		});
 		expect(result.after?.tags).toBe('Money');
-		expect(result.quota).toBe('ok');
-		expect(result.blocked).toBe('413');
 	});
 
 	it.each([
@@ -87,7 +74,7 @@ describe('postgres search index helpers', () => {
 							Effect.gen(function* () {
 								if (kind === 'rename') {
 									yield* sql`UPDATE tags SET name = ${newName} WHERE id = ${tagId}`;
-									yield* refreshAllIndexedTags(sql);
+									yield* refreshAllIndexedTags(sql, TEST_ORG_ID);
 								} else {
 									yield* refreshSearchDocument(sql, id, TEST_ORG_ID);
 								}
@@ -126,7 +113,9 @@ describe('postgres search index helpers', () => {
 				);
 				if (existingDocument) {
 					await run(
-						Effect.flatMap(PgSql, (sql) => refreshSearchDocument(sql, id, TEST_ORG_ID))
+						Effect.flatMap(PgSql, (sql) =>
+							refreshSearchDocument(sql, id, TEST_ORG_ID)
+						)
 					);
 				}
 

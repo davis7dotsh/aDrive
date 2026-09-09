@@ -313,6 +313,19 @@ try {
 		queuedStagedAssets += queued.rowCount;
 	}
 	console.log(`staged_site_assets queued for cleanup: ${queuedStagedAssets}`);
+	// The org's stored-byte counter is derived from what was copied.
+	await client.query(
+		`UPDATE org_usage u SET stored_bytes = COALESCE((
+			SELECT SUM(CASE
+				WHEN f.is_site THEN f.size_bytes
+				ELSE (SELECT COALESCE(SUM(v.size_bytes + v.thumbnail_size_bytes), 0)
+					FROM file_versions v WHERE v.file_id = f.id)
+			END)
+			FROM files f WHERE f.org_id = u.org_id
+		), 0) WHERE u.org_id = $1`,
+		[orgId]
+	);
+
 	// Sessions, device codes, and the passcode hash are not carried over;
 	// everyone signs in again. Keyword search documents are rebuilt.
 	await client.query(`

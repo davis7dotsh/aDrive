@@ -17,7 +17,8 @@ export const uploadOps = (
 ): Pick<FilesShape, 'upload' | 'uploadVersion' | 'restoreVersion'> => {
 	const { blobs, sql, config, tags, org } = internals;
 	const {
-		checkStorageQuota,
+		ensureHeadroom,
+		reserveBytes,
 		compensateStoredBlob,
 		commitStoredVersion,
 		findDashboardFile
@@ -45,7 +46,7 @@ export const uploadOps = (
 								message: 'File name is invalid'
 							})
 			});
-			yield* checkStorageQuota(size);
+			yield* ensureHeadroom(size);
 			const contentType = contentTypeForUpload(displayName, input.contentType);
 			const visibility = visibilityForFile(
 				displayName,
@@ -85,12 +86,15 @@ export const uploadOps = (
 								)}`;
 						}
 						yield* refreshSearchDocument(sql, id, org.id);
+						yield* reserveBytes(org.id, stored.size);
+
 					})
 				)
 				.pipe(
-					Effect.mapError(
-						(cause) =>
+					Effect.catchTag('SqlError', (cause) =>
+						Effect.fail(
 							new StorageError({ operation: 'commit file metadata', cause })
+						)
 					)
 				);
 			yield* commit.pipe(
@@ -142,7 +146,7 @@ export const uploadOps = (
 								message: 'Upload length is invalid'
 							})
 			});
-			yield* checkStorageQuota(size);
+			yield* ensureHeadroom(size);
 			const contentType = contentTypeForUpload(
 				current.displayName,
 				input.contentType
@@ -206,7 +210,7 @@ export const uploadOps = (
 			);
 			const source = decodeContentRows(rows)[0];
 			if (!source) return yield* new NotFound({ id });
-			yield* checkStorageQuota(source.size_bytes);
+			yield* ensureHeadroom(source.size_bytes);
 			const sourceObject = yield* blobs.get(source.r2_key);
 			const r2Key = `v/${current.id}/${crypto.randomUUID()}`;
 			const stored = yield* blobs.put(

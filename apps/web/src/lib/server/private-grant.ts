@@ -5,6 +5,9 @@ export const PRIVATE_GRANT_TTL_SECONDS = 15 * 60;
 
 interface PrivateGrantScope {
 	readonly contentOrigin: string;
+	// Grants are minted for one org and verified against the org that owns
+	// the file, so a link cannot be replayed across tenants.
+	readonly orgId: string;
 	readonly fileId: string;
 	readonly version: number;
 	readonly expiresAtSeconds: number;
@@ -33,14 +36,16 @@ export interface PrivateGrant {
 
 const grantPayload = ({
 	contentOrigin,
+	orgId,
 	fileId,
 	version,
 	expiresAtSeconds,
 	purpose
 }: PrivateGrantScope) => {
 	const payload = [
-		'adrive-private-file-grant-v1',
+		'adrive-private-file-grant-v2',
 		contentOrigin,
+		orgId,
 		fileId,
 		String(version),
 		String(expiresAtSeconds)
@@ -78,7 +83,13 @@ const decodeBase64Url = (value: string) => {
 	return bytes;
 };
 
-const validScope = ({ fileId, version, expiresAtSeconds }: PrivateGrantScope) =>
+const validScope = ({
+	orgId,
+	fileId,
+	version,
+	expiresAtSeconds
+}: PrivateGrantScope) =>
+	orgId.length > 0 &&
 	fileId.length > 0 &&
 	Number.isSafeInteger(version) &&
 	version > 0 &&
@@ -88,6 +99,7 @@ const validScope = ({ fileId, version, expiresAtSeconds }: PrivateGrantScope) =>
 export const mintPrivateGrant = async ({
 	signingKey,
 	contentOrigin,
+	orgId,
 	fileId,
 	version,
 	purpose,
@@ -95,7 +107,14 @@ export const mintPrivateGrant = async ({
 }: MintPrivateGrantOptions) => {
 	const expiresAtSeconds =
 		Math.floor(now.getTime() / 1_000) + PRIVATE_GRANT_TTL_SECONDS;
-	const scope = { contentOrigin, fileId, version, expiresAtSeconds, purpose };
+	const scope = {
+		contentOrigin,
+		orgId,
+		fileId,
+		version,
+		expiresAtSeconds,
+		purpose
+	};
 	const key = await importSigningKey(signingKey);
 	const signature = base64Url(
 		await crypto.subtle.sign(

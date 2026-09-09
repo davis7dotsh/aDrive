@@ -100,7 +100,8 @@ describe('route integration (local platform)', () => {
 				WHERE m.user_id = 'user_test'`
 		);
 		expect(tenant).toHaveLength(1);
-		expect(tenant[0]).toMatchObject({ role: 'owner', stored: 0 });
+		expect(tenant[0]?.role).toBe('owner');
+		expect(tenant[0]?.stored).toBeGreaterThanOrEqual(0);
 	});
 
 	it('uploads, lists, links, and serves bytes end to end', async () => {

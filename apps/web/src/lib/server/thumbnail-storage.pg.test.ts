@@ -128,8 +128,9 @@ describe('dashboard thumbnail storage on postgres', () => {
 		});
 	});
 
-	it('charges only the growth when replacing missing derivative bytes', () => {
+	it('charges the growth and refunds the shrink when replacing a thumbnail', () => {
 		expect(thumbnailQuotaDelta(20, 24)).toBe(4);
-		expect(thumbnailQuotaDelta(20, 16)).toBe(0);
+		expect(thumbnailQuotaDelta(20, 16)).toBe(-4);
+		expect(thumbnailQuotaDelta(0, 16)).toBe(16);
 	});
 });

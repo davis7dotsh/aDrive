@@ -13,6 +13,7 @@ const mint = () =>
 	mintPrivateGrant({
 		signingKey,
 		contentOrigin,
+		orgId: 'org-1',
 		fileId: 'file-1',
 		version: 4,
 		now
@@ -25,6 +26,7 @@ describe('private file grants', () => {
 			verifyPrivateGrant({
 				signingKey,
 				contentOrigin,
+				orgId: 'org-1',
 				requestOrigin: contentOrigin,
 				fileId: 'file-1',
 				version: 4,
@@ -42,11 +44,12 @@ describe('private file grants', () => {
 		);
 	});
 
-	it('binds grants to the configured host, file, and resolved version', async () => {
+	it('binds grants to the configured host, org, file, and resolved version', async () => {
 		const grant = await mint();
 		const base = {
 			signingKey,
 			contentOrigin,
+			orgId: 'org-1',
 			requestOrigin: contentOrigin,
 			fileId: 'file-1',
 			version: 4,
@@ -64,6 +67,9 @@ describe('private file grants', () => {
 		await expect(
 			verifyPrivateGrant({ ...base, fileId: 'file-2' })
 		).resolves.toBe(false);
+		await expect(verifyPrivateGrant({ ...base, orgId: 'org-2' })).resolves.toBe(
+			false
+		);
 		await expect(verifyPrivateGrant({ ...base, version: 5 })).resolves.toBe(
 			false
 		);
@@ -73,6 +79,7 @@ describe('private file grants', () => {
 		const grant = await mintPrivateGrant({
 			signingKey,
 			contentOrigin,
+			orgId: 'org-1',
 			fileId: 'file-1',
 			version: 4,
 			purpose: 'thumbnail-source',
@@ -81,6 +88,7 @@ describe('private file grants', () => {
 		const base = {
 			signingKey,
 			contentOrigin,
+			orgId: 'org-1',
 			requestOrigin: contentOrigin,
 			fileId: 'file-1',
 			version: 4,
@@ -110,6 +118,7 @@ describe('private file grants', () => {
 		const base = {
 			signingKey,
 			contentOrigin,
+			orgId: 'org-1',
 			requestOrigin: contentOrigin,
 			fileId: 'file-1',
 			version: 4,
@@ -134,7 +143,7 @@ describe('private file grants', () => {
 		await expect(
 			verifyPrivateGrant({
 				...base,
-				signature: `${grant.signature.slice(0, -1)}x`,
+				signature: `${grant.signature[0] === 'A' ? 'B' : 'A'}${grant.signature.slice(1)}`,
 				now
 			})
 		).resolves.toBe(false);

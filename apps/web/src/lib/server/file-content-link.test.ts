@@ -49,6 +49,7 @@ describe('file content links', () => {
 		const grant = await mintPrivateGrant({
 			signingKey: 'kS0x8xqQZ2mcYYhBBLVBn1dnlTjluNkETdn3_1v4Gxw',
 			contentOrigin: config.contentOrigin,
+			orgId: 'org-1',
 			fileId: file(false).id,
 			version: 3,
 			now: new Date('2026-07-27T12:00:00.000Z')
@@ -73,6 +74,7 @@ describe('file content links', () => {
 		const grant = await mintPrivateGrant({
 			signingKey: 'kS0x8xqQZ2mcYYhBBLVBn1dnlTjluNkETdn3_1v4Gxw',
 			contentOrigin: config.contentOrigin,
+			orgId: 'org-1',
 			fileId: file(true).id,
 			version: 3,
 			now: new Date('2026-07-27T12:00:00.000Z')

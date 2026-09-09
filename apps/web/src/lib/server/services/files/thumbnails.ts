@@ -13,7 +13,7 @@ export const thumbnailOps = (
 	internals: FileInternals
 ): Pick<FilesShape, 'storeDashboardThumbnail'> => {
 	const { sql, blobs } = internals;
-	const { checkStorageQuota, compensateStoredBlob } = internals;
+	const { reserveBytes, compensateStoredBlob } = internals;
 	return {
 		storeDashboardThumbnail: Effect.fn('Files.storeDashboardThumbnail')(
 			function* (orgId, id, version, body, size, expectedR2Key) {
@@ -39,28 +39,42 @@ export const thumbnailOps = (
 					return { _tag: 'Existing', r2Key: state.thumbnail_r2_key } as const;
 				}
 
-				yield* checkStorageQuota(
-					thumbnailQuotaDelta(state.thumbnail_size_bytes, size)
-				);
 				const r2Key = `${dashboardThumbnailPrefix(id, version)}${crypto.randomUUID()}.webp`;
 				const stored = yield* blobs.put(r2Key, body, size, 'image/webp');
-				const commit = commitThumbnailStorage(
-					sql,
-					orgId,
-					id,
-					version,
-					r2Key,
-					stored.size,
-					expectedR2Key
-				).pipe(
-					Effect.mapError(
-						(cause) =>
-							new StorageError({
-								operation: 'record dashboard thumbnail',
-								cause
-							})
+				// The counter moves only for the writer that wins the
+				// compare-and-set, by the growth (or shrink) over the previous
+				// thumbnail, in the same transaction.
+				const commit = sql
+					.withTransaction(
+						Effect.gen(function* () {
+							const won = yield* commitThumbnailStorage(
+								sql,
+								orgId,
+								id,
+								version,
+								r2Key,
+								stored.size,
+								expectedR2Key
+							);
+							if (won) {
+								yield* reserveBytes(
+									orgId,
+									thumbnailQuotaDelta(state.thumbnail_size_bytes, stored.size)
+								);
+							}
+							return won;
+						})
 					)
-				);
+					.pipe(
+						Effect.catchTag('SqlError', (cause) =>
+							Effect.fail(
+								new StorageError({
+									operation: 'record dashboard thumbnail',
+									cause
+								})
+							)
+						)
+					);
 				const committed = yield* commit.pipe(
 					Effect.catch((failure) =>
 						compensateStoredBlob(
