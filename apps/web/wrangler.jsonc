@@ -81,8 +81,8 @@
 	//   6. `DATABASE_URL=postgres://... bun db:pg:migrate` (see docs/release.md)
 	"env": {
 		"production": {
-			// Place the Worker near D1 for dashboard/search queries. Content
-			// routes still check visibility in D1, then serve from R2 or the
+			// Place the Worker near the database for dashboard/search queries. Content
+			// routes still check visibility in Postgres, then serve from R2 or the
 			// Cache API.
 			"placement": { "mode": "smart" },
 			"routes": [
