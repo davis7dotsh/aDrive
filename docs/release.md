@@ -28,6 +28,14 @@ the repository root.
    loudly if the `AI` binding is missing. Embeddings run within the
    Workers Paid plan's included neuron allocation at personal scale.
 
+4b. From `apps/web`: create the job queue and its dead-letter queue (see
+"Queues" below):
+
+```
+wrangler queues create adrive-jobs-production
+wrangler queues create adrive-jobs-production-dlq
+```
+
 5. In the Cloudflare dashboard, open **Images → Transformations**, select
    the zone that owns `CONTENT_ORIGIN` (`davis7.space` for
    `files.davis7.space`), and enable transformations. Dashboard thumbnails
@@ -54,6 +62,27 @@ Semantic search notes for the first deploy:
 - Embeddings live in Postgres beside the file rows, so they are restored
   with the database. Files whose embeddings are missing after a partial
   restore regenerate on reindex.
+
+## Queues
+
+Background jobs (indexing, purges, site cleanup) travel over one Cloudflare
+Queue per environment. `wrangler.jsonc` binds it as `JOBS` and declares
+the Worker as its consumer; the queue itself is created once:
+
+```
+wrangler queues create adrive-jobs-production
+wrangler queues create adrive-jobs-production-dlq
+```
+
+- The consumer retries a failed message up to `max_retries` (5) times,
+  then moves it to `adrive-jobs-production-dlq`. Messages whose body does
+  not decode as a job are acked and logged, never retried.
+- Inspect the dead-letter queue with
+  `wrangler queues consumer` tooling or the dashboard; nothing drains it
+  automatically. Re-send a message from the DLQ only after fixing the
+  cause, since the same job will otherwise fail again.
+- Local development uses the `adrive-jobs` / `adrive-jobs-dlq` names and
+  needs no provisioning; `wrangler dev` simulates the queue.
 
 ## Releasing
 

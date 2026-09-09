@@ -378,3 +378,29 @@ export const ErrorResponseSchema = Schema.Struct({
 });
 
 export const API_KEY_PATTERN = /^adr_([A-Za-z0-9]{8})_([A-Za-z0-9_-]{24,})$/;
+
+// Background work carried over the Cloudflare Queue. Tenancy adds orgId
+// to every variant later; keep the union closed so the consumer's switch
+// stays exhaustive.
+export const JobSchema = Schema.Union([
+	Schema.Struct({
+		kind: Schema.Literal('index'),
+		fileId: Schema.String,
+		version: Schema.Int
+	}),
+	Schema.Struct({
+		kind: Schema.Literal('purge'),
+		fileId: Schema.String
+	}),
+	Schema.Struct({
+		kind: Schema.Literal('scan'),
+		fileId: Schema.String,
+		version: Schema.Int
+	}),
+	Schema.Struct({
+		kind: Schema.Literal('site-cleanup'),
+		sessionId: Schema.String
+	})
+]);
+
+export type Job = typeof JobSchema.Type;
