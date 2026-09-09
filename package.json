@@ -18,6 +18,8 @@
 		"check:forbidden": "bun scripts/check-forbidden.mjs",
 		"check:wrangler-drift": "bun scripts/check-wrangler-drift.mjs",
 		"db:migrate:local": "cd apps/web && bun x wrangler d1 migrations apply DB --local",
+		"db:pg:up": "docker compose up -d",
+		"db:pg:migrate:local": "bun apps/web/scripts/pg-migrate.mjs",
 		"format": "prettier --write .",
 		"format:check": "prettier --check .",
 		"key:create:local": "bun scripts/create-local-key.mjs",

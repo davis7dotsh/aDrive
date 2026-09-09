@@ -1,0 +1,16 @@
+# Local Postgres for development and route tests. Matches the pgvector
+# extension set used by PlanetScale Postgres in production.
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    ports:
+      - '127.0.0.1:5432:5432'
+    environment:
+      POSTGRES_USER: adrive
+      POSTGRES_PASSWORD: adrive
+      POSTGRES_DB: adrive
+    volumes:
+      - adrive-postgres:/var/lib/postgresql/data
+      - ./scripts/pg-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+volumes:
+  adrive-postgres:
