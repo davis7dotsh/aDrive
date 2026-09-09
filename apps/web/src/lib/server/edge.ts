@@ -20,6 +20,7 @@ import { requestLayer } from './layer';
 import { PgSql } from './pg';
 import type { AppConfig } from './config';
 import type { Auth } from './services/auth';
+import type { AutumnClient } from './services/autumn';
 import type { AuthGuardStore } from './services/bindings';
 import type { Blobs } from './services/blobs';
 import type { CurrentOrg, CurrentUser } from './services/current-org';
@@ -64,7 +65,8 @@ export type AppServices =
 	| GrantSecrets
 	| JobQueue
 	| Org
-	| WorkOSClient;
+	| WorkOSClient
+	| AutumnClient;
 
 export const isAppError = (failure: unknown): failure is AppError =>
 	failure instanceof InvalidRequest ||

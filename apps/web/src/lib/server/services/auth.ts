@@ -18,6 +18,7 @@ import type { AuthContext, ResolvedCredential } from '../identity';
 import { PgSql } from '../pg';
 import { ensureTenant, personalOrgFor } from '../tenants';
 import { promoteVerified } from '../trust';
+import { AutumnClient } from './autumn';
 import { CurrentOrg, CurrentUser } from './current-org';
 import { WorkOSClient } from './workos';
 
@@ -233,6 +234,7 @@ const suspendedOrg = () =>
 const makeAuth = Effect.gen(function* () {
 	const sql = yield* PgSql;
 	const workos = yield* WorkOSClient;
+	const autumn = yield* AutumnClient;
 	const org = yield* CurrentOrg;
 	const user = yield* CurrentUser;
 
@@ -476,6 +478,28 @@ const makeAuth = Effect.gen(function* () {
 						Effect.fail(
 							new StorageError({ operation: 'complete sign-in', cause })
 						)
+					)
+				);
+			// The Autumn customer is the org; the free plan auto-attaches.
+			// A failure here is logged, not fatal: getOrCreate is retried
+			// on a later sign-in after the local transaction has committed.
+			yield* autumn
+				.ensureCustomer({
+					customerId: orgId,
+					name: personalOrgFor(exchanged.user.email).name,
+					email: exchanged.user.email
+				})
+				.pipe(
+					Effect.catchCause((cause) =>
+						Effect.sync(() => {
+							console.error(
+								JSON.stringify({
+									message: 'Autumn customer could not be created',
+									orgId,
+									cause: String(cause)
+								})
+							);
+						})
 					)
 				);
 			// Pin the org on the session so every later request carries it.

@@ -5,6 +5,7 @@
 	"type": "module",
 	"scripts": {
 		"check": "svelte-kit sync && bun run check:types && bun run check:effect && bun run check:svelte",
+		"billing:push": "atmn push",
 		"check:types": "rm -rf .svelte-kit/output .svelte-kit/cloudflare .svelte-kit/cloudflare-tmp && tsc --noEmit",
 		"check:effect": "effect-tsgo diagnostics --project tsconfig.json --format pretty",
 		"check:svelte": "svelte-check --tsconfig ./tsconfig.json --tsgo",
@@ -19,6 +20,7 @@
 		"@effect/sql-pg": "4.0.0-beta.102",
 		"@modelcontextprotocol/server": "2.0.0",
 		"agents": "^0.20.1",
+		"autumn-js": "1.3.0",
 		"effect": "4.0.0-beta.102",
 		"markdown-it": "^14.3.0",
 		"mime": "^4.1.0",
@@ -39,6 +41,7 @@
 		"@types/pg": "^8.23.1",
 		"@typescript/native": "npm:typescript@^7.0.2",
 		"@workos-inc/node": "10.13.0",
+		"atmn": "1.1.24",
 		"concurrently": "^10.0.4",
 		"svelte": "5.56.8",
 		"svelte-check": "4.7.4",
