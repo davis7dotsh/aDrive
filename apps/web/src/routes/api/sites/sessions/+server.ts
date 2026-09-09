@@ -5,9 +5,9 @@ import {
 import type { RequestHandler } from './$types';
 import { Effect, Schema } from 'effect';
 import { runEdge } from '$lib/server/edge';
+import { requireWrite } from '$lib/server/request-auth';
 import { InvalidRequest } from '$lib/server/errors';
 import { readBoundedJson } from '$lib/server/request-json';
-import { Auth, authorizeWriteRequest } from '$lib/server/services/auth';
 import { Sites } from '$lib/server/services/sites';
 
 const MAX_MANIFEST_BYTES = 1024 * 1024;
@@ -32,13 +32,14 @@ const readManifest = (request: Request) =>
 		);
 	});
 
-export const POST: RequestHandler = ({ cookies, request, url }) =>
-	runEdge(
+export const POST: RequestHandler = (event) => {
+	const { request } = event;
+	return runEdge(
 		Effect.gen(function* () {
-			const auth = yield* Auth;
 			const sites = yield* Sites;
-			yield* authorizeWriteRequest(auth, request, url, cookies);
+			yield* requireWrite(event);
 			const input: SiteSessionCreate = yield* readManifest(request);
 			return Response.json(yield* sites.createSession(input), { status: 201 });
 		})
 	);
+};

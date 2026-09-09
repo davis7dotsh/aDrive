@@ -1,32 +1,21 @@
-import { Effect } from 'effect';
-import { bearerToken } from '../auth-policy';
-import { Unauthorized } from '../errors';
-import type { AuthShape } from '../services/auth';
+import type { RequestEvent } from '@sveltejs/kit';
+import type { AuthContext } from '../identity';
+import type { McpRunResult } from './run';
 
-export const authorizeMcp = (auth: AuthShape, request: Request, url: URL) => {
-	const token = bearerToken(request.headers.get('authorization'));
-	if (!token) {
-		return Effect.fail(
-			new Unauthorized({ message: 'A valid API key is required' })
-		);
+// MCP accepts API keys only: the handle hook already resolved the bearer
+// into locals.auth, so this just refuses sessions and missing credentials.
+export const authorizeMcp = (
+	event: Pick<RequestEvent, 'locals'>
+): McpRunResult<AuthContext> => {
+	const auth = event.locals.auth;
+	if (!auth || auth.via !== 'api-key') {
+		return {
+			ok: false,
+			message: 'A valid API key is required',
+			status: 401
+		};
 	}
-	return auth
-		.authorize({
-			authorization: `Bearer ${token}`,
-			sessionToken: undefined,
-			requestOrigin: url.origin,
-			origin: request.headers.get('origin'),
-			method: request.method
-		})
-		.pipe(
-			Effect.flatMap((credential) =>
-				credential.kind === 'api-key'
-					? Effect.succeed(credential)
-					: Effect.fail(
-							new Unauthorized({ message: 'A valid API key is required' })
-						)
-			)
-		);
+	return { ok: true, value: auth };
 };
 
 export const mcpUnauthorizedResponse = (

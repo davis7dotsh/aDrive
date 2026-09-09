@@ -1,14 +1,12 @@
 import { createMcpHandler } from 'agents/mcp/server';
 import { McpServer } from '@modelcontextprotocol/server';
 import type { RequestEvent } from '@sveltejs/kit';
-import { Effect } from 'effect';
-import { Auth } from '../services/auth';
 import {
 	authorizeMcp,
 	mcpAuthFailureResponse,
 	mcpUnauthorizedResponse
 } from './auth';
-import { runMcp } from './run';
+
 import { createAdriveMcpServer } from './server';
 
 export const mcpAllowedHostnames = (dashboardOrigin: string) => {
@@ -37,13 +35,7 @@ export const handleMcpRequest = async (event: RequestEvent) => {
 		)(event.request, env, ctx);
 	}
 
-	const authorized = await runMcp(
-		env,
-		Effect.gen(function* () {
-			const auth = yield* Auth;
-			return yield* authorizeMcp(auth, event.request, event.url);
-		})
-	);
+	const authorized = authorizeMcp(event);
 	if (!authorized.ok) {
 		return authorized.status === 401
 			? mcpUnauthorizedResponse(authorized.message)

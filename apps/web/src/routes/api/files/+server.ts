@@ -1,16 +1,12 @@
 import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
 import { runEdge, runEdgeWithEvent, runWorkerProgram } from '$lib/server/edge';
+import { requireAuth, requireWrite } from '$lib/server/request-auth';
 import { AppConfig } from '$lib/server/config';
 import { validateExpiration } from '$lib/server/auth-policy';
 import { authRateLimitResponse } from '$lib/server/auth-rate-limit-response';
 import { InvalidRequest } from '$lib/server/errors';
 import { parsePageSize } from '$lib/server/list-cursor';
-import {
-	Auth,
-	authorizeRequest,
-	authorizeWriteRequest
-} from '$lib/server/services/auth';
 import { AuthGuard } from '$lib/server/services/auth-guard';
 import { Files } from '$lib/server/services/files';
 import { Indexing } from '$lib/server/services/indexing';
@@ -67,15 +63,15 @@ const parseTags = (value: string | null) => {
 	}
 };
 
-export const GET: RequestHandler = ({ cookies, request, url }) =>
-	runEdge(
+export const GET: RequestHandler = (event) => {
+	const { request, url } = event;
+	return runEdge(
 		Effect.gen(function* () {
-			const auth = yield* Auth;
 			const files = yield* Files;
 			const tags = yield* Tags;
 			const indexing = yield* Indexing;
 			const config = yield* AppConfig;
-			yield* authorizeRequest(auth, request, url, cookies);
+			yield* requireAuth(event);
 			const trashed = url.searchParams.get('trashed') === 'true';
 			const page = {
 				cursor: url.searchParams.get('cursor'),
@@ -117,22 +113,17 @@ export const GET: RequestHandler = ({ cookies, request, url }) =>
 			});
 		})
 	);
+};
 
 export const PUT: RequestHandler = async (event) => {
-	const { cookies, request, url } = event;
+	const { request, url } = event;
 	const output = await runEdgeWithEvent(
 		event,
 		Effect.gen(function* () {
-			const auth = yield* Auth;
 			const authGuard = yield* AuthGuard;
 			const files = yield* Files;
 			const config = yield* AppConfig;
-			const credential = yield* authorizeWriteRequest(
-				auth,
-				request,
-				url,
-				cookies
-			);
+			const credential = yield* requireWrite(event);
 			const rateLimit = yield* authGuard.consume(
 				'upload',
 				credential.credentialId
@@ -216,7 +207,8 @@ export const PUT: RequestHandler = async (event) => {
 				Effect.gen(function* () {
 					const indexing = yield* Indexing;
 					yield* indexing.process(uploadedFileId);
-				})
+				}),
+				event.locals.auth
 			)
 		);
 	}
@@ -224,13 +216,12 @@ export const PUT: RequestHandler = async (event) => {
 };
 
 export const DELETE: RequestHandler = async (event) => {
-	const { cookies, request, url } = event;
+	const { request, url } = event;
 	const output = await runEdgeWithEvent(
 		event,
 		Effect.gen(function* () {
-			const auth = yield* Auth;
 			const files = yield* Files;
-			yield* authorizeWriteRequest(auth, request, url, cookies);
+			yield* requireWrite(event);
 			if (url.searchParams.get('trashed') !== 'true') {
 				return yield* new InvalidRequest({
 					status: 400,
@@ -250,7 +241,8 @@ export const DELETE: RequestHandler = async (event) => {
 				Effect.gen(function* () {
 					const files = yield* Files;
 					yield* files.sweepPurges(10);
-				})
+				}),
+				event.locals.auth
 			)
 		);
 	}

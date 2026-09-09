@@ -2,8 +2,8 @@ import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
 import { InvalidRequest } from '$lib/server/errors';
 import { runEdge } from '$lib/server/edge';
+import { requireAuth } from '$lib/server/request-auth';
 import { maxPreviewBytes, previewKind } from '$lib/server/file-preview';
-import { Auth, authorizeRequest } from '$lib/server/services/auth';
 import { Blobs } from '$lib/server/services/blobs';
 import { Files } from '$lib/server/services/files';
 
@@ -20,13 +20,13 @@ const requestedVersion = (url: URL) => {
 	return version;
 };
 
-export const GET: RequestHandler = ({ cookies, params, request, url }) =>
-	runEdge(
+export const GET: RequestHandler = (event) => {
+	const { params, request, url } = event;
+	return runEdge(
 		Effect.gen(function* () {
-			const auth = yield* Auth;
 			const blobs = yield* Blobs;
 			const files = yield* Files;
-			yield* authorizeRequest(auth, request, url, cookies);
+			yield* requireAuth(event);
 			const version = yield* Effect.try({
 				try: () => requestedVersion(url),
 				catch: (cause) =>
@@ -66,3 +66,4 @@ export const GET: RequestHandler = ({ cookies, params, request, url }) =>
 			});
 		})
 	);
+};

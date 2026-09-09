@@ -1,14 +1,10 @@
 import { API_KEY_PATTERN, type ApiKey, type ApiKeyScope } from '@adrive/shared';
-import type { Cookies } from '@sveltejs/kit';
 import { Context, Effect, Layer, Schema } from 'effect';
 import {
 	DEVICE_CODE_TTL_SECONDS,
 	DEVICE_POLL_INTERVAL_SECONDS,
-	allowsCredentialOrigin,
-	bearerToken,
 	normalizeApiKeyName,
 	normalizeUserCode,
-	SESSION_COOKIE,
 	SESSION_MAX_AGE_SECONDS,
 	shouldTouchLastUsed,
 	validateExpiration
@@ -16,11 +12,11 @@ import {
 import { AppConfig } from '../config';
 import {
 	InvalidRequest,
-	MisdirectedRequest,
 	StorageError,
 	Unauthorized,
 	validate
 } from '../errors';
+import type { AuthContext } from '../identity';
 import { PgSql } from '../pg';
 import { BOOTSTRAP_TENANT, ensureTenant } from '../tenants';
 import { CurrentOrg, CurrentUser } from './current-org';
@@ -35,6 +31,17 @@ const ApiKeyRow = Schema.Struct({
 	expires_at: Schema.NullOr(Schema.String),
 	last_used_at: Schema.NullOr(Schema.String),
 	revoked_at: Schema.NullOr(Schema.String)
+});
+
+const ApiKeyCredentialRow = Schema.Struct({
+	id: Schema.String,
+	scope: Schema.Literals(['read-only', 'read-write']),
+	secret_hash: Schema.String,
+	expires_at: Schema.NullOr(Schema.String),
+	last_used_at: Schema.NullOr(Schema.String),
+	org_id: Schema.String,
+	user_id: Schema.String,
+	role: Schema.NullOr(Schema.String)
 });
 
 const SessionRow = Schema.Struct({
@@ -53,14 +60,6 @@ const DeviceCodeRow = Schema.Struct({
 	name: Schema.String
 });
 
-export interface AuthorizeInput {
-	readonly authorization: string | null;
-	readonly sessionToken: string | undefined;
-	readonly requestOrigin: string;
-	readonly origin: string | null;
-	readonly method: string;
-}
-
 export interface DeviceAuthorization {
 	readonly deviceCode: string;
 	readonly userCode: string;
@@ -72,19 +71,16 @@ export type DevicePollResult =
 	| { readonly status: 'authorization_pending' | 'slow_down' }
 	| { readonly status: 'complete'; readonly apiKey: string };
 
-export interface AuthorizedCredential {
-	readonly credentialId: string;
-	readonly kind: 'api-key' | 'session';
-	readonly scope: ApiKeyScope;
-}
-
 export interface AuthShape {
-	readonly authorize: (
-		input: AuthorizeInput
-	) => Effect.Effect<
-		AuthorizedCredential,
-		MisdirectedRequest | Unauthorized | StorageError
-	>;
+	// Both resolvers turn a presented credential into the identity the
+	// request acts as, or Unauthorized when it is unknown, expired, or
+	// revoked. The handle hook calls them once per request.
+	readonly resolveApiKey: (
+		bearer: string
+	) => Effect.Effect<AuthContext, Unauthorized | StorageError>;
+	readonly resolveSession: (
+		sessionToken: string
+	) => Effect.Effect<AuthContext, Unauthorized | StorageError>;
 	readonly createSession: (
 		passcode: string
 	) => Effect.Effect<string, Unauthorized | StorageError>;
@@ -145,41 +141,6 @@ const parseUserCode = (value: string) =>
 						message: 'Device approval code is invalid'
 					})
 	});
-
-export const authorizeRequest = (
-	auth: AuthShape,
-	request: Request,
-	url: URL,
-	cookies: Cookies
-) =>
-	auth.authorize({
-		authorization: request.headers.get('authorization'),
-		sessionToken: cookies.get(SESSION_COOKIE),
-		requestOrigin: url.origin,
-		origin: request.headers.get('origin'),
-		method: request.method
-	});
-
-// For routes that create, change, or delete data. Read-only API keys are
-// authenticated but rejected here with a 403 rather than a 401.
-export const authorizeWriteRequest = (
-	auth: AuthShape,
-	request: Request,
-	url: URL,
-	cookies: Cookies
-) =>
-	authorizeRequest(auth, request, url, cookies).pipe(
-		Effect.flatMap((credential) =>
-			credential.scope === 'read-write'
-				? Effect.succeed(credential)
-				: Effect.fail(
-						new InvalidRequest({
-							status: 403,
-							message: 'This API key is read-only'
-						})
-					)
-		)
-	);
 
 const randomToken = (bytes = 32) => {
 	const value = new Uint8Array(bytes);
@@ -292,84 +253,72 @@ const makeAuth = Effect.gen(function* () {
 	);
 
 	return Auth.of({
-		authorize: Effect.fn('Auth.authorize')(function* ({
-			authorization,
-			sessionToken,
-			requestOrigin,
-			origin,
-			method
-		}) {
-			if (requestOrigin !== config.dashboardOrigin) {
-				return yield* new MisdirectedRequest({
-					message: 'Credentials are accepted only on the dashboard origin'
-				});
-			}
-
-			const bearer = bearerToken(authorization);
-			if (bearer) {
-				const match = API_KEY_PATTERN.exec(bearer);
-				if (!match) {
-					return yield* new Unauthorized({
-						message: 'A valid credential is required'
-					});
-				}
-				const rows = yield* sql`
-					SELECT id, name, prefix, scope, secret_hash, created_at, expires_at,
-						last_used_at, revoked_at
-					FROM api_keys
-					WHERE prefix = ${match[1]} AND revoked_at IS NULL
-					LIMIT 1
-				`.pipe(
-					Effect.mapError(
-						(cause) => new StorageError({ operation: 'look up API key', cause })
-					)
-				);
-				const row = decodeRows(ApiKeyRow, rows)[0];
-				const actualHash = yield* hashToken(bearer);
-				if (
-					!row ||
-					!constantTimeEqual(hexBytes(actualHash), hexBytes(row.secret_hash))
-				) {
-					return yield* new Unauthorized({
-						message: 'A valid credential is required'
-					});
-				}
-				const now = new Date();
-				const nowIso = now.toISOString();
-				if (row.expires_at !== null && row.expires_at <= nowIso) {
-					return yield* new Unauthorized({
-						message: 'This API key has expired'
-					});
-				}
-				if (shouldTouchLastUsed(row.last_used_at, now)) {
-					yield* sql`
-						UPDATE api_keys
-						SET last_used_at = ${nowIso}
-						WHERE id = ${row.id}
-					`.pipe(
-						Effect.mapError(
-							(cause) =>
-								new StorageError({ operation: 'update API key usage', cause })
-						)
-					);
-				}
-				return {
-					credentialId: row.id,
-					kind: 'api-key' as const,
-					scope: row.scope
-				};
-			}
-
-			if (!sessionToken) {
+		// The prefix lookup is global (prefixes are unique across orgs); the
+		// org and user the key acts as come from the key row itself.
+		resolveApiKey: Effect.fn('Auth.resolveApiKey')(function* (bearer) {
+			const match = API_KEY_PATTERN.exec(bearer);
+			if (!match) {
 				return yield* new Unauthorized({
 					message: 'A valid credential is required'
 				});
 			}
-			if (!allowsCredentialOrigin(method, origin, config.dashboardOrigin)) {
+			const rows = yield* sql`
+				SELECT k.id, k.scope, k.secret_hash, k.expires_at, k.last_used_at,
+					k.org_id, k.user_id, m.role
+				FROM api_keys k
+				LEFT JOIN memberships m ON m.org_id = k.org_id AND m.user_id = k.user_id
+				WHERE k.prefix = ${match[1]} AND k.revoked_at IS NULL
+				LIMIT 1
+			`.pipe(
+				Effect.mapError(
+					(cause) => new StorageError({ operation: 'look up API key', cause })
+				)
+			);
+			const row = decodeRows(ApiKeyCredentialRow, rows)[0];
+			const actualHash = yield* hashToken(bearer);
+			if (
+				!row ||
+				!constantTimeEqual(hexBytes(actualHash), hexBytes(row.secret_hash))
+			) {
 				return yield* new Unauthorized({
-					message: 'The request origin is not allowed'
+					message: 'A valid credential is required'
 				});
 			}
+			const now = new Date();
+			const nowIso = now.toISOString();
+			if (row.expires_at !== null && row.expires_at <= nowIso) {
+				return yield* new Unauthorized({
+					message: 'This API key has expired'
+				});
+			}
+			// A key whose owner left the org stops working with it.
+			if (row.role === null) {
+				return yield* new Unauthorized({
+					message: 'This API key no longer belongs to an organization member'
+				});
+			}
+			if (shouldTouchLastUsed(row.last_used_at, now)) {
+				yield* sql`
+					UPDATE api_keys
+					SET last_used_at = ${nowIso}
+					WHERE id = ${row.id}
+				`.pipe(
+					Effect.mapError(
+						(cause) =>
+							new StorageError({ operation: 'update API key usage', cause })
+					)
+				);
+			}
+			return {
+				orgId: row.org_id,
+				userId: row.user_id,
+				role: row.role,
+				via: 'api-key' as const,
+				scope: row.scope,
+				credentialId: row.id
+			};
+		}),
+		resolveSession: Effect.fn('Auth.resolveSession')(function* (sessionToken) {
 			const tokenHash = yield* hashToken(sessionToken);
 			const now = new Date();
 			const nowIso = now.toISOString();
@@ -405,9 +354,12 @@ const makeAuth = Effect.gen(function* () {
 				);
 			}
 			return {
-				credentialId: row.token_hash,
-				kind: 'session' as const,
-				scope: 'read-write' as const
+				orgId: BOOTSTRAP_TENANT.orgId,
+				userId: BOOTSTRAP_TENANT.userId,
+				role: 'owner',
+				via: 'session' as const,
+				scope: 'read-write' as const,
+				credentialId: row.token_hash
 			};
 		}),
 		createSession: Effect.fn('Auth.createSession')(function* (passcode) {

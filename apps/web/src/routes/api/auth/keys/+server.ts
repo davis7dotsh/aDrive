@@ -2,26 +2,30 @@ import { ApiKeyCreateSchema } from '@adrive/shared';
 import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
 import { runEdge } from '$lib/server/edge';
+import { requireWrite } from '$lib/server/request-auth';
 import { decodeJson } from '$lib/server/request-json';
-import { Auth, authorizeWriteRequest } from '$lib/server/services/auth';
+import { Auth } from '$lib/server/services/auth';
 
 // Key inventory is credential-adjacent: a leaked read-only key should not
 // be able to enumerate the other credentials, so listing requires write
 // scope just like creation and revocation.
-export const GET: RequestHandler = ({ cookies, request, url }) =>
-	runEdge(
+export const GET: RequestHandler = (event) => {
+	const { request } = event;
+	return runEdge(
 		Effect.gen(function* () {
 			const auth = yield* Auth;
-			yield* authorizeWriteRequest(auth, request, url, cookies);
+			yield* requireWrite(event);
 			return Response.json({ keys: yield* auth.listApiKeys });
 		})
 	);
+};
 
-export const POST: RequestHandler = ({ cookies, request, url }) =>
-	runEdge(
+export const POST: RequestHandler = (event) => {
+	const { request } = event;
+	return runEdge(
 		Effect.gen(function* () {
 			const auth = yield* Auth;
-			yield* authorizeWriteRequest(auth, request, url, cookies);
+			yield* requireWrite(event);
 			const input = yield* decodeJson(
 				request,
 				ApiKeyCreateSchema,
@@ -38,3 +42,4 @@ export const POST: RequestHandler = ({ cookies, request, url }) =>
 			);
 		})
 	);
+};
