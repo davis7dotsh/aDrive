@@ -6,6 +6,10 @@ describe('Cloudflare Worker facade', () => {
 		const source = facadeSource('_sveltekit.js');
 		expect(source).toContain('return sveltekit.fetch(request, env, ctx)');
 		expect(source).toContain('scheduled(controller, env, ctx)');
+		expect(source).toContain('async queue(batch, env, ctx)');
+		expect(source).toContain('/api/internal/jobs');
+		expect(source).toContain('message.ack()');
+		expect(source).toContain('message.retry()');
 		expect(source).toContain("name: 'HMAC', hash: 'SHA-256'");
 		expect(source).toContain('ctx.waitUntil(');
 		expect(source).not.toContain('const { waitUntil } = ctx');
