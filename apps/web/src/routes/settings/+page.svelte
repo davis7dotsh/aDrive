@@ -140,6 +140,12 @@
 					{/if}
 				</div>
 			{/if}
+			<a
+				href="/settings/billing"
+				class="mt-5 inline-block text-sm font-medium text-zinc-900 hover:underline"
+			>
+				Plan and usage
+			</a>
 		</section>
 
 		<div class="mt-10 border-t border-zinc-200 pt-8">
