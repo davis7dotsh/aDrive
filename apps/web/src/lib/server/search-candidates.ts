@@ -1,64 +1,75 @@
-export type SearchIndex = 'files_fts' | 'files_trgm';
+import type { PgClient } from '@effect/sql-pg';
 
 // Candidate pool for one ranking pass. Search pages 50 at a time out of
 // this list; keep it large enough for a few pages without scanning the
 // whole index.
 export const SEARCH_CANDIDATE_LIMIT = 200;
 
-export interface SearchCommand {
-	readonly sql: string;
-	readonly bindings: ReadonlyArray<string>;
+// word_similarity scores how well the query matches any substring of the
+// name, so a typo ("reprot") still finds "Quarterly report.pdf". Kept in
+// code rather than pg_trgm's session threshold so the cutoff is explicit.
+export const TRIGRAM_THRESHOLD = 0.3;
+
+export interface RankedRow {
+	readonly file_id: string;
+	readonly score: number;
 }
 
-const selectedTagFilter = (fileAlias: string, tagIds: ReadonlyArray<string>) =>
+export interface CandidateFilter {
+	readonly now: string;
+	readonly tagIds: ReadonlyArray<string>;
+}
+
+export const selectedTagFilter = (
+	sql: PgClient.PgClient,
+	tagIds: ReadonlyArray<string>
+) =>
 	tagIds.length === 0
-		? ''
-		: `AND EXISTS (
+		? sql``
+		: sql`AND EXISTS (
 			SELECT 1 FROM file_tags selected
-			WHERE selected.file_id = ${fileAlias}.id
-				AND selected.tag_id IN (${tagIds.map(() => '?').join(', ')})
+			WHERE selected.file_id = f.id
+				AND selected.tag_id = ANY(${tagIds}::text[])
 		)`;
 
-export const rankedSearchCommand = (
-	index: SearchIndex,
-	match: string,
-	now: string,
-	tagIds: ReadonlyArray<string>
-): SearchCommand => {
-	const score =
-		index === 'files_fts'
-			? 'bm25(files_fts, 10.0, 5.0, 1.0)'
-			: 'bm25(files_trgm)';
-	return {
-		sql: `SELECT ${index}.file_id, ${score} AS score
-			FROM ${index}
-			JOIN files f ON f.id = ${index}.file_id
-			WHERE ${index} MATCH ?
-				AND f.deleted_at IS NULL
-				AND (f.expires_at IS NULL OR f.expires_at > ?)
-				${selectedTagFilter('f', tagIds)}
-			ORDER BY score ASC, ${index}.file_id
-			LIMIT ${SEARCH_CANDIDATE_LIMIT}`,
-		bindings: [match, now, ...tagIds]
-	};
-};
+const visibleFile = (sql: PgClient.PgClient, filter: CandidateFilter) =>
+	sql`f.deleted_at IS NULL
+		AND (f.expires_at IS NULL OR f.expires_at > ${filter.now})
+		${selectedTagFilter(sql, filter.tagIds)}`;
 
-export const eligibleSemanticCommand = (
-	fileIds: ReadonlyArray<string>,
-	now: string,
-	tagIds: ReadonlyArray<string>
-): SearchCommand => ({
-	sql: `WITH requested AS (
-			SELECT CAST(key AS INTEGER) AS ordinal, CAST(value AS TEXT) AS file_id
-			FROM json_each(?)
-		)
-		SELECT requested.file_id, requested.ordinal
-		FROM requested
-		JOIN files f ON f.id = requested.file_id
-		WHERE f.deleted_at IS NULL
-			AND (f.expires_at IS NULL OR f.expires_at > ?)
-			${selectedTagFilter('f', tagIds)}
-		ORDER BY requested.ordinal
-		LIMIT ${SEARCH_CANDIDATE_LIMIT}`,
-	bindings: [JSON.stringify(fileIds), now, ...tagIds]
-});
+// Names and tags are indexed with the `simple` dictionary and bodies with
+// `english`, so the query is parsed both ways and OR-ed: "Quarterly" must
+// match the name token `quarterly` and the body stem `quarter`.
+export const fullTextCandidates = (
+	sql: PgClient.PgClient,
+	query: string,
+	filter: CandidateFilter
+) =>
+	sql<RankedRow>`
+		SELECT d.file_id, MAX(ts_rank_cd('{0.1, 0.2, 0.4, 1.0}', d.tsv, q.query)) AS score
+		FROM search_documents d
+		JOIN files f ON f.id = d.file_id
+		CROSS JOIN (
+			SELECT websearch_to_tsquery('simple', ${query})
+				|| websearch_to_tsquery('english', ${query}) AS query
+		) q
+		WHERE d.tsv @@ q.query
+			AND ${visibleFile(sql, filter)}
+		GROUP BY d.file_id
+		ORDER BY score DESC, d.file_id
+		LIMIT ${SEARCH_CANDIDATE_LIMIT}`;
+
+export const trigramCandidates = (
+	sql: PgClient.PgClient,
+	query: string,
+	filter: CandidateFilter
+) =>
+	sql<RankedRow>`
+		SELECT d.file_id, word_similarity(${query}, d.name) AS score
+		FROM search_documents d
+		JOIN files f ON f.id = d.file_id
+		WHERE d.chunk_no = 0
+			AND word_similarity(${query}, d.name) > ${TRIGRAM_THRESHOLD}::real
+			AND ${visibleFile(sql, filter)}
+		ORDER BY score DESC, d.file_id
+		LIMIT ${SEARCH_CANDIDATE_LIMIT}`;

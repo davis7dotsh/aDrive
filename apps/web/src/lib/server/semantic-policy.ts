@@ -50,36 +50,6 @@ export const newIndexLeaseToken = () => {
 		.replaceAll('=', '');
 };
 
-export const vectorIdForChunk = (
-	fileId: string,
-	leaseToken: string,
-	ordinal: number
-) => `${fileId}:${leaseToken}:${ordinal.toString(36)}`;
-
-export const fileIdFromVectorId = (vectorId: string) => {
-	const last = vectorId.lastIndexOf(':');
-	if (last < 0) return null;
-	const version = vectorId.lastIndexOf(':', last - 1);
-	return version < 0 ? null : vectorId.slice(0, version);
-};
-
-export const collapseVectorMatches = (
-	matches: ReadonlyArray<{ readonly id: string; readonly score: number }>
-) => {
-	const best = new Map<string, number>();
-	for (const match of matches) {
-		const fileId = fileIdFromVectorId(match.id);
-		if (!fileId) continue;
-		best.set(fileId, Math.max(best.get(fileId) ?? -Infinity, match.score));
-	}
-	return [...best.entries()]
-		.sort(
-			([leftId, leftScore], [rightId, rightScore]) =>
-				rightScore - leftScore || leftId.localeCompare(rightId)
-		)
-		.map(([fileId]) => ({ fileId }));
-};
-
 export const retryAt = (attempt: number, now = new Date()) =>
 	new Date(
 		now.getTime() + Math.min(60 * 2 ** Math.max(0, attempt - 1), 3_600) * 1_000

@@ -1,5 +1,6 @@
 import type { DashboardFile } from '@adrive/shared';
 import { Context, Effect, Layer } from 'effect';
+import type { SqlError } from 'effect/unstable/sql/SqlError';
 import { InvalidRequest, StorageError } from '../errors';
 import {
 	dashboardFileColumns,
@@ -7,26 +8,21 @@ import {
 	toDashboardFile
 } from '../file-rows';
 import {
+	hasSearchableQuery,
 	pinExactName,
 	reciprocalRankFusion,
-	sanitizeMatchQuery,
-	sanitizeTrigramQuery,
-	shouldEmbedSearchQuery
+	shouldEmbedSearchQuery,
+	shouldFuzzyMatchQuery
 } from '../search-ranking';
 import {
-	eligibleSemanticCommand,
-	rankedSearchCommand,
+	fullTextCandidates,
 	SEARCH_CANDIDATE_LIMIT,
-	type SearchCommand
+	selectedTagFilter,
+	trigramCandidates,
+	type RankedRow
 } from '../search-candidates';
 import { PgSql } from '../pg';
-import { Db } from './bindings';
 import { Embedder, VectorIndex } from './semantic';
-
-interface RankedRow {
-	readonly file_id: string;
-	readonly score: number;
-}
 
 export interface SearchInput {
 	readonly query: string;
@@ -63,61 +59,20 @@ const decodeCursor = (cursor: string | null | undefined) => {
 		: null;
 };
 
+const noCandidates = Effect.succeed<ReadonlyArray<RankedRow>>([]);
+
 const makeSearch = Effect.gen(function* () {
-	const db = yield* Db;
-	// Files rows live in Postgres now; the FTS and trigram indexes still
-	// live in D1 until the keyword search rewrite moves them over.
 	const sql = yield* PgSql;
 	const embedder = yield* Embedder;
 	const vectorIndex = yield* VectorIndex;
-	const selectedTagFilter = (tagIds: ReadonlyArray<string>) =>
-		tagIds.length === 0
-			? sql``
-			: sql`AND EXISTS (
-				SELECT 1 FROM file_tags selected
-				WHERE selected.file_id = f.id
-					AND ${sql.in('selected.tag_id', tagIds)}
-			)`;
 
-	const runRanked = (
-		command: SearchCommand
-	): Effect.Effect<ReadonlyArray<RankedRow>, StorageError> =>
-		Effect.tryPromise({
-			try: async () => {
-				const result = await db
-					.prepare(command.sql)
-					.bind(...command.bindings)
-					.all<RankedRow>();
-				if (!result.success) throw new Error(result.error ?? 'Search failed');
-				return result.results;
-			},
-			catch: (cause) => new StorageError({ operation: 'search index', cause })
-		});
-
-	const filterSemantic = Effect.fn('Search.filterSemantic')(function* (
-		fileIds: ReadonlyArray<string>,
-		tagIds: ReadonlyArray<string>,
-		now: string
-	) {
-		if (fileIds.length === 0) return [];
-		const command = eligibleSemanticCommand(fileIds, now, tagIds);
-		return yield* Effect.tryPromise({
-			try: async () => {
-				const result = await db
-					.prepare(command.sql)
-					.bind(...command.bindings)
-					.all<{ file_id: string; ordinal: number }>();
-				if (!result.success)
-					throw new Error(result.error ?? 'Semantic filtering failed');
-				return result.results.map((row) => ({ fileId: row.file_id }));
-			},
-			catch: (cause) =>
-				new StorageError({
-					operation: 'filter semantic search candidates',
-					cause
-				})
-		});
-	});
+	const ranked = (
+		operation: string,
+		candidates: Effect.Effect<ReadonlyArray<RankedRow>, SqlError>
+	) =>
+		candidates.pipe(
+			Effect.mapError((cause) => new StorageError({ operation, cause }))
+		);
 
 	const hydrate = Effect.fn('Search.hydrate')(function* (
 		fileIds: ReadonlyArray<string>,
@@ -130,7 +85,7 @@ const makeSearch = Effect.gen(function* () {
 			WHERE ${sql.in('f.id', fileIds)}
 				AND f.deleted_at IS NULL
 				AND (f.expires_at IS NULL OR f.expires_at > ${new Date().toISOString()})
-				${selectedTagFilter(tagIds)}`.pipe(
+				${selectedTagFilter(sql, tagIds)}`.pipe(
 			Effect.mapError(
 				(cause) =>
 					new StorageError({ operation: 'hydrate search results', cause })
@@ -157,7 +112,7 @@ const makeSearch = Effect.gen(function* () {
 			FROM files f
 			WHERE f.deleted_at IS NULL
 				AND (f.expires_at IS NULL OR f.expires_at > ${new Date().toISOString()})
-				${selectedTagFilter(tagIds)}
+				${selectedTagFilter(sql, tagIds)}
 			ORDER BY f.updated_at DESC, f.id
 			LIMIT ${limit} OFFSET ${offset}`.pipe(
 			Effect.mapError(
@@ -179,8 +134,7 @@ const makeSearch = Effect.gen(function* () {
 			const offset = page * PAGE_SIZE;
 			const selectedTagIds = [...new Set(tagIds)].slice(0, 20);
 			const trimmedQuery = query.trim().slice(0, 256);
-			const keywordMatch = sanitizeMatchQuery(trimmedQuery);
-			if (!keywordMatch) {
+			if (!hasSearchableQuery(trimmedQuery)) {
 				const recent = yield* filteredRecent(
 					selectedTagIds,
 					PAGE_SIZE + 1,
@@ -195,30 +149,30 @@ const makeSearch = Effect.gen(function* () {
 				};
 			}
 
-			const trigramMatch = sanitizeTrigramQuery(trimmedQuery);
-			const now = new Date().toISOString();
-			// The index reads (FTS, trigram) and the optional embedding +
+			const filter = { now: new Date().toISOString(), tagIds: selectedTagIds };
+			// The index reads (full text, trigram) and the optional embedding +
 			// vector query are independent; run them concurrently so search
 			// latency is the slowest source, not their sum. Workers AI
-			// embeddings are usually the slowest leg, so they start now.
-			const [keyword, trigram, semanticCandidates] = yield* Effect.all(
+			// embeddings are usually the slowest leg, so they start now. The
+			// vector query filters visibility and tags itself, so its rows
+			// go straight into fusion.
+			const [keyword, trigram, semantic] = yield* Effect.all(
 				[
-					runRanked(
-						rankedSearchCommand('files_fts', keywordMatch, now, selectedTagIds)
+					ranked(
+						'keyword search',
+						fullTextCandidates(sql, trimmedQuery, filter)
 					),
-					trigramMatch
-						? runRanked(
-								rankedSearchCommand(
-									'files_trgm',
-									trigramMatch,
-									now,
-									selectedTagIds
-								)
+					shouldFuzzyMatchQuery(trimmedQuery)
+						? ranked(
+								'trigram search',
+								trigramCandidates(sql, trimmedQuery, filter)
 							)
-						: Effect.succeed<ReadonlyArray<RankedRow>>([]),
+						: noCandidates,
 					shouldEmbedSearchQuery(trimmedQuery)
 						? embedder.query(trimmedQuery).pipe(
-								Effect.flatMap((embedding) => vectorIndex.search(embedding)),
+								Effect.flatMap((embedding) =>
+									vectorIndex.search(embedding, filter)
+								),
 								Effect.catch((failure) =>
 									Effect.sync(() => {
 										console.error(
@@ -234,24 +188,6 @@ const makeSearch = Effect.gen(function* () {
 						: Effect.succeed<ReadonlyArray<{ fileId: string }>>([])
 				],
 				{ concurrency: 'unbounded' }
-			);
-			const semantic = yield* filterSemantic(
-				semanticCandidates.map((candidate) => candidate.fileId),
-				selectedTagIds,
-				now
-			).pipe(
-				Effect.catch((failure) =>
-					Effect.sync(() => {
-						console.error(
-							JSON.stringify({
-								message:
-									'semantic candidate filtering degraded to keyword search',
-								operation: failure.operation
-							})
-						);
-						return [];
-					})
-				)
 			);
 			// Fuse the full candidate pool on every page so page 0 and
 			// page 1 slice the same ranking instead of two different

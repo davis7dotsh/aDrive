@@ -70,10 +70,9 @@
 	//   1b. Create a Hyperdrive config pointing at PlanetScale Postgres
 	//       (direct port 5432, caching disabled) and paste its id below.
 	//   2. Create the production R2 bucket and KV namespace; paste the KV id.
-	//   3. Create the Vectorize index and its metadata indexes (docs/release.md).
-	//   4. Point DNS for both hostnames at the Worker (routes below).
-	//   5. `wrangler secret put PASSCODE --env production`
-	//   6. `wrangler d1 migrations apply DB --env production --remote`
+	//   3. Point DNS for both hostnames at the Worker (routes below).
+	//   4. `wrangler secret put PASSCODE --env production`
+	//   5. `wrangler d1 migrations apply DB --env production --remote`
 	"env": {
 		"production": {
 			// Place the Worker near D1 for dashboard/search queries. Content
@@ -89,8 +88,8 @@
 				"CONTENT_ORIGIN": "https://files.davis7.space",
 				"MAX_UPLOAD_BYTES": "99614720",
 				"MAX_TOTAL_BYTES": "107374182400",
-				// required (not auto) so a missing AI/Vectorize binding fails
-				// the deploy loudly instead of silently degrading to keyword.
+				// required (not auto) so a missing AI binding fails the deploy
+				// loudly instead of silently degrading to keyword search.
 				"SEMANTIC_SEARCH": "required",
 				"EMBEDDING_MODEL": "@cf/baai/bge-small-en-v1.5",
 				"EMBEDDING_POOLING": "cls",
@@ -99,12 +98,6 @@
 			"ai": {
 				"binding": "AI"
 			},
-			"vectorize": [
-				{
-					"binding": "VECTORIZE",
-					"index_name": "adrive-production"
-				}
-			],
 			"triggers": {
 				"crons": ["*/5 * * * *"]
 			},
@@ -149,9 +142,9 @@
 			}
 		}
 	}
-	// Local dev runs keyword-only (SEMANTIC_SEARCH=auto, no AI/Vectorize
-	// bindings above). Production declares both bindings and uses
-	// SEMANTIC_SEARCH=required. To enable semantic search locally, create a
-	// 384-dimension cosine index and add the same two bindings to the top
-	// level, then run `bun --filter @adrive/web types:worker`. See README.md.
+	// Local dev runs keyword-only (SEMANTIC_SEARCH=auto, no AI binding
+	// above). Vectors live in Postgres (pgvector), so production only adds
+	// the AI binding and uses SEMANTIC_SEARCH=required. To enable semantic
+	// search locally, add the same "ai" binding to the top level, then run
+	// `bun --filter @adrive/web types:worker`. See README.md.
 }

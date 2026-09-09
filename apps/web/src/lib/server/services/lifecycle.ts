@@ -9,7 +9,6 @@ export interface LifecycleSummary {
 	readonly sites: number;
 	readonly indexing: number;
 	readonly files: number;
-	readonly vectors: number;
 }
 
 export interface LifecycleShape {
@@ -25,7 +24,6 @@ export interface LifecycleTasks {
 	readonly sites: Effect.Effect<number, unknown>;
 	readonly indexing: Effect.Effect<number, unknown>;
 	readonly files: Effect.Effect<number, unknown>;
-	readonly vectors: Effect.Effect<number, unknown>;
 }
 
 const recover = <A>(
@@ -58,8 +56,7 @@ export const runLifecycleTasks = (tasks: LifecycleTasks) =>
 		const sites = yield* recover('sites', tasks.sites, 0);
 		const indexing = yield* recover('indexing', tasks.indexing, 0);
 		const files = yield* recover('files', tasks.files, 0);
-		const vectors = yield* recover('vectors', tasks.vectors, 0);
-		return { authentication, sites, indexing, files, vectors };
+		return { authentication, sites, indexing, files };
 	});
 
 const makeLifecycle = Effect.gen(function* () {
@@ -90,8 +87,7 @@ const makeLifecycle = Effect.gen(function* () {
 		).pipe(Effect.map(([revoked, swept]) => revoked + swept)),
 		sites: sites.sweepLifecycle(10),
 		indexing: indexing.runDue(5),
-		files: files.sweepPurges(5),
-		vectors: indexing.retryVectorDeletes(100)
+		files: files.sweepPurges(5)
 	}).pipe(Effect.withSpan('Lifecycle.run'));
 
 	return Lifecycle.of({ run });
