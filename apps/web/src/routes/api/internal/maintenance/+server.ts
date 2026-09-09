@@ -2,12 +2,16 @@ import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
 import { AppConfig } from '$lib/server/config';
 import { verifyScheduledRequest } from '$lib/server/cron-auth';
-import { runEdge } from '$lib/server/edge';
+import { runAcrossOrgs, runEdgeWithEvent } from '$lib/server/edge';
 import { Unauthorized } from '$lib/server/errors';
-import { Lifecycle } from '$lib/server/services/lifecycle';
+import { Lifecycle, summarize } from '$lib/server/services/lifecycle';
 
-export const POST: RequestHandler = ({ request }) =>
-	runEdge(
+// The cron tick: one global pass (device codes), then one bounded pass
+// per randomly chosen live org so no tenant starves another.
+export const POST: RequestHandler = async (event) => {
+	const { request } = event;
+	const global = await runEdgeWithEvent(
+		event,
 		Effect.gen(function* () {
 			const config = yield* AppConfig;
 			const lifecycle = yield* Lifecycle;
@@ -27,7 +31,23 @@ export const POST: RequestHandler = ({ request }) =>
 					message: 'Scheduled request is unauthorized'
 				});
 			}
-			yield* lifecycle.run;
-			return new Response(null, { status: 204 });
+			return yield* lifecycle.global;
 		})
 	);
+	if (!event.platform) return new Response(null, { status: 204 });
+	const perOrg = await runAcrossOrgs(
+		event.platform.env,
+		Effect.flatMap(Lifecycle, (lifecycle) => lifecycle.org)
+	);
+	console.log(
+		JSON.stringify({
+			message: 'maintenance tick',
+			orgs: perOrg.length,
+			...summarize(
+				global,
+				perOrg.map((entry) => entry.value)
+			)
+		})
+	);
+	return new Response(null, { status: 204 });
+};

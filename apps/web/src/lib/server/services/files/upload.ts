@@ -84,7 +84,7 @@ export const uploadOps = (
 									resolvedTags.map((tag) => ({ file_id: id, tag_id: tag.id }))
 								)}`;
 						}
-						yield* refreshSearchDocument(sql, id);
+						yield* refreshSearchDocument(sql, id, org.id);
 					})
 				)
 				.pipe(
@@ -98,7 +98,7 @@ export const uploadOps = (
 					compensateStoredBlob(failure, id, 1, r2Key, 'upload')
 				)
 			);
-			forgetTagListCache();
+			forgetTagListCache(org.id);
 
 			return {
 				file: {
@@ -189,15 +189,16 @@ export const uploadOps = (
 				});
 			}
 			const rows = yield* sql`
-				SELECT
-					f.id, f.display_name, v.content_type, v.version, v.size_bytes,
-					f.public AS is_public, f.is_site, v.r2_key, v.thumbnail_r2_key, v.created_at
-				FROM files f
-				JOIN file_versions v ON v.file_id = f.id
-				WHERE f.id = ${id} AND v.version = ${version}
-					AND f.deleted_at IS NULL AND f.is_site = false
-				LIMIT 1
-			`.pipe(
+					SELECT
+						f.id, f.org_id, f.display_name, v.content_type, v.version,
+						v.size_bytes, f.public AS is_public, f.is_site, v.r2_key,
+						v.thumbnail_r2_key, v.created_at
+					FROM files f
+					JOIN file_versions v ON v.file_id = f.id
+					WHERE f.id = ${id} AND f.org_id = ${org.id} AND v.version = ${version}
+						AND f.deleted_at IS NULL AND f.is_site = false
+					LIMIT 1
+				`.pipe(
 				Effect.mapError(
 					(cause) =>
 						new StorageError({ operation: 'find version to restore', cause })

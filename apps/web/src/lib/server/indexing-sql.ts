@@ -3,6 +3,7 @@ import { Data, Effect } from 'effect';
 import { refreshSearchDocument } from './search-index';
 
 export interface IndexLease {
+	readonly orgId: string;
 	readonly fileId: string;
 	readonly version: number;
 	readonly attempt: number;
@@ -41,7 +42,8 @@ const staleAsFalse = <E, R>(
 const holdLease = (sql: PgClient.PgClient, lease: IndexLease) =>
 	sql<{ held: number }>`
 		SELECT 1 AS held FROM files
-		WHERE id = ${lease.fileId} AND current_version = ${lease.version}
+		WHERE id = ${lease.fileId} AND org_id = ${lease.orgId}
+			AND current_version = ${lease.version}
 			AND index_state = 'running' AND index_lease_token = ${lease.token}
 		FOR UPDATE`.pipe(
 		Effect.flatMap((rows) =>
@@ -50,7 +52,8 @@ const holdLease = (sql: PgClient.PgClient, lease: IndexLease) =>
 	);
 
 const leaseUpdateFilter = (sql: PgClient.PgClient, lease: IndexLease) =>
-	sql`id = ${lease.fileId} AND current_version = ${lease.version}
+	sql`id = ${lease.fileId} AND org_id = ${lease.orgId}
+		AND current_version = ${lease.version}
 		AND index_state = 'running' AND index_lease_token = ${lease.token}`;
 
 export const claimIndex = (
@@ -65,7 +68,8 @@ export const claimIndex = (
 		SET index_state = 'running', index_attempts = index_attempts + 1,
 			index_error = NULL, index_next_run_at = ${leaseUntil},
 			index_lease_token = ${lease.token}
-		WHERE id = ${lease.fileId} AND current_version = ${lease.version}
+		WHERE id = ${lease.fileId} AND org_id = ${lease.orgId}
+			AND current_version = ${lease.version}
 			AND deleted_at IS NULL
 			AND (expires_at IS NULL OR expires_at > ${now})
 			AND index_attempts = ${lease.attempt - 1}
@@ -92,11 +96,12 @@ export const storeExtractedText = (
 				// cleanup before writing either the source text or keyword index.
 				yield* sql`
 					UPDATE file_versions SET text_content = ${text.replaceAll('\u0000', '')}
-					WHERE file_id = ${lease.fileId} AND version = ${lease.version}`;
+					WHERE file_id = ${lease.fileId} AND org_id = ${lease.orgId}
+						AND version = ${lease.version}`;
 				yield* sql`
 					UPDATE files SET index_cursor = 1
 					WHERE ${leaseUpdateFilter(sql, lease)}`;
-				yield* refreshSearchDocument(sql, lease.fileId);
+				yield* refreshSearchDocument(sql, lease.fileId, lease.orgId);
 			})
 		)
 		.pipe(staleAsFalse);
@@ -154,7 +159,7 @@ export const semanticCommit = (
 				yield* holdLease(sql, lease);
 				yield* sql`
 					DELETE FROM file_chunks
-					WHERE file_id = ${lease.fileId}
+					WHERE file_id = ${lease.fileId} AND org_id = ${lease.orgId}
 						AND (version <> ${lease.version} OR ordinal >= ${chunks.length})`;
 				yield* upsertFileChunks(sql, chunks);
 				const updated = yield* sql<{ id: string }>`

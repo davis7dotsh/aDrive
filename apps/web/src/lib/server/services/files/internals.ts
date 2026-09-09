@@ -77,7 +77,7 @@ export const createInternals = (deps: CoreDeps) => {
 		const rows = yield* sql`
 			SELECT ${sql.literal(dashboardFileColumns)}
 			FROM files f
-			WHERE f.id = ${id}
+			WHERE f.id = ${id} AND f.org_id = ${org.id}
 			LIMIT 1`.pipe(
 			Effect.mapError(
 				(cause) => new StorageError({ operation: 'find dashboard file', cause })
@@ -113,7 +113,8 @@ export const createInternals = (deps: CoreDeps) => {
 							updated_at = ${updatedAt}, index_state = 'pending',
 							index_cursor = 0, index_attempts = 0, index_error = NULL,
 							index_next_run_at = NULL, index_lease_token = NULL
-						WHERE id = ${current.id} AND current_version = ${current.version}
+						WHERE id = ${current.id} AND org_id = ${org.id}
+							AND current_version = ${current.version}
 							AND deleted_at IS NULL
 						RETURNING id`;
 					if (updated.length !== 1) {
@@ -130,7 +131,7 @@ export const createInternals = (deps: CoreDeps) => {
 								${current.id}, ${org.id}, ${version}, ${r2Key}, ${size}, NULL,
 								${contentType}, ${updatedAt}, NULL
 							)`;
-					yield* refreshSearchDocument(sql, current.id);
+					yield* refreshSearchDocument(sql, current.id, org.id);
 				})
 			)
 			.pipe(

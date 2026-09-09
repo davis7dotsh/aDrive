@@ -6,6 +6,7 @@ import {
 	visibilityForFile
 } from '../../file-policy';
 import { refreshSearchDocument } from '../../search-index';
+import { tenantOrgId } from '../current-org';
 import type { FileInternals } from './internals';
 import type { FilesShape } from './types';
 
@@ -24,7 +25,7 @@ export const mutationOps = (
 	| 'scheduleAllPurgesNow'
 	| 'recordDownload'
 > => {
-	const { sql } = internals;
+	const { sql, org } = internals;
 	const { findDashboardFile } = internals;
 	return {
 		setVisibility: Effect.fn('Files.setVisibility')(function* (id, isPublic) {
@@ -44,7 +45,7 @@ export const mutationOps = (
 			yield* sql`
 				UPDATE files
 				SET public = ${visibility.public}, updated_at = ${updatedAt}
-				WHERE id = ${id}
+				WHERE id = ${id} AND org_id = ${org.id}
 			`.pipe(
 				Effect.mapError(
 					(cause) =>
@@ -67,7 +68,7 @@ export const mutationOps = (
 				UPDATE files
 				SET deleted_at = ${deletedAt}, purge_at = ${purgeAt}, purge_state = 'none',
 					purge_error = NULL, purge_next_run_at = NULL, updated_at = ${deletedAt}
-				WHERE id = ${id} AND purge_state <> 'pending'
+				WHERE id = ${id} AND org_id = ${org.id} AND purge_state <> 'pending'
 				RETURNING id
 			`.pipe(
 				Effect.mapError(
@@ -90,7 +91,7 @@ export const mutationOps = (
 				SET deleted_at = NULL, purge_at = NULL, purge_state = 'none',
 					purge_error = NULL, purge_next_run_at = NULL,
 					updated_at = ${updatedAt}
-				WHERE id = ${id} AND purge_state <> 'pending'
+				WHERE id = ${id} AND org_id = ${org.id} AND purge_state <> 'pending'
 				RETURNING id
 			`.pipe(
 				Effect.mapError(
@@ -114,7 +115,7 @@ export const mutationOps = (
 			yield* sql`
 				UPDATE files
 				SET expires_at = ${expiresAt}, updated_at = ${updatedAt}
-				WHERE id = ${id}
+				WHERE id = ${id} AND org_id = ${org.id}
 			`.pipe(
 				Effect.mapError(
 					(cause) =>
@@ -152,8 +153,8 @@ export const mutationOps = (
 							updated_at = ${updatedAt}, index_state = 'pending',
 							index_cursor = 0, index_attempts = 0, index_error = NULL,
 							index_next_run_at = NULL, index_lease_token = NULL
-						WHERE id = ${id}
-					`.pipe(Effect.andThen(refreshSearchDocument(sql, id)))
+						WHERE id = ${id} AND org_id = ${org.id}
+					`.pipe(Effect.andThen(refreshSearchDocument(sql, id, org.id)))
 				)
 				.pipe(
 					Effect.mapError(
@@ -187,7 +188,7 @@ export const mutationOps = (
 				UPDATE files
 				SET purge_at = ${EPOCH}, purge_state = 'none', purge_error = NULL,
 					purge_next_run_at = NULL
-				WHERE id = ${id} AND deleted_at IS NOT NULL
+				WHERE id = ${id} AND org_id = ${org.id} AND deleted_at IS NOT NULL
 					AND purge_state <> 'pending'
 				RETURNING id
 			`.pipe(
@@ -204,13 +205,18 @@ export const mutationOps = (
 			}
 			return { file: current, forcedPublic: false };
 		}),
-		scheduleAllPurgesNow: sql<{ id: string }>`
-			UPDATE files
-			SET purge_at = ${EPOCH}, purge_state = 'none', purge_error = NULL,
-				purge_next_run_at = NULL
-			WHERE deleted_at IS NOT NULL AND purge_state <> 'pending'
-			RETURNING id
-		`.pipe(
+		// Suspended so the org is read when the effect runs, not when the
+		// layer is built (content routes build the layer with no tenant).
+		scheduleAllPurgesNow: Effect.suspend(
+			() => sql<{ id: string }>`
+				UPDATE files
+				SET purge_at = ${EPOCH}, purge_state = 'none', purge_error = NULL,
+					purge_next_run_at = NULL
+				WHERE org_id = ${org.id} AND deleted_at IS NOT NULL
+					AND purge_state <> 'pending'
+				RETURNING id
+			`
+		).pipe(
 			Effect.map((rows) => rows.length),
 			Effect.mapError(
 				(cause) =>
@@ -220,10 +226,12 @@ export const mutationOps = (
 		),
 		recordDownload: Effect.fn('Files.recordDownload')(function* (id) {
 			const now = new Date().toISOString();
+			// Content routes have no tenant; the file id alone identifies it.
+			const orgId = tenantOrgId(org);
 			yield* sql`
 				UPDATE files
 				SET download_count = download_count + 1, last_download_at = ${now}
-				WHERE id = ${id}
+				WHERE id = ${id} AND (${orgId}::text IS NULL OR org_id = ${orgId})
 			`.pipe(
 				Effect.mapError(
 					(cause) =>

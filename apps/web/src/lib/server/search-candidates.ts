@@ -17,6 +17,7 @@ export interface RankedRow {
 }
 
 export interface CandidateFilter {
+	readonly orgId: string;
 	readonly now: string;
 	readonly tagIds: ReadonlyArray<string>;
 }
@@ -34,7 +35,8 @@ export const selectedTagFilter = (
 		)`;
 
 const visibleFile = (sql: PgClient.PgClient, filter: CandidateFilter) =>
-	sql`f.deleted_at IS NULL
+	sql`f.org_id = ${filter.orgId}
+		AND f.deleted_at IS NULL
 		AND (f.expires_at IS NULL OR f.expires_at > ${filter.now})
 		${selectedTagFilter(sql, filter.tagIds)}`;
 
@@ -56,7 +58,8 @@ export const fullTextCandidates = (
 				ELSE english_query END AS query
 			FROM (SELECT websearch_to_tsquery('english', ${query}) AS english_query) parsed
 		) q
-		WHERE d.tsv @@ q.query
+		WHERE d.org_id = ${filter.orgId}
+			AND d.tsv @@ q.query
 			AND ${visibleFile(sql, filter)}
 		GROUP BY d.file_id
 		ORDER BY score DESC, d.file_id
@@ -73,7 +76,8 @@ export const trigramCandidates = (
 				SELECT d.file_id, word_similarity(${query}, d.name) AS score
 				FROM search_documents d
 				JOIN files f ON f.id = d.file_id
-				WHERE d.chunk_no = 0
+				WHERE d.org_id = ${filter.orgId}
+					AND d.chunk_no = 0
 					AND d.name %> ${query}
 					AND word_similarity(${query}, d.name) > ${TRIGRAM_THRESHOLD}::real
 					AND ${visibleFile(sql, filter)}

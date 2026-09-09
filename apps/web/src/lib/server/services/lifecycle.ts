@@ -11,8 +11,16 @@ export interface LifecycleSummary {
 	readonly files: number;
 }
 
+// Per-org caps. Small on purpose: the tick visits a random handful of
+// orgs, so a busy tenant only ever gets its share.
+export const ORG_SWEEP_LIMIT = 2;
+
 export interface LifecycleShape {
-	readonly run: Effect.Effect<LifecycleSummary>;
+	// Work that is not tenant-scoped (device codes); runs once per tick.
+	readonly global: Effect.Effect<number>;
+	// One org's share of purges, indexing, and site cleanup; runAcrossOrgs
+	// in edge.ts runs it once per randomly chosen live org.
+	readonly org: Effect.Effect<LifecycleSummary>;
 }
 
 export class Lifecycle extends Context.Service<Lifecycle, LifecycleShape>()(
@@ -59,20 +67,38 @@ export const runLifecycleTasks = (tasks: LifecycleTasks) =>
 		return { authentication, sites, indexing, files };
 	});
 
+export const summarize = (
+	authentication: number,
+	perOrg: ReadonlyArray<LifecycleSummary>
+): LifecycleSummary =>
+	perOrg.reduce(
+		(total, summary) => ({
+			authentication: total.authentication,
+			sites: total.sites + summary.sites,
+			indexing: total.indexing + summary.indexing,
+			files: total.files + summary.files
+		}),
+		{ authentication, sites: 0, indexing: 0, files: 0 }
+	);
+
 const makeLifecycle = Effect.gen(function* () {
 	const auth = yield* Auth;
 	const files = yield* Files;
 	const indexing = yield* Indexing;
 	const sites = yield* Sites;
 
-	const run = runLifecycleTasks({
-		authentication: auth.sweepExpired(100),
-		sites: sites.sweepLifecycle(10),
-		indexing: indexing.runDue(5),
-		files: files.sweepPurges(5)
-	}).pipe(Effect.withSpan('Lifecycle.run'));
+	const global = recover('authentication', auth.sweepExpired(100), 0).pipe(
+		Effect.withSpan('Lifecycle.global')
+	);
 
-	return Lifecycle.of({ run });
+	const org = runLifecycleTasks({
+		authentication: Effect.succeed(0),
+		sites: sites.sweepLifecycle(ORG_SWEEP_LIMIT),
+		indexing: indexing.runDue(ORG_SWEEP_LIMIT),
+		files: files.sweepPurges(ORG_SWEEP_LIMIT)
+	}).pipe(Effect.withSpan('Lifecycle.org'));
+
+	return Lifecycle.of({ global, org });
 });
 
 export const LifecycleLive = Layer.effect(Lifecycle, makeLifecycle);

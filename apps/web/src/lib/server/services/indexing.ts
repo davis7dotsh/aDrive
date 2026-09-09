@@ -16,18 +16,18 @@ import {
 	safeIndexError
 } from '../semantic-policy';
 import { isSearchableText, searchTextLimit } from '../search-text';
-import { createObjectTtlCache } from '../isolate-cache';
+import { createTtlCache } from '../isolate-cache';
 import { PgSql } from '../pg';
 import { Blobs } from './blobs';
+import { CurrentOrg } from './current-org';
 import { Embedder, VectorIndex } from './semantic';
 
 const INDEX_LEASE_MS = 5 * 60 * 1_000;
 const EMBEDDING_MODEL = '@cf/baai/bge-small-en-v1.5';
 const SEMANTIC_STATUS_CACHE_TTL_MS = 10_000;
-// The Postgres client is built per request, so the cache is keyed by a
-// module-scope sentinel: there is exactly one database per deployment.
-const semanticStatusKey = {};
-const semanticStatusCache = createObjectTtlCache<object, SemanticStatus>(
+// Per isolate, per org; the Postgres client is rebuilt per request so it
+// cannot be the key.
+const semanticStatusCache = createTtlCache<SemanticStatus>(
 	SEMANTIC_STATUS_CACHE_TTL_MS
 );
 
@@ -71,6 +71,7 @@ export class Indexing extends Context.Service<Indexing, IndexingShape>()(
 
 const makeIndexing = Effect.gen(function* () {
 	const sql = yield* PgSql;
+	const org = yield* CurrentOrg;
 	const blobs = yield* Blobs;
 	const embedder = yield* Embedder;
 	const vectors = yield* VectorIndex;
@@ -87,7 +88,7 @@ const makeIndexing = Effect.gen(function* () {
 			FROM files f
 			JOIN file_versions v
 				ON v.file_id = f.id AND v.version = f.current_version
-			WHERE f.id = ${fileId} AND f.deleted_at IS NULL
+			WHERE f.id = ${fileId} AND f.org_id = ${org.id} AND f.deleted_at IS NULL
 				AND (f.expires_at IS NULL OR f.expires_at > ${new Date().toISOString()})
 			LIMIT 1`.pipe(Effect.mapError(storage('find indexing job')));
 		return decodeRows(IndexJobRow, rows)[0] ?? null;
@@ -124,6 +125,7 @@ const makeIndexing = Effect.gen(function* () {
 		const now = new Date();
 		const leaseUntil = new Date(now.getTime() + INDEX_LEASE_MS).toISOString();
 		const lease = {
+			orgId: org.id,
 			fileId,
 			version: initial.current_version,
 			attempt: initial.index_attempts + 1,
@@ -246,7 +248,8 @@ const makeIndexing = Effect.gen(function* () {
 		const rows = yield* sql<{ id: string }>`
 			SELECT id
 			FROM files
-			WHERE deleted_at IS NULL
+			WHERE org_id = ${org.id}
+				AND deleted_at IS NULL
 				AND (expires_at IS NULL OR expires_at > ${now})
 				AND index_attempts < ${MAX_INDEX_ATTEMPTS}
 				AND (
@@ -267,7 +270,7 @@ const makeIndexing = Effect.gen(function* () {
 			SET index_state = 'pending', index_cursor = 0, index_attempts = 0,
 				index_error = NULL, index_next_run_at = NULL,
 				index_lease_token = NULL
-			WHERE id = ${fileId} AND deleted_at IS NULL
+			WHERE id = ${fileId} AND org_id = ${org.id} AND deleted_at IS NULL
 				AND (expires_at IS NULL OR expires_at > ${new Date().toISOString()})`.pipe(
 			Effect.mapError(storage('enqueue semantic indexing'))
 		);
@@ -275,9 +278,9 @@ const makeIndexing = Effect.gen(function* () {
 
 	const status = Effect.gen(function* () {
 		const enabled = embedder.enabled && vectors.enabled;
-		const cached = semanticStatusCache.get(semanticStatusKey);
+		const cached = semanticStatusCache.get(org.id);
 		if (cached) return { ...cached, enabled };
-		const indexedChunks = yield* vectors.count;
+		const indexedChunks = yield* vectors.count(org.id);
 		const result = {
 			enabled,
 			indexedChunks,
@@ -286,7 +289,7 @@ const makeIndexing = Effect.gen(function* () {
 			costNotice:
 				'Embeddings are stored in Postgres (pgvector) beside the file rows; each indexed chunk costs 384 floats plus its HNSW index entry, and keyword search stays available when semantic search is off.'
 		};
-		semanticStatusCache.set(semanticStatusKey, result);
+		semanticStatusCache.set(org.id, result);
 		return result;
 	}).pipe(Effect.withSpan('Indexing.status'));
 
