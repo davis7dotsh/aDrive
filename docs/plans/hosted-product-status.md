@@ -47,7 +47,7 @@ the local Postgres:
 - Sign-in redirect, callback, personal org bootstrap (`orgs`, `users`,
   `memberships`, `org_usage` rows appear).
 - Upload as that org, `org_usage.stored_bytes` increments, file serves from
-  `http://<slug>.siva.otter-hawksbill.ts.net:5174/f/<id>`.
+  `http://<slug>.100.100.40.20.nip.io:5174/f/<id>`.
 - The same file id on another org's host is 404; a second org cannot list or
   fetch it through the API.
 - `/api/billing` returns the free plan with usage; `/api/admin/overview`
@@ -71,10 +71,14 @@ bun --filter @adrive/web dev                # binds 0.0.0.0, allowedHosts on
 ```
 
 Dashboard: `http://siva.otter-hawksbill.ts.net:5173/`. Content hosts:
-`http://<slug>.siva.otter-hawksbill.ts.net:5174/`. Wildcard subdomains of a
-Tailscale MagicDNS name do not resolve on other devices; test content hosts
-from this machine with a `Host` header, or set `CONTENT_DOMAIN` to
-`localhost:5174` and use the browser on this box.
+`http://<slug>.100.100.40.20.nip.io:5174/`. Wildcard subdomains of a
+Tailscale MagicDNS name do not resolve on other devices, so `CONTENT_DOMAIN`
+in `.dev.vars` points at nip.io, which resolves any `*.100.100.40.20.nip.io`
+name to the Tailscale address from anywhere on the tailnet.
+
+The session cookie drops its `__Host-` prefix and `Secure` flag when the
+dashboard origin is plain http, so sign-in works from a Tailscale hostname.
+On https it is the `Secure`, host-only cookie as before.
 
 `apps/web/.dev.vars` in that worktree has placeholder values for every
 secret. With `WORKOS_API_KEY` empty the fake signs you in as `user_local`;
