@@ -172,7 +172,9 @@ export const createRouteContext = async (): Promise<RouteTestContext> => {
 		CF_ACCOUNT_ID: '',
 		CF_API_TOKEN: '',
 		CF_ZONE_ID: '',
-		ADMIN_USER_IDS: ''
+		ADMIN_USER_IDS: '',
+		AUTUMN_SECRET_KEY: 'fake:route-tests',
+		AUTUMN_WEBHOOK_SECRET: 'whsec_cm91dGUtdGVzdC1hdXR1bW4td2ViaG9vay1zZWNyZXQ='
 	} as Env;
 	const cookies = new TestCookieStore();
 

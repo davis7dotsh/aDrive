@@ -15,6 +15,13 @@ WORKOS_CLIENT_ID="client_replace"
 WORKOS_COOKIE_PASSWORD="replace-with-at-least-32-characters-of-random-text"
 WORKOS_WEBHOOK_SECRET="replace"
 
+# Autumn billing. Leave AUTUMN_SECRET_KEY empty to run without billing:
+# every plan gate allows and nothing is metered. `fake:` selects the
+# in-memory fake used by tests. The webhook secret is the Svix signing
+# secret of the /api/webhooks/autumn endpoint.
+AUTUMN_SECRET_KEY=""
+AUTUMN_WEBHOOK_SECRET=""
+
 # Local Postgres. `docker compose up -d` at the repo root starts one with
 # these credentials. Wrangler points the HYPERDRIVE binding at it.
 CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE="postgres://adrive:adrive@127.0.0.1:5432/adrive"

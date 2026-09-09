@@ -4,6 +4,7 @@ import { OrgMissing, StorageError } from './errors';
 import type { ProgramTenant } from './identity';
 import { PgSql } from './pg';
 import { AuthLive } from './services/auth';
+import { AutumnLive } from './services/autumn';
 import {
 	AuthGuardStore,
 	Bucket,
@@ -107,8 +108,9 @@ export const requestLayer = (env: Env, tenant: ProgramTenant | null) => {
 		Layer.provide(infrastructure)
 	);
 	const workos = WorkOSLive.pipe(Layer.provide(bindings));
+	const autumn = AutumnLive.pipe(Layer.provide(bindings));
 	const auth = AuthLive.pipe(
-		Layer.provide(Layer.merge(infrastructure, workos))
+		Layer.provide(Layer.mergeAll(infrastructure, workos, autumn))
 	);
 	const rateLimits = RateLimitsLive.pipe(Layer.provide(bindings));
 	const urlReputation = UrlReputationLive.pipe(Layer.provide(bindings));
@@ -140,6 +142,7 @@ export const requestLayer = (env: Env, tenant: ProgramTenant | null) => {
 		infrastructure,
 		semantic,
 		workos,
+		autumn,
 		auth,
 		rateLimits,
 		urlReputation,
