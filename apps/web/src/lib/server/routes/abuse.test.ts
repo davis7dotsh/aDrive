@@ -16,6 +16,7 @@ import {
 	currentIdentity,
 	loginAs,
 	mutateFile,
+	SESSION_COOKIE,
 	uploadFile
 } from '../test/helpers';
 
@@ -823,7 +824,7 @@ describe('admin surface (local platform)', () => {
 				})
 			)
 		).rejects.toMatchObject({ status: 403 });
-		ctx.cookies.delete('__Host-adrive-wos');
+		ctx.cookies.delete(SESSION_COOKIE);
 		await expect(
 			adminCall(ctx, 'GET', '/api/admin/overview')
 		).rejects.toMatchObject({ status: 401 });

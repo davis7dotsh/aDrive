@@ -24,10 +24,9 @@ import {
 	uploadFile,
 	listFiles,
 	mutateFile,
-	indexFile
+	indexFile,
+	SESSION_COOKIE
 } from '../test/helpers';
-
-const SESSION_COOKIE = '__Host-adrive-wos';
 
 // Files and versions live in Postgres now; read them through the request
 // layer rather than the D1 binding.

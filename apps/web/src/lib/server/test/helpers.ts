@@ -1,7 +1,12 @@
 import { Effect, Schema } from 'effect';
 import { FileListResponseSchema, type FileListResponse } from '@adrive/shared';
-import { SESSION_COOKIE } from '../auth-policy';
-import { call, type RouteTestContext } from './route-context';
+import { cookieNames } from '../auth-policy';
+import { call, DASHBOARD_ORIGIN, type RouteTestContext } from './route-context';
+
+// The route suite's dashboard origin is plain http, so these are the
+// unprefixed names.
+export const { session: SESSION_COOKIE, state: STATE_COOKIE } =
+	cookieNames(DASHBOARD_ORIGIN);
 
 export interface TestIdentity {
 	readonly userId: string;
@@ -18,7 +23,6 @@ export const loginAs = async (
 	identity: TestIdentity
 ) => {
 	const { fakeSession } = await import('../services/workos');
-	const { STATE_COOKIE } = await import('../auth-policy');
 	const { GET } = await import('../../../routes/auth/callback/+server.js');
 	ctx.cookies.delete(SESSION_COOKIE);
 	ctx.cookies.set(STATE_COOKIE, 'state=test-state');

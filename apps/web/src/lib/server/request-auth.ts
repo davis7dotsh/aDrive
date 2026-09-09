@@ -3,7 +3,7 @@ import { Effect } from 'effect';
 import {
 	allowsCredentialOrigin,
 	bearerToken,
-	SESSION_COOKIE
+	cookieNames
 } from './auth-policy';
 import { AppConfig } from './config';
 import { runWorkerProgram } from './edge';
@@ -135,7 +135,9 @@ export const resolveEventAuth = (
 		? Promise.resolve(anonymous)
 		: resolveCredential(env, {
 				authorization: event.request.headers.get('authorization'),
-				sessionCookie: event.cookies.get(SESSION_COOKIE),
+				sessionCookie: event.cookies.get(
+					cookieNames(env.DASHBOARD_ORIGIN).session
+				),
 				method: event.request.method,
 				origin: event.request.headers.get('origin')
 			});
