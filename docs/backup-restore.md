@@ -7,6 +7,21 @@ below) and how to restore from it. Until the restore drill below has
 been performed at least once, a-drive must not be the only copy of
 anything important.
 
+## Layers
+
+Three copies, each independent of the others:
+
+- **PlanetScale backups** are the primary. Automatic daily backups plus
+  point-in-time restore are on by default; restore from the database's
+  Backups page. This covers operator mistakes and bad migrations but not
+  loss of the PlanetScale account itself.
+- **The home-host `pg_dump`** below is the independent copy: a different
+  machine, a different credential, outside Cloudflare and PlanetScale.
+- **R2** has no automatic backup. Turn on object versioning for the
+  production bucket (dashboard, bucket settings) or run a nightly
+  `rclone sync` into a second bucket in another account; the home-host
+  mirror below already does the latter to local disk.
+
 ## What is backed up, where
 
 Nightly cron on the backup host (02:17 local, `scripts/backup/backup.sh`) writes to
