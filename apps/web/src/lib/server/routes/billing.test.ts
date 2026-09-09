@@ -249,6 +249,129 @@ describe('billing gates and usage sync (local platform)', () => {
 		).rejects.toMatchObject({ status: 403 });
 	});
 
+	it('moves the org between plans from a signed Autumn webhook', async () => {
+		const ctx = await setup();
+		await login(ctx);
+		const identity = await currentIdentity(ctx);
+		const { POST } =
+			await import('../../../routes/api/webhooks/autumn/+server.js');
+		const { signSvix } = await import('$lib/server/svix');
+		const planOf = async () =>
+			(
+				await queryPg(
+					ctx.env,
+					(sql) => sql<{ plan: string }>`
+						SELECT plan FROM orgs WHERE id = ${identity.orgId}`
+				)
+			)[0]?.plan;
+		const deliver = async (
+			body: unknown,
+			options: { readonly secret?: string; readonly headers?: boolean } = {}
+		) => {
+			const payload = JSON.stringify(body);
+			const id = `msg_${crypto.randomUUID()}`;
+			const timestamp = String(Math.floor(Date.now() / 1000));
+			const signature = await signSvix(
+				options.secret ?? ctx.env.AUTUMN_WEBHOOK_SECRET ?? '',
+				id,
+				timestamp,
+				payload
+			);
+			return call(
+				POST,
+				ctx.event({
+					method: 'POST',
+					path: '/api/webhooks/autumn',
+					body: payload,
+					headers: {
+						'content-type': 'application/json',
+						...(options.headers === false
+							? {}
+							: {
+									'svix-id': id,
+									'svix-timestamp': timestamp,
+									'svix-signature': signature ?? ''
+								})
+					}
+				})
+			);
+		};
+		const upgrade = {
+			type: 'billing.updated',
+			data: {
+				object: 'billing.updated',
+				customer_id: identity.orgId,
+				plan_changes: [
+					{
+						action: 'activated',
+						subscription: { plan_id: 'pro', status: 'active' }
+					},
+					{
+						action: 'expired',
+						subscription: { plan_id: 'free', status: 'expired' }
+					}
+				],
+				tags: []
+			}
+		};
+		expect(await planOf()).toBe('free');
+		await expect(deliver(upgrade, { headers: false })).rejects.toMatchObject({
+			status: 401
+		});
+		await expect(
+			deliver(upgrade, { secret: 'whsec_bm90LXRoZS1zZWNyZXQ=' })
+		).rejects.toMatchObject({ status: 401 });
+		expect(await planOf()).toBe('free');
+
+		expect((await deliver(upgrade)).status).toBe(200);
+		expect(await planOf()).toBe('pro');
+		// The storage limit follows the plan.
+		const { GET } = await import('../../../routes/api/billing/+server.js');
+		const { planLimits } = await import('$lib/server/plans');
+		expect(
+			await (await call(GET, ctx.event({ path: '/api/billing' }))).json()
+		).toMatchObject({
+			plan: 'pro',
+			storage: { limit: planLimits('pro').storedBytes }
+		});
+
+		const downgrade = {
+			type: 'billing.updated',
+			data: {
+				object: 'billing.updated',
+				customer_id: identity.orgId,
+				plan_changes: [
+					{
+						action: 'expired',
+						subscription: { plan_id: 'pro', status: 'expired' }
+					}
+				],
+				tags: []
+			}
+		};
+		expect((await deliver(downgrade)).status).toBe(200);
+		expect(await planOf()).toBe('free');
+
+		// Other events and unknown customers are acknowledged.
+		expect(
+			(
+				await deliver({
+					type: 'balances.limit_reached',
+					data: { customer_id: identity.orgId, feature_id: 'ai_ops' }
+				})
+			).status
+		).toBe(200);
+		expect(
+			(
+				await deliver({
+					...upgrade,
+					data: { ...upgrade.data, customer_id: 'org_nobody' }
+				})
+			).status
+		).toBe(200);
+		expect(await planOf()).toBe('free');
+	});
+
 	it('finishes keyword-only when the AI quota is exhausted', async () => {
 		const ctx = await setup();
 		await login(ctx);
