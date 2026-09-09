@@ -2,25 +2,19 @@ import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
 import { authRateLimitResponse } from '$lib/server/auth-rate-limit-response';
 import { runEdgeWithEvent, runWorkerProgram } from '$lib/server/edge';
-import { Auth, authorizeWriteRequest } from '$lib/server/services/auth';
+import { requireWrite } from '$lib/server/request-auth';
 import { AuthGuard } from '$lib/server/services/auth-guard';
 import { Files } from '$lib/server/services/files';
 import { Indexing } from '$lib/server/services/indexing';
 
 export const PUT: RequestHandler = async (event) => {
-	const { cookies, params, request, url } = event;
+	const { params, request } = event;
 	const output = await runEdgeWithEvent(
 		event,
 		Effect.gen(function* () {
-			const auth = yield* Auth;
 			const authGuard = yield* AuthGuard;
 			const files = yield* Files;
-			const credential = yield* authorizeWriteRequest(
-				auth,
-				request,
-				url,
-				cookies
-			);
+			const credential = yield* requireWrite(event);
 			const rateLimit = yield* authGuard.consume(
 				'upload',
 				credential.credentialId
@@ -55,7 +49,8 @@ export const PUT: RequestHandler = async (event) => {
 				Effect.gen(function* () {
 					const indexing = yield* Indexing;
 					yield* indexing.process(uploadedFileId);
-				})
+				}),
+				event.locals.auth
 			)
 		);
 	}

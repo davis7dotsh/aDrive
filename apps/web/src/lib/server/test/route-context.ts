@@ -38,26 +38,37 @@ export interface RouteTestContext {
 	readonly env: Env;
 	readonly cookies: TestCookieStore;
 	readonly url: (path: string) => URL;
-	readonly event: (input: {
-		method?: string;
-		path: string;
-		body?: BodyInit | null;
-		headers?: Record<string, string>;
-		params?: Record<string, string>;
-	}) => RequestEvent;
+	readonly event: (input: EventInput) => RequestEvent;
 	readonly drainWaitUntil: () => Promise<void>;
+}
+
+export interface EventInput {
+	method?: string;
+	path: string;
+	body?: BodyInit | null;
+	headers?: Record<string, string>;
+	params?: Record<string, string>;
 }
 
 // SvelteKit types RequestEvent per route with phantom params, which a
 // generic test event can never satisfy; the runtime shape is what matters,
-// so this is the single sanctioned cast point.
+// so this is the single sanctioned cast point. The handle hook does not
+// run here, so its identity step is replayed first: locals.auth is
+// resolved from the Authorization header or the cookie jar. The import
+// is deferred because test files mock $app/server with a factory that
+// imports this module, and request-auth reaches $app/server through edge.
 export const call = async <E, R>(
 	handler: (event: E) => R,
 	event: RequestEvent
-): Promise<R extends Promise<infer A> ? A : R> =>
-	(handler as (event: RequestEvent) => R)(event) as Promise<
+): Promise<R extends Promise<infer A> ? A : R> => {
+	if (event.locals.auth === null && event.platform?.env) {
+		const { resolveEventAuth } = await import('../request-auth');
+		event.locals.auth = await resolveEventAuth(event.platform.env, event);
+	}
+	return (handler as (event: RequestEvent) => R)(event) as Promise<
 		R extends Promise<infer A> ? A : R
 	>;
+};
 
 export const createRouteContext = async (): Promise<RouteTestContext> => {
 	const { getTestPlatform } = await import('./platform');
@@ -79,13 +90,7 @@ export const createRouteContext = async (): Promise<RouteTestContext> => {
 		body,
 		headers = {},
 		params = {}
-	}: {
-		method?: string;
-		path: string;
-		body?: BodyInit | null;
-		headers?: Record<string, string>;
-		params?: Record<string, string>;
-	}): RequestEvent => {
+	}: EventInput): RequestEvent => {
 		const url = new URL(path, DASHBOARD_ORIGIN);
 		// Upload routes require Content-Length (quota checks); undici only
 		// sets it for fixed-length bodies, so supply it for strings here.
@@ -126,7 +131,7 @@ export const createRouteContext = async (): Promise<RouteTestContext> => {
 			route: { id: null },
 			setHeaders: () => {},
 			isDataRequest: false,
-			locals: {},
+			locals: { auth: null },
 			fetch: globalThis.fetch
 		} as unknown as RequestEvent;
 		setRequestEvent(event);

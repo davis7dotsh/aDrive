@@ -1,6 +1,7 @@
 import type { Handle } from '@sveltejs/kit';
 import { MisdirectedRequest } from '$lib/server/errors';
 import { assertHostRoute, normalizeOrigins } from '$lib/server/host-gate';
+import { resolveEventAuth } from '$lib/server/request-auth';
 import { applySecurityHeaders } from '$lib/server/security-headers';
 
 export const handle: Handle = async ({ event, resolve }) => {
@@ -19,6 +20,18 @@ export const handle: Handle = async ({ event, resolve }) => {
 			return new Response(cause.message, { status: 421 });
 		}
 		throw cause;
+	}
+
+	try {
+		event.locals.auth = await resolveEventAuth(env, event);
+	} catch (cause) {
+		console.error(
+			JSON.stringify({
+				message: 'request identity could not be resolved',
+				cause: String(cause)
+			})
+		);
+		return new Response('Storage unavailable', { status: 502 });
 	}
 
 	return applySecurityHeaders(await resolve(event), {

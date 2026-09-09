@@ -2,19 +2,18 @@ import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
 import { AppConfig } from '$lib/server/config';
 import { runEdgeWithEvent, runWorkerProgram } from '$lib/server/edge';
-import { Auth, authorizeWriteRequest } from '$lib/server/services/auth';
+import { requireWrite } from '$lib/server/request-auth';
 import { Indexing } from '$lib/server/services/indexing';
 import { Sites } from '$lib/server/services/sites';
 
 export const POST: RequestHandler = async (event) => {
-	const { cookies, params, request, url } = event;
+	const { params, request, url } = event;
 	const output = await runEdgeWithEvent(
 		event,
 		Effect.gen(function* () {
-			const auth = yield* Auth;
 			const config = yield* AppConfig;
 			const sites = yield* Sites;
-			yield* authorizeWriteRequest(auth, request, url, cookies);
+			yield* requireWrite(event);
 			const result = yield* sites.commit(params.id);
 			return {
 				fileId: result.file.id,
@@ -35,7 +34,8 @@ export const POST: RequestHandler = async (event) => {
 				Effect.gen(function* () {
 					const indexing = yield* Indexing;
 					yield* indexing.process(output.fileId);
-				})
+				}),
+				event.locals.auth
 			)
 		);
 	}
