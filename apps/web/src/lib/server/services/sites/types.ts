@@ -114,6 +114,12 @@ export interface SitesShape {
 			readonly version?: number;
 		}
 	) => Effect.Effect<SiteContent, InvalidRequest | NotFound | StorageError>;
+	// Aborts an open session whose TTL is up, run from the queue.
+	readonly cleanupSession: (
+		sessionId: string
+	) => Effect.Effect<void, StorageError>;
+	// Reconciliation: re-sends cleanup for sessions expired long ago and
+	// retries failed asset deletes.
 	readonly sweepLifecycle: (
 		limit: number
 	) => Effect.Effect<number, StorageError>;

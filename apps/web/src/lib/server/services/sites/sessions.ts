@@ -1,6 +1,7 @@
 import { normalizeSitePath } from '@adrive/shared';
 import { Effect } from 'effect';
 import { InvalidRequest, NotFound, StorageError } from '../../errors';
+import { delaySecondsUntil } from '../../job-policy';
 import { refreshSearchDocument } from '../../search-index';
 import { ensureStorageHeadroom, reserveWithinPlan } from '../../storage-quota';
 import {
@@ -23,7 +24,6 @@ export const sessionOps = (
 		compensateStagedBlob,
 		cleanupStaged,
 		drainDeletes,
-		sweepExpiredSessions,
 		sql,
 		blobs,
 		config,
@@ -33,18 +33,6 @@ export const sessionOps = (
 
 	return {
 		createSession: Effect.fn('Sites.createSession')(function* (input) {
-			yield* sweepExpiredSessions().pipe(
-				Effect.catchCause((cause) =>
-					Effect.sync(() => {
-						console.error(
-							JSON.stringify({
-								message: 'expired site session sweep failed',
-								cause: String(cause)
-							})
-						);
-					})
-				)
-			);
 			const prepared = yield* Effect.try({
 				try: () => prepareSiteManifest(input, config.maxUploadBytes),
 				catch: (cause) =>
@@ -119,6 +107,11 @@ export const sessionOps = (
 							})
 					)
 				);
+			// Abandoned sessions are cleaned when the TTL is up.
+			yield* jobs.trySend(
+				{ kind: 'site-cleanup', orgId: org.id, sessionId: id },
+				{ delaySeconds: delaySecondsUntil(expiresAt) }
+			);
 			yield* drainDeletes(fileId).pipe(
 				Effect.catchCause((cause) =>
 					Effect.sync(() => {
