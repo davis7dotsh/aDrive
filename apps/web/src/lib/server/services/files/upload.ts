@@ -4,7 +4,7 @@ import {
 	visibilityForFile
 } from '../../file-policy';
 import { InvalidRequest, NotFound, StorageError } from '../../errors';
-import { fileIndexStatements } from '../../search-index';
+import { refreshSearchDocument } from '../../search-index';
 import { validateUploadLength } from '../../upload-stream';
 import { forgetTagListCache } from '../tags';
 import { Effect } from 'effect';
@@ -15,7 +15,7 @@ import { decodeContentRows } from './types';
 export const uploadOps = (
 	internals: FileInternals
 ): Pick<FilesShape, 'upload' | 'uploadVersion' | 'restoreVersion'> => {
-	const { db, blobs, sql, config, tags } = internals;
+	const { blobs, sql, config, tags } = internals;
 	const {
 		checkStorageQuota,
 		compensateStoredBlob,
@@ -57,51 +57,47 @@ export const uploadOps = (
 			const r2Key = `v/${id}/${crypto.randomUUID()}`;
 			const createdAt = new Date().toISOString();
 			const stored = yield* blobs.put(r2Key, input.body, size, contentType);
-			const statements = [
-				db
-					.prepare(
-						`INSERT INTO files (
-							id, display_name, content_type, kind, current_version, size_bytes,
-							public, is_site, created_at, updated_at, expires_at, index_state
-						) VALUES (?, ?, ?, 'file', 1, ?, ?, 0, ?, ?, ?, 'pending')`
+			const commit = sql
+				.withTransaction(
+					Effect.gen(function* () {
+						yield* sql`
+							INSERT INTO files (
+								id, display_name, content_type, kind, current_version, size_bytes,
+								public, is_site, created_at, updated_at, expires_at, index_state
+							) VALUES (
+								${id}, ${displayName}, ${contentType}, 'file', 1, ${stored.size},
+								${visibility.public}, false, ${createdAt}, ${createdAt},
+								${input.expiresAt}, 'pending'
+							)`;
+						yield* sql`
+							INSERT INTO file_versions (
+								file_id, version, r2_key, size_bytes, sha256, content_type,
+								created_at, text_content
+							) VALUES (
+								${id}, 1, ${r2Key}, ${stored.size}, NULL, ${contentType},
+								${createdAt}, NULL
+							)`;
+						if (resolvedTags.length > 0) {
+							yield* sql`
+								INSERT INTO file_tags ${sql.insert(
+									resolvedTags.map((tag) => ({ file_id: id, tag_id: tag.id }))
+								)}`;
+						}
+						yield* refreshSearchDocument(sql, id);
+					})
+				)
+				.pipe(
+					Effect.mapError(
+						(cause) =>
+							new StorageError({ operation: 'commit file metadata', cause })
 					)
-					.bind(
-						id,
-						displayName,
-						contentType,
-						stored.size,
-						visibility.public ? 1 : 0,
-						createdAt,
-						createdAt,
-						input.expiresAt
-					),
-				db
-					.prepare(
-						`INSERT INTO file_versions (
-							file_id, version, r2_key, size_bytes, sha256, content_type, created_at,
-							text_content
-						) VALUES (?, 1, ?, ?, NULL, ?, ?, ?)`
-					)
-					.bind(id, r2Key, stored.size, contentType, createdAt, null),
-				...resolvedTags.map((tag) =>
-					db
-						.prepare('INSERT INTO file_tags (file_id, tag_id) VALUES (?, ?)')
-						.bind(id, tag.id)
-				),
-				...fileIndexStatements(db, id)
-			];
-
-			const commit = Effect.tryPromise({
-				try: () => db.batch(statements),
-				catch: (cause) =>
-					new StorageError({ operation: 'commit file metadata', cause })
-			});
+				);
 			yield* commit.pipe(
 				Effect.catch((failure) =>
 					compensateStoredBlob(failure, id, 1, r2Key, 'upload')
 				)
 			);
-			forgetTagListCache(db);
+			forgetTagListCache();
 
 			return {
 				file: {
@@ -198,7 +194,7 @@ export const uploadOps = (
 				FROM files f
 				JOIN file_versions v ON v.file_id = f.id
 				WHERE f.id = ${id} AND v.version = ${version}
-					AND f.deleted_at IS NULL AND f.is_site = 0
+					AND f.deleted_at IS NULL AND f.is_site = false
 				LIMIT 1
 			`.pipe(
 				Effect.mapError(

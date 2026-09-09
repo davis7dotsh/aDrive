@@ -1,26 +1,25 @@
 import type { Tag, TagCreate, TagUpdate } from '@adrive/shared';
 import { Context, Effect, Layer, Schema } from 'effect';
-import { SqlClient } from 'effect/unstable/sql';
 import { InvalidRequest, NotFound, StorageError, validate } from '../errors';
-import {
-	fileIndexStatements,
-	refreshAllIndexedTagsStatement
-} from '../search-index';
+import { refreshAllIndexedTags, refreshSearchDocument } from '../search-index';
 import {
 	normalizeTagColor,
 	normalizeTagName,
 	uniqueTagNames
 } from '../tag-policy';
 import { createObjectTtlCache } from '../isolate-cache';
-import { Db } from './bindings';
+import { PgSql } from '../pg';
 
 const TAG_LIST_CACHE_TTL_MS = 5_000;
-const tagListCache = createObjectTtlCache<D1Database, ReadonlyArray<Tag>>(
+// One database per deployment, so the per-isolate cache needs a single
+// stable key; the Postgres client is rebuilt per request and cannot be it.
+const tagListCacheKey = {};
+const tagListCache = createObjectTtlCache<object, ReadonlyArray<Tag>>(
 	TAG_LIST_CACHE_TTL_MS
 );
 
-export const forgetTagListCache = (db: D1Database) => {
-	tagListCache.delete(db);
+export const forgetTagListCache = () => {
+	tagListCache.delete(tagListCacheKey);
 };
 
 const TagRow = Schema.Struct({
@@ -52,7 +51,7 @@ const tagSelect = `
 		t.name,
 		t.normalized_name,
 		t.color,
-		COUNT(ft.file_id) AS file_count,
+		COUNT(ft.file_id)::integer AS file_count,
 		t.created_at
 	FROM tags t
 	LEFT JOIN file_tags ft ON ft.tag_id = t.id
@@ -80,42 +79,35 @@ export interface TagsShape {
 export class Tags extends Context.Service<Tags, TagsShape>()('app/Tags') {}
 
 const makeTags = Effect.gen(function* () {
-	const db = yield* Db;
-	const sql = (yield* SqlClient.SqlClient).withoutTransforms();
+	const sql = yield* PgSql;
+	const select = sql.literal(tagSelect);
 
 	const list = Effect.gen(function* () {
-		const cached = tagListCache.get(db);
+		const cached = tagListCache.get(tagListCacheKey);
 		if (cached) return cached;
-		const rows = yield* sql
-			.unsafe(
-				`${tagSelect}
+		const rows = yield* sql`
+			${select}
 			GROUP BY t.id
-			ORDER BY t.normalized_name, t.id`
+			ORDER BY t.normalized_name, t.id`.pipe(
+			Effect.mapError(
+				(cause) => new StorageError({ operation: 'list tags', cause })
 			)
-			.pipe(
-				Effect.mapError(
-					(cause) => new StorageError({ operation: 'list tags', cause })
-				)
-			);
+		);
 		const tags = decodeTagRows(rows).map(toTag);
-		tagListCache.set(db, tags);
+		tagListCache.set(tagListCacheKey, tags);
 		return tags;
 	}).pipe(Effect.withSpan('Tags.list'));
 
 	const find = Effect.fn('Tags.find')(function* (id: string) {
-		const rows = yield* sql
-			.unsafe(
-				`${tagSelect}
-				WHERE t.id = ?
-				GROUP BY t.id
-				LIMIT 1`,
-				[id]
+		const rows = yield* sql`
+			${select}
+			WHERE t.id = ${id}
+			GROUP BY t.id
+			LIMIT 1`.pipe(
+			Effect.mapError(
+				(cause) => new StorageError({ operation: 'find tag', cause })
 			)
-			.pipe(
-				Effect.mapError(
-					(cause) => new StorageError({ operation: 'find tag', cause })
-				)
-			);
+		);
 		const tag = decodeTagRows(rows)[0];
 		if (!tag) return yield* new NotFound({ id });
 		return toTag(tag);
@@ -125,20 +117,15 @@ const makeTags = Effect.gen(function* () {
 		normalizedNames: ReadonlyArray<string>
 	) {
 		if (normalizedNames.length === 0) return [];
-		const placeholders = normalizedNames.map(() => '?').join(', ');
-		const rows = yield* sql
-			.unsafe(
-				`${tagSelect}
-				WHERE t.normalized_name IN (${placeholders})
-				GROUP BY t.id
-				ORDER BY t.normalized_name`,
-				normalizedNames
+		const rows = yield* sql`
+			${select}
+			WHERE ${sql.in('t.normalized_name', normalizedNames)}
+			GROUP BY t.id
+			ORDER BY t.normalized_name`.pipe(
+			Effect.mapError(
+				(cause) => new StorageError({ operation: 'resolve tag names', cause })
 			)
-			.pipe(
-				Effect.mapError(
-					(cause) => new StorageError({ operation: 'resolve tag names', cause })
-				)
-			);
+		);
 		return decodeTagRows(rows).map(toTag);
 	});
 
@@ -155,29 +142,22 @@ const makeTags = Effect.gen(function* () {
 			(tag) => !existingNames.has(tag.normalizedName)
 		);
 		if (missing.length > 0) {
-			yield* Effect.tryPromise({
-				try: () =>
-					db.batch(
-						missing.map((tag) =>
-							db
-								.prepare(
-									`INSERT INTO tags (
-										id, name, normalized_name, color, created_at
-									) VALUES (?, ?, ?, NULL, ?)
-									ON CONFLICT(normalized_name) DO NOTHING`
-								)
-								.bind(
-									crypto.randomUUID(),
-									tag.name,
-									tag.normalizedName,
-									createdAt
-								)
-						)
-					),
-				catch: (cause) =>
-					new StorageError({ operation: 'auto-create tags', cause })
-			});
-			forgetTagListCache(db);
+			yield* sql`
+				INSERT INTO tags ${sql.insert(
+					missing.map((tag) => ({
+						id: crypto.randomUUID(),
+						name: tag.name,
+						normalized_name: tag.normalizedName,
+						color: null,
+						created_at: createdAt
+					}))
+				)}
+				ON CONFLICT (normalized_name) DO NOTHING`.pipe(
+				Effect.mapError(
+					(cause) => new StorageError({ operation: 'auto-create tags', cause })
+				)
+			);
+			forgetTagListCache();
 		}
 		const resolved = yield* findByNormalized(normalized);
 		const byNormalized = new Map(
@@ -196,24 +176,17 @@ const makeTags = Effect.gen(function* () {
 			const tag = yield* validate(() => normalizeTagName(input.name));
 			const color = yield* validate(() => normalizeTagColor(input.color));
 			const createdAt = new Date().toISOString();
-			yield* Effect.tryPromise({
-				try: () =>
-					db
-						.prepare(
-							`INSERT INTO tags (id, name, normalized_name, color, created_at)
-							VALUES (?, ?, ?, ?, ?)
-							ON CONFLICT(normalized_name) DO NOTHING`
-						)
-						.bind(
-							crypto.randomUUID(),
-							tag.name,
-							tag.normalizedName,
-							color,
-							createdAt
-						)
-						.run(),
-				catch: (cause) => new StorageError({ operation: 'create tag', cause })
-			});
+			yield* sql`
+				INSERT INTO tags (id, name, normalized_name, color, created_at)
+				VALUES (
+					${crypto.randomUUID()}, ${tag.name}, ${tag.normalizedName},
+					${color}, ${createdAt}
+				)
+				ON CONFLICT (normalized_name) DO NOTHING`.pipe(
+				Effect.mapError(
+					(cause) => new StorageError({ operation: 'create tag', cause })
+				)
+			);
 			const resolved = yield* findByNormalized([tag.normalizedName]);
 			const result = resolved[0];
 			if (!result) {
@@ -222,7 +195,7 @@ const makeTags = Effect.gen(function* () {
 					cause: 'Tag was not returned after creation'
 				});
 			}
-			forgetTagListCache(db);
+			forgetTagListCache();
 			return result;
 		}),
 		update: Effect.fn('Tags.update')(function* (id, input) {
@@ -250,65 +223,66 @@ const makeTags = Effect.gen(function* () {
 				});
 			}
 
-			yield* Effect.tryPromise({
-				try: () =>
-					db.batch([
-						db
-							.prepare(
-								`UPDATE tags
-								SET name = ?, normalized_name = ?, color = ?
-								WHERE id = ?`
-							)
-							.bind(name.name, name.normalizedName, color, id),
-						refreshAllIndexedTagsStatement(db)
-					]),
-				catch: (cause) => new StorageError({ operation: 'update tag', cause })
-			});
-			forgetTagListCache(db);
+			yield* sql
+				.withTransaction(
+					sql`
+						UPDATE tags
+						SET name = ${name.name}, normalized_name = ${name.normalizedName},
+							color = ${color}
+						WHERE id = ${id}`.pipe(Effect.andThen(refreshAllIndexedTags(sql)))
+				)
+				.pipe(
+					Effect.mapError(
+						(cause) => new StorageError({ operation: 'update tag', cause })
+					)
+				);
+			forgetTagListCache();
 			return yield* find(id);
 		}),
 		remove: Effect.fn('Tags.remove')(function* (id) {
 			yield* find(id);
-			yield* Effect.tryPromise({
-				try: () =>
-					db.batch([
-						db.prepare('DELETE FROM file_tags WHERE tag_id = ?').bind(id),
-						db.prepare('DELETE FROM tags WHERE id = ?').bind(id),
-						refreshAllIndexedTagsStatement(db)
-					]),
-				catch: (cause) => new StorageError({ operation: 'delete tag', cause })
-			});
-			forgetTagListCache(db);
-		}),
-		setFileTags: Effect.fn('Tags.setFileTags')(function* (fileId, names) {
-			const file = yield* sql
-				.unsafe('SELECT id FROM files WHERE id = ? LIMIT 1', [fileId])
+			// file_tags cascades from tags, so one delete drops the links.
+			yield* sql
+				.withTransaction(
+					sql`DELETE FROM tags WHERE id = ${id}`.pipe(
+						Effect.andThen(refreshAllIndexedTags(sql))
+					)
+				)
 				.pipe(
 					Effect.mapError(
-						(cause) =>
-							new StorageError({ operation: 'find tagged file', cause })
+						(cause) => new StorageError({ operation: 'delete tag', cause })
 					)
 				);
+			forgetTagListCache();
+		}),
+		setFileTags: Effect.fn('Tags.setFileTags')(function* (fileId, names) {
+			const file = yield* sql`
+				SELECT id FROM files WHERE id = ${fileId} LIMIT 1`.pipe(
+				Effect.mapError(
+					(cause) => new StorageError({ operation: 'find tagged file', cause })
+				)
+			);
 			if (file.length === 0) return yield* new NotFound({ id: fileId });
 			const resolved = yield* resolveNames(names);
-			const statements = [
-				db.prepare('DELETE FROM file_tags WHERE file_id = ?').bind(fileId),
-				...resolved.map((tag) =>
-					db
-						.prepare(
-							`INSERT INTO file_tags (file_id, tag_id)
-							VALUES (?, ?)`
-						)
-						.bind(fileId, tag.id)
-				),
-				...fileIndexStatements(db, fileId)
-			];
-			yield* Effect.tryPromise({
-				try: () => db.batch(statements),
-				catch: (cause) =>
-					new StorageError({ operation: 'set file tags', cause })
-			});
-			forgetTagListCache(db);
+			yield* sql
+				.withTransaction(
+					Effect.gen(function* () {
+						yield* sql`DELETE FROM file_tags WHERE file_id = ${fileId}`;
+						if (resolved.length > 0) {
+							yield* sql`
+								INSERT INTO file_tags ${sql.insert(
+									resolved.map((tag) => ({ file_id: fileId, tag_id: tag.id }))
+								)}`;
+						}
+						yield* refreshSearchDocument(sql, fileId);
+					})
+				)
+				.pipe(
+					Effect.mapError(
+						(cause) => new StorageError({ operation: 'set file tags', cause })
+					)
+				);
+			forgetTagListCache();
 		})
 	});
 });

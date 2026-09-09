@@ -1,23 +1,22 @@
+import type { PgClient } from '@effect/sql-pg';
 import { Cause, Effect } from 'effect';
 
-export interface BlobDeleteSqlCommand {
-	readonly sql: string;
-	readonly bindings: ReadonlyArray<string | number>;
-}
-
-export const deferredBlobDeleteCommand = (
+// R2 cleanup after a failed commit is compensatable: when the delete
+// itself fails the key goes to the durable lifecycle queue and a later
+// sweep retries it. Idempotent on r2_key.
+export const queueDeferredBlobDelete = (
+	sql: PgClient.PgClient,
 	r2Key: string,
 	fileId: string,
 	version: number,
 	queuedAt: string,
 	lastError: string
-): BlobDeleteSqlCommand => ({
-	sql: `INSERT INTO pending_site_asset_deletes (
+) =>
+	sql`
+		INSERT INTO pending_site_asset_deletes (
 			r2_key, file_id, version, queued_at, attempts, last_error
-		) VALUES (?, ?, ?, ?, 1, ?)
-		ON CONFLICT(r2_key) DO NOTHING`,
-	bindings: [r2Key, fileId, version, queuedAt, lastError]
-});
+		) VALUES (${r2Key}, ${fileId}, ${version}, ${queuedAt}, 1, ${lastError})
+		ON CONFLICT (r2_key) DO NOTHING`.pipe(Effect.asVoid);
 
 export const compensateBlobFailure = <
 	OriginalError,
