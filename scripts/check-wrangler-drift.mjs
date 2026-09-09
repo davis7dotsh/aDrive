@@ -181,6 +181,17 @@ const main = () => {
 				);
 			}
 		}
+		// Rate limit namespaces differ per environment (1001.. vs 2001..);
+		// the binding names and their limits must not.
+		const ratelimits = (block) =>
+			(block.ratelimits ?? [])
+				.map((entry) => ({ name: entry.name, simple: entry.simple }))
+				.sort((left, right) => left.name.localeCompare(right.name));
+		if (!sameJson(ratelimits(config), ratelimits(prod))) {
+			drift.push(
+				`ratelimits: local=${JSON.stringify(ratelimits(config))} production=${JSON.stringify(ratelimits(prod))}`
+			);
+		}
 		const queueProducers = (block) => bindingNames(block.queues?.producers);
 		if (!sameJson(queueProducers(config), queueProducers(prod))) {
 			drift.push(

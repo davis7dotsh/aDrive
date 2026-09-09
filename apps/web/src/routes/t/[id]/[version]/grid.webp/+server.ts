@@ -20,12 +20,14 @@ import {
 	storeEdgeCache,
 	thumbnailCacheControl
 } from '$lib/server/content-cache';
+import { rateLimitResponse } from '$lib/server/auth-rate-limit-response';
 import { runEdge } from '$lib/server/edge';
 import { NotFound, StorageError } from '$lib/server/errors';
 import { Blobs } from '$lib/server/services/blobs';
 import { currentContentOrigin } from '$lib/server/services/current-org';
 import { Files } from '$lib/server/services/files';
 import { GrantSecrets } from '$lib/server/services/grant-secrets';
+import { RateLimits } from '$lib/server/services/rate-limits';
 
 const parsedVersion = (value: string) => {
 	const version = Number(value);
@@ -66,7 +68,13 @@ const publicThumbnailRedirect = (url: URL) => {
 	});
 };
 
-export const GET: RequestHandler = ({ params, platform, request, url }) =>
+export const GET: RequestHandler = ({
+	getClientAddress,
+	params,
+	platform,
+	request,
+	url
+}) =>
 	runEdge(
 		Effect.gen(function* () {
 			const version = parsedVersion(params.version);
@@ -135,6 +143,10 @@ export const GET: RequestHandler = ({ params, platform, request, url }) =>
 					return cachedResponse;
 				}
 			}
+
+			const rateLimits = yield* RateLimits;
+			const rateLimit = yield* rateLimits.anonymous(getClientAddress());
+			if (!rateLimit.allowed) return rateLimitResponse();
 
 			const blobs = yield* Blobs;
 			const cached =

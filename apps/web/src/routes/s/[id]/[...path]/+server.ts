@@ -9,6 +9,7 @@ import {
 	siteCacheControl
 } from '$lib/server/content-cache';
 import { AppConfig } from '$lib/server/config';
+import { rateLimitResponse } from '$lib/server/auth-rate-limit-response';
 import { runEdge } from '$lib/server/edge';
 import { NotFound } from '$lib/server/errors';
 import { isSiteVersionRequestServable } from '$lib/server/site-policy';
@@ -16,6 +17,7 @@ import { Blobs } from '$lib/server/services/blobs';
 import { Files } from '$lib/server/services/files';
 import { Sites } from '$lib/server/services/sites';
 import { GrantSecrets } from '$lib/server/services/grant-secrets';
+import { RateLimits } from '$lib/server/services/rate-limits';
 
 export const trailingSlash = 'ignore';
 
@@ -42,7 +44,12 @@ const siteGrant = (path: string) => {
 	};
 };
 
-const serveSite: RequestHandler = ({ params, request, url }) =>
+const serveSite: RequestHandler = ({
+	getClientAddress,
+	params,
+	request,
+	url
+}) =>
 	runEdge(
 		Effect.gen(function* () {
 			const grant = siteGrant(params.path ?? '');
@@ -62,6 +69,12 @@ const serveSite: RequestHandler = ({ params, request, url }) =>
 			const blobs = yield* Blobs;
 			const files = yield* Files;
 			const config = yield* AppConfig;
+			const rateLimits = yield* RateLimits;
+			// Site assets are not held in the edge cache by the Worker (the CDN
+			// honours their Cache-Control), so every request that reaches here
+			// is a cache miss and counts.
+			const rateLimit = yield* rateLimits.anonymous(getClientAddress());
+			if (!rateLimit.allowed) return rateLimitResponse();
 			// The asset row names the owning org, which the grant is bound to,
 			// so it is resolved before the signature is checked.
 			const asset = yield* sites.findAsset(

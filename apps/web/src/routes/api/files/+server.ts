@@ -4,10 +4,10 @@ import { runEdge } from '$lib/server/edge';
 import { requireAuth, requireWrite } from '$lib/server/request-auth';
 import { AppConfig } from '$lib/server/config';
 import { validateExpiration } from '$lib/server/auth-policy';
-import { authRateLimitResponse } from '$lib/server/auth-rate-limit-response';
+import { rateLimitResponse } from '$lib/server/auth-rate-limit-response';
 import { InvalidRequest } from '$lib/server/errors';
 import { parsePageSize } from '$lib/server/list-cursor';
-import { AuthGuard } from '$lib/server/services/auth-guard';
+import { RateLimits } from '$lib/server/services/rate-limits';
 import { currentContentOrigin } from '$lib/server/services/current-org';
 import { Files } from '$lib/server/services/files';
 import { Indexing } from '$lib/server/services/indexing';
@@ -120,18 +120,12 @@ export const PUT: RequestHandler = (event) => {
 	const { request, url } = event;
 	return runEdge(
 		Effect.gen(function* () {
-			const authGuard = yield* AuthGuard;
+			const rateLimits = yield* RateLimits;
 			const files = yield* Files;
 			const credential = yield* requireWrite(event);
-			const rateLimit = yield* authGuard.consume(
-				'upload',
-				credential.credentialId
-			);
+			const rateLimit = yield* rateLimits.upload(credential.orgId);
 			if (!rateLimit.allowed) {
-				return authRateLimitResponse(
-					rateLimit,
-					'Too many uploads. Try again later.'
-				);
+				return rateLimitResponse('Too many uploads. Try again later.');
 			}
 			const displayName = yield* Effect.try({
 				try: () => decodeName(request.headers.get('x-adrive-file-name')),
