@@ -64,7 +64,8 @@ const grantedThumbnailPreloads = async (
 	list: FileListResponse
 ) => {
 	const plain = preloadUrls(list, []);
-	if (plain.length === 0 || env === undefined) return plain;
+	if (plain.length === 0 || env === undefined || auth === null) return plain;
+	const orgId = auth.orgId;
 	try {
 		const minted = await runWorkerProgram(
 			env,
@@ -75,6 +76,7 @@ const grantedThumbnailPreloads = async (
 						const secrets = yield* GrantSecrets;
 						return yield* secrets.mint({
 							contentOrigin: config.contentOrigin,
+							orgId,
 							fileId: id,
 							version
 						});

@@ -2,7 +2,7 @@ import { normalizeSitePath } from '@adrive/shared';
 import { Effect } from 'effect';
 import { InvalidRequest, NotFound, StorageError } from '../../errors';
 import { refreshSearchDocument } from '../../search-index';
-import { ensureStoredBytesWithin } from '../../storage-quota';
+import { ensureStorageHeadroom, reserveWithinPlan } from '../../storage-quota';
 import {
 	assertOpenSiteSession,
 	prepareSiteManifest,
@@ -60,7 +60,7 @@ export const sessionOps = (
 				(total, asset) => total + asset.sizeBytes,
 				0
 			);
-			yield* ensureStoredBytesWithin(sql, config.maxTotalBytes, declaredBytes);
+			yield* ensureStorageHeadroom(sql, org.id, declaredBytes);
 
 			let fileId: string = crypto.randomUUID();
 			let version = 1;
@@ -304,6 +304,15 @@ export const sessionOps = (
 								cause: 'The site changed while it was publishing'
 							});
 						}
+						// The previous version's assets leave R2 after commit, so
+						// the org is charged only the difference.
+						const previous =
+							session.version === 1
+								? []
+								: yield* sql<{ size_bytes: number }>`
+										SELECT size_bytes FROM files
+										WHERE id = ${session.fileId} AND org_id = ${org.id}`;
+						const previousBytes = previous[0]?.size_bytes ?? 0;
 						yield* sql`
 								INSERT INTO files (
 									id, org_id, display_name, content_type, kind, current_version,
@@ -388,6 +397,7 @@ export const sessionOps = (
 								SELECT 1 FROM site_upload_sessions
 								WHERE id = ${session.id} AND status = 'complete'
 							)`;
+						yield* reserveWithinPlan(sql, org.id, totalSize - previousBytes);
 					})
 				)
 				.pipe(

@@ -109,6 +109,7 @@ export const GET: RequestHandler = ({ params, platform, request, url }) =>
 			if (!content.file.public || hasGrant) {
 				const granted = yield* grantSecrets.verify({
 					contentOrigin: config.contentOrigin,
+					orgId: content.orgId,
 					requestOrigin: url.origin,
 					fileId: params.id,
 					version: content.file.version,
@@ -167,6 +168,7 @@ export const GET: RequestHandler = ({ params, platform, request, url }) =>
 
 			const sourceGrant = yield* grantSecrets.mint({
 				contentOrigin: config.contentOrigin,
+				orgId: content.orgId,
 				fileId: params.id,
 				version: content.file.version,
 				purpose: 'thumbnail-source'
@@ -175,6 +177,7 @@ export const GET: RequestHandler = ({ params, platform, request, url }) =>
 				content.file.kind === 'site'
 					? yield* grantSecrets.mint({
 							contentOrigin: config.contentOrigin,
+							orgId: content.orgId,
 							fileId: params.id,
 							version: content.file.version
 						})

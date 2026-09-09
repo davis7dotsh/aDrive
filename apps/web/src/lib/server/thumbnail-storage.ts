@@ -45,5 +45,6 @@ export const commitThumbnailStorage = (
 			)
 		RETURNING file_id`.pipe(Effect.map((rows) => rows.length === 1));
 
+// Signed: replacing a thumbnail with a smaller one hands bytes back.
 export const thumbnailQuotaDelta = (storedSize: number, incomingSize: number) =>
-	Math.max(0, incomingSize - storedSize);
+	incomingSize - storedSize;

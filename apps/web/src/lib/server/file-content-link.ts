@@ -86,6 +86,7 @@ export const resolveFileContentLink = (
 			}
 			const grant = yield* grantSecrets.mint({
 				contentOrigin: config.contentOrigin,
+				orgId: resolved.orgId,
 				fileId: resolved.file.id,
 				version: resolved.file.version
 			});
@@ -111,6 +112,7 @@ export const resolveFileContentLink = (
 				? undefined
 				: yield* grantSecrets.mint({
 						contentOrigin: config.contentOrigin,
+						orgId: content.orgId,
 						fileId: content.file.id,
 						version: content.file.version
 					});

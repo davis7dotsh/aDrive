@@ -62,10 +62,21 @@ const serveSite: RequestHandler = ({ params, request, url }) =>
 			const blobs = yield* Blobs;
 			const files = yield* Files;
 			const config = yield* AppConfig;
+			// The asset row names the owning org, which the grant is bound to,
+			// so it is resolved before the signature is checked.
+			const asset = yield* sites.findAsset(
+				params.id,
+				grant ? grant.assetPath : (params.path ?? ''),
+				{
+					includeUnavailable: hasGrant,
+					version: grant?.version
+				}
+			);
 			if (grant) {
 				const grantSecrets = yield* GrantSecrets;
 				const granted = yield* grantSecrets.verify({
 					contentOrigin: config.contentOrigin,
+					orgId: asset.orgId,
 					requestOrigin: url.origin,
 					fileId: params.id,
 					version: grant.version,
@@ -76,6 +87,7 @@ const serveSite: RequestHandler = ({ params, request, url }) =>
 				if (thumbnailSource) {
 					const thumbnailGranted = yield* grantSecrets.verify({
 						contentOrigin: config.contentOrigin,
+						orgId: asset.orgId,
 						requestOrigin: url.origin,
 						fileId: params.id,
 						version: grant.version,
@@ -86,14 +98,6 @@ const serveSite: RequestHandler = ({ params, request, url }) =>
 					if (!thumbnailGranted) return yield* new NotFound({ id: params.id });
 				}
 			}
-			const asset = yield* sites.findAsset(
-				params.id,
-				grant ? grant.assetPath : (params.path ?? ''),
-				{
-					includeUnavailable: hasGrant,
-					version: grant?.version
-				}
-			);
 			const cacheControl = siteCacheControl(hasGrant, asset.contentType);
 			const ifNoneMatch = request.headers.get('if-none-match');
 			const headersFor = (etag: string, size: number) => ({

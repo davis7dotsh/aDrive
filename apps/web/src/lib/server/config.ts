@@ -15,7 +15,6 @@ export interface AppConfigShape {
 	readonly dashboardOrigin: string;
 	readonly contentOrigin: string;
 	readonly maxUploadBytes: number;
-	readonly maxTotalBytes: number;
 	// Signs the Worker facade's cron and queue self-requests.
 	readonly maintenanceSecret: string;
 	readonly workos: WorkOSConfig;
@@ -79,16 +78,7 @@ export const configFromEnv = (env: Env) => {
 	if (!Number.isSafeInteger(maxUploadBytes) || maxUploadBytes <= 0) {
 		throw new Error('MAX_UPLOAD_BYTES must be a positive safe integer');
 	}
-	// Global cap on stored bytes across all live file versions. Defaults to
-	// 100 GiB when unset so a leaked credential cannot fill the bucket.
-	const rawMaxTotalBytes = env.MAX_TOTAL_BYTES as string | undefined;
-	const maxTotalBytes =
-		rawMaxTotalBytes === undefined || rawMaxTotalBytes === ''
-			? 100 * 1024 ** 3
-			: Number(rawMaxTotalBytes);
-	if (!Number.isSafeInteger(maxTotalBytes) || maxTotalBytes <= 0) {
-		throw new Error('MAX_TOTAL_BYTES must be a positive safe integer');
-	}
+
 	if (
 		typeof env.MAINTENANCE_SECRET !== 'string' ||
 		env.MAINTENANCE_SECRET.length < 12
@@ -108,7 +98,6 @@ export const configFromEnv = (env: Env) => {
 	return {
 		...origins,
 		maxUploadBytes,
-		maxTotalBytes,
 		maintenanceSecret: env.MAINTENANCE_SECRET,
 		workos: workosFromEnv(env),
 		semanticSearch,
