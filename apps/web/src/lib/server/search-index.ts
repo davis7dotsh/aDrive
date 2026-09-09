@@ -16,9 +16,10 @@ export const refreshSearchDocument = (sql: PgClient.PgClient, fileId: string) =>
 		Effect.gen(function* () {
 			yield* keywordWriteLock(sql);
 			yield* sql`DELETE FROM search_documents WHERE file_id = ${fileId}`;
-			yield* sql`INSERT INTO search_documents (file_id, chunk_no, name, tags, body)
+			yield* sql`INSERT INTO search_documents (file_id, org_id, chunk_no, name, tags, body)
 				SELECT
 					f.id,
+					f.org_id,
 					0,
 					f.display_name,
 					COALESCE((

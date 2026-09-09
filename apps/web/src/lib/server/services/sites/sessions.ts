@@ -26,7 +26,8 @@ export const sessionOps = (
 		sweepExpiredSessions,
 		sql,
 		blobs,
-		config
+		config,
+		org
 	} = internals;
 
 	return {
@@ -90,12 +91,13 @@ export const sessionOps = (
 				.withTransaction(
 					Effect.gen(function* () {
 						yield* sql`
-							INSERT INTO site_upload_sessions (
-								id, file_id, display_name, version, status, created_at, expires_at
-							) VALUES (
-								${id}, ${fileId}, ${displayName}, ${version}, 'open',
-								${createdAt}, ${expiresAt}
-							)`;
+								INSERT INTO site_upload_sessions (
+									id, org_id, file_id, display_name, version, status, created_at,
+									expires_at
+								) VALUES (
+									${id}, ${org.id}, ${fileId}, ${displayName}, ${version}, 'open',
+									${createdAt}, ${expiresAt}
+								)`;
 						for (const asset of prepared.assets) {
 							yield* sql`
 								INSERT INTO staged_site_assets (
@@ -301,15 +303,15 @@ export const sessionOps = (
 							});
 						}
 						yield* sql`
-							INSERT INTO files (
-								id, display_name, content_type, kind, current_version, size_bytes,
-								public, is_site, created_at, updated_at, index_state
-							)
-							SELECT file_id, display_name, 'text/html', 'site', 1, ${totalSize},
-								true, true, ${publishedAt}, ${publishedAt}, 'pending'
-							FROM site_upload_sessions
-							WHERE id = ${session.id} AND status = 'committing' AND version = 1
-							ON CONFLICT (id) DO NOTHING`;
+								INSERT INTO files (
+									id, org_id, display_name, content_type, kind, current_version,
+									size_bytes, public, is_site, created_at, updated_at, index_state
+								)
+								SELECT file_id, org_id, display_name, 'text/html', 'site', 1,
+									${totalSize}, true, true, ${publishedAt}, ${publishedAt}, 'pending'
+								FROM site_upload_sessions
+								WHERE id = ${session.id} AND status = 'committing' AND version = 1
+								ON CONFLICT (id) DO NOTHING`;
 						yield* sql`
 							UPDATE files
 							SET current_version = ${session.version}, size_bytes = ${totalSize},
@@ -326,13 +328,13 @@ export const sessionOps = (
 										AND version > 1
 								)`;
 						yield* sql`
-							INSERT INTO file_versions (
-								file_id, version, r2_key, size_bytes, sha256, content_type,
-								created_at, text_content
-							)
-							SELECT s.file_id, s.version, ${versionKey}, ${totalSize}, NULL,
-								'text/html', ${publishedAt}, NULL
-							FROM site_upload_sessions s
+								INSERT INTO file_versions (
+									file_id, org_id, version, r2_key, size_bytes, sha256,
+									content_type, created_at, text_content
+								)
+								SELECT s.file_id, s.org_id, s.version, ${versionKey}, ${totalSize},
+									NULL, 'text/html', ${publishedAt}, NULL
+								FROM site_upload_sessions s
 							JOIN files f ON f.id = s.file_id
 							WHERE s.id = ${session.id} AND s.status = 'committing'
 								AND f.current_version = s.version`;

@@ -111,7 +111,8 @@ export const finishKeywordOnly = (sql: PgClient.PgClient, lease: IndexLease) =>
 		RETURNING id`.pipe(Effect.map((rows) => rows.length === 1));
 
 // One multi-row statement: the columns arrive as parallel arrays and are
-// zipped by unnest, and the embeddings travel in pgvector's text form.
+// zipped by unnest, and the embeddings travel in pgvector's text form. The
+// org comes from the file row so a chunk can never land in another org.
 export const upsertFileChunks = (
 	sql: PgClient.PgClient,
 	rows: ReadonlyArray<VectorChunk>
@@ -120,9 +121,10 @@ export const upsertFileChunks = (
 		? Effect.void
 		: sql`
 			INSERT INTO file_chunks (
-				file_id, version, ordinal, char_start, char_end, embedding
+				file_id, version, ordinal, char_start, char_end, embedding, org_id
 			)
-			SELECT *
+			SELECT u.file_id, u.version, u.ordinal, u.char_start, u.char_end,
+				u.embedding, f.org_id
 			FROM unnest(
 				${rows.map((row) => row.fileId)}::text[],
 				${rows.map((row) => row.version)}::integer[],
@@ -130,7 +132,8 @@ export const upsertFileChunks = (
 				${rows.map((row) => row.charStart)}::integer[],
 				${rows.map((row) => row.charEnd)}::integer[],
 				${rows.map((row) => `[${row.values.join(',')}]`)}::vector[]
-			)
+			) AS u(file_id, version, ordinal, char_start, char_end, embedding)
+			JOIN files f ON f.id = u.file_id
 			ON CONFLICT (file_id, version, ordinal) DO UPDATE
 			SET char_start = EXCLUDED.char_start,
 				char_end = EXCLUDED.char_end,
