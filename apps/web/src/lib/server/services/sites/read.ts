@@ -7,7 +7,7 @@ import { SiteAssetRow, type SitesShape } from './types';
 export const readOps = (
 	internals: SiteInternals
 ): Pick<SitesShape, 'findAsset'> => {
-	const { all, db } = internals;
+	const { all, sql } = internals;
 
 	return {
 		findAsset: Effect.fn('Sites.findAsset')(function* (
@@ -26,33 +26,24 @@ export const readOps = (
 						message: 'Site asset path is unsafe'
 					})
 			});
+			const includeUnavailable = options.includeUnavailable === true;
+			const pinVersion = options.version !== undefined;
 			const rows = yield* all(
-				db
-					.prepare(
-						`SELECT a.path, a.r2_key, a.content_type, a.size_bytes
-						FROM files f
-						JOIN site_assets a
-							ON a.file_id = f.id AND a.version = f.current_version
-						WHERE f.id = ? AND f.is_site = 1 AND f.public = 1
-							AND a.version = f.current_version
-							AND (
-								? = 1
-								OR (
-									f.deleted_at IS NULL
-									AND (f.expires_at IS NULL OR f.expires_at > ?)
-								)
+				sql`
+					SELECT a.path, a.r2_key, a.content_type, a.size_bytes
+					FROM files f
+					JOIN site_assets a
+						ON a.file_id = f.id AND a.version = f.current_version
+					WHERE f.id = ${fileId} AND f.is_site = true AND f.public = true
+						AND (
+							${includeUnavailable}::boolean
+							OR (
+								f.deleted_at IS NULL
+								AND (f.expires_at IS NULL OR f.expires_at > ${new Date().toISOString()})
 							)
-							AND (? = 0 OR a.version = ?)
-							AND a.path IN (${candidates.map(() => '?').join(', ')})`
-					)
-					.bind(
-						fileId,
-						options.includeUnavailable ? 1 : 0,
-						new Date().toISOString(),
-						options.version === undefined ? 0 : 1,
-						options.version ?? 0,
-						...candidates
-					),
+						)
+						AND (${pinVersion}::boolean = false OR a.version = ${options.version ?? 0})
+						AND a.path = ANY(${candidates}::text[])`,
 				SiteAssetRow,
 				'find site asset'
 			);
