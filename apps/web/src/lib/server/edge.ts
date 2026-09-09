@@ -21,6 +21,8 @@ import { PgSql } from './pg';
 import type { AppConfig } from './config';
 import type { Auth } from './services/auth';
 import type { AutumnClient } from './services/autumn';
+import type { Billing } from './services/billing';
+import type { BillingGates } from './services/billing-gates';
 import type { AuthGuardStore } from './services/bindings';
 import type { Blobs } from './services/blobs';
 import type { CurrentOrg, CurrentUser } from './services/current-org';
@@ -66,7 +68,9 @@ export type AppServices =
 	| JobQueue
 	| Org
 	| WorkOSClient
-	| AutumnClient;
+	| AutumnClient
+	| BillingGates
+	| Billing;
 
 export const isAppError = (failure: unknown): failure is AppError =>
 	failure instanceof InvalidRequest ||

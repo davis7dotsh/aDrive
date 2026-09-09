@@ -460,6 +460,7 @@ export const sessionOps = (
 				fileId: session.fileId,
 				version: session.version
 			});
+			yield* jobs.trySend({ kind: 'usage-sync', orgId: org.id });
 			const cleanupPending = yield* drainDeletes(session.fileId).pipe(
 				Effect.catchCause((cause) =>
 					Effect.sync(() => {

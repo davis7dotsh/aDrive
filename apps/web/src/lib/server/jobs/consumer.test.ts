@@ -153,7 +153,8 @@ describe('job batch consumer', () => {
 			index: handler('index', 'retry'),
 			scan: handler('scan'),
 			purge: handler('purge'),
-			siteCleanup: handler('site-cleanup')
+			siteCleanup: handler('site-cleanup'),
+			usageSync: handler('usage-sync')
 		});
 
 		expect(
@@ -169,7 +170,15 @@ describe('job batch consumer', () => {
 		expect(
 			await Effect.runPromise(run({ kind: 'purge', orgId: 'c', fileId: 'f' }))
 		).toBe('done');
-		expect(calls).toEqual(['index:a', 'site-cleanup:b', 'purge:c']);
+		expect(
+			await Effect.runPromise(run({ kind: 'usage-sync', orgId: 'd' }))
+		).toBe('done');
+		expect(calls).toEqual([
+			'index:a',
+			'site-cleanup:b',
+			'purge:c',
+			'usage-sync:d'
+		]);
 	});
 
 	it('asks for a redelivery only when indexing could not run', () => {

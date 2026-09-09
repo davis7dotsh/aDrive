@@ -106,12 +106,19 @@ export const storeExtractedText = (
 		)
 		.pipe(staleAsFalse);
 
-export const finishKeywordOnly = (sql: PgClient.PgClient, lease: IndexLease) =>
+// Keyword search is complete and no embeddings were made. With a
+// `reason` the row says why (the AI quota was exhausted) and when the
+// reconciliation sweep may offer it to the embedder again.
+export const finishKeywordOnly = (
+	sql: PgClient.PgClient,
+	lease: IndexLease,
+	reason: { readonly error: string; readonly retryAt: string } | null = null
+) =>
 	sql<{ id: string }>`
 		UPDATE files
 		SET index_state = 'disabled', indexed_version = NULL,
-			index_attempts = 0, index_error = NULL,
-			index_next_run_at = NULL, index_lease_token = NULL
+			index_attempts = 0, index_error = ${reason?.error ?? null},
+			index_next_run_at = ${reason?.retryAt ?? null}, index_lease_token = NULL
 		WHERE ${leaseUpdateFilter(sql, lease)}
 		RETURNING id`.pipe(Effect.map((rows) => rows.length === 1));
 
