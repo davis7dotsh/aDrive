@@ -138,13 +138,29 @@ carried over; sign in again afterwards. Semantic vectors are not carried
 over either; every file is left `pending` and re-embeds through the
 indexing sweep.
 
+`wrangler d1 export` refuses databases that contain FTS5 virtual tables,
+so export one table at a time from a checkout that still has the D1
+binding (the commit before this one):
+
 ```
 cd apps/web
-bun x wrangler d1 export DB --env production --remote --output /tmp/adrive-d1.sql   # from the last D1 deploy
-DATABASE_URL=postgres://... bun scripts/pg-migrate.mjs --url "$DATABASE_URL"
-bun scripts/d1-to-postgres.mjs --dump /tmp/adrive-d1.sql --url "$DATABASE_URL"
+mkdir -p /tmp/adrive-d1
+for t in files file_versions tags file_tags site_assets api_keys \
+         pending_site_asset_deletes instance_secrets; do
+  bun x wrangler d1 export DB --env production --remote --table $t --output /tmp/adrive-d1/$t.sql
+done
+```
+
+Then from this checkout:
+
+```
+cd apps/web
+export DATABASE_URL=postgres://...
+bun scripts/pg-migrate.mjs --url "$DATABASE_URL"
+bun scripts/d1-to-postgres.mjs --dump /tmp/adrive-d1 --url "$DATABASE_URL"
 ```
 
 The script prints per-table counts and the Postgres totals at the end.
-Compare them with `SELECT COUNT(*)` on the D1 export before flipping
-DNS. Run it with `--wipe` to truncate and retry.
+Compare them with the row counts in the exports before flipping DNS. Run
+it with `--wipe` to truncate and retry. Tested against the local D1 state
+on 2026-09-09.
