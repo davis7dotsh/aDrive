@@ -405,7 +405,15 @@ export const JobSchema = Schema.Union([
 		kind: Schema.Literal('scan'),
 		orgId: Schema.String,
 		fileId: Schema.String,
-		version: Schema.Int
+		version: Schema.Int,
+		// Set when the scan re-sends itself to collect URL Scanner verdicts
+		// for the links it submitted on an earlier run.
+		urlScan: Schema.optionalKey(
+			Schema.Struct({
+				ids: Schema.Array(Schema.String),
+				attempt: Schema.Int
+			})
+		)
 	}),
 	Schema.Struct({
 		kind: Schema.Literal('site-cleanup'),

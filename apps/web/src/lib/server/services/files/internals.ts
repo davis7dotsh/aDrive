@@ -5,7 +5,7 @@ import {
 	compensateBlobFailure,
 	queueDeferredBlobDelete
 } from '../../blob-compensation';
-import { NotFound, StorageError } from '../../errors';
+import { InvalidRequest, NotFound, StorageError } from '../../errors';
 import {
 	dashboardFileColumns,
 	decodeDashboardRows,
@@ -16,6 +16,7 @@ import { delaySecondsUntil } from '../../job-policy';
 import { refreshSearchDocument } from '../../search-index';
 import { ensureStorageHeadroom, reserveWithinPlan } from '../../storage-quota';
 import { requirePublishAllowed } from '../../trust';
+import { scanBeforePublish } from '../../trust-policy';
 import type { AppConfig } from '../../config';
 import type { Blobs } from '../blobs';
 import type { JobQueue } from '../jobs';
@@ -72,8 +73,22 @@ export const createInternals = (deps: CoreDeps) => {
 
 	// Every path that turns a file public passes through here first; a
 	// `new` org is refused with the message that tells it what to do.
+	// Returns whether the publish must wait for the scanner (the caller
+	// then holds the row with publish_pending instead of flipping public).
 	const ensurePublishAllowed = (becomesPublic: boolean) =>
-		becomesPublic ? requirePublishAllowed(sql, org.id) : Effect.succeed(null);
+		becomesPublic
+			? Effect.map(requirePublishAllowed(sql, org.id), scanBeforePublish)
+			: Effect.succeed(false);
+
+	const refuseQuarantined = (file: { readonly quarantined: boolean }) =>
+		file.quarantined
+			? Effect.fail(
+					new InvalidRequest({
+						status: 403,
+						message: 'This file was quarantined and cannot be changed'
+					})
+				)
+			: Effect.void;
 
 	// Cheap read before a body streams; the reservation inside the commit
 	// transaction is what actually holds the bytes.
@@ -93,6 +108,10 @@ export const createInternals = (deps: CoreDeps) => {
 			{ kind: 'purge', orgId: org.id, fileId },
 			{ delaySeconds: delaySecondsUntil(dueAt) }
 		);
+	// Every version that is (or is about to be) public is scanned; the
+	// scanner publishes a held row itself (services/scanner.ts).
+	const sendScanJob = (fileId: string, version: number) =>
+		jobs.trySend({ kind: 'scan', orgId: org.id, fileId, version });
 
 	const findDashboardFile = Effect.fn('Files.findDashboardFile')(function* (
 		id: string
@@ -108,15 +127,20 @@ export const createInternals = (deps: CoreDeps) => {
 		);
 		const row = decodeDashboardRows(rows)[0];
 		if (!row) return yield* new NotFound({ id });
-		return toDashboardFile(row);
+		return {
+			...toDashboardFile(row),
+			quarantined: row.quarantined,
+			publishPending: row.publish_pending
+		};
 	});
 
 	const commitStoredVersion = Effect.fn('Files.commitStoredVersion')(function* (
-		current: DashboardFile,
+		current: DashboardFile & { readonly quarantined: boolean },
 		r2Key: string,
 		size: number,
 		contentType: string
 	) {
+		yield* refuseQuarantined(current);
 		const version = current.version + 1;
 		const updatedAt = new Date().toISOString();
 		const visibility = visibilityForFile(
@@ -167,6 +191,7 @@ export const createInternals = (deps: CoreDeps) => {
 				)
 			);
 		yield* sendIndexJob(current.id, version);
+		if (visibility.public) yield* sendScanJob(current.id, version);
 		return {
 			file: {
 				...current,
@@ -195,9 +220,11 @@ export const createInternals = (deps: CoreDeps) => {
 		compensateStoredBlob,
 		ensureHeadroom,
 		ensurePublishAllowed,
+		refuseQuarantined,
 		reserveBytes,
 		sendIndexJob,
 		sendPurgeJob,
+		sendScanJob,
 		findDashboardFile,
 		commitStoredVersion
 	};

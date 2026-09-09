@@ -6,6 +6,7 @@ import { retryDelaySeconds } from '../job-policy';
 import { requestLayer } from '../layer';
 import { Files } from '../services/files';
 import { Indexing, type IndexOutcome } from '../services/indexing';
+import { Scanner } from '../services/scanner';
 import { Sites } from '../services/sites';
 
 // The subset of a Cloudflare MessageBatch the consumer needs. A real
@@ -87,18 +88,16 @@ export const dispatchJob = (handlers: JobHandlers) => (job: Job) => {
 export const indexOutcome = (outcome: IndexOutcome): JobOutcome =>
 	outcome === 'retry' ? 'retry' : 'done';
 
-const received = (job: Job) =>
-	log({ message: 'job received', ...job }).pipe(Effect.as('done' as const));
-
 export const liveJobHandlers = Effect.gen(function* () {
 	const indexing = yield* Indexing;
 	const files = yield* Files;
 	const sites = yield* Sites;
+	const scanner = yield* Scanner;
 	return {
 		index: (job) => indexing.runOne(job).pipe(Effect.map(indexOutcome)),
-		// Content scanning arrives with the abuse stack; until then the job
-		// is acknowledged so a stray send never dead-letters.
-		scan: received,
+		// The scanner records its own outcome (a verdict row, a re-sent
+		// poll); only storage trouble asks for a redelivery.
+		scan: (job) => scanner.runOne(job).pipe(Effect.as('done')),
 		purge: (job) => files.purgeOne(job.fileId).pipe(Effect.as('done')),
 		siteCleanup: (job) =>
 			sites.cleanupSession(job.sessionId).pipe(Effect.as('done'))

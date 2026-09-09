@@ -30,6 +30,9 @@ import { GrantSecretsLive } from './services/grant-secrets';
 import { JobQueueLive } from './services/jobs';
 import { OrgLive } from './services/org';
 import { RateLimitsLive } from './services/rate-limits';
+import { CloudflareCachePurgeLive } from './services/cache-purge';
+import { ScannerLive } from './services/scanner';
+import { UrlReputationLive } from './services/url-reputation';
 import { WorkOSLive } from './services/workos';
 
 export const PgLive = Layer.unwrap(
@@ -107,6 +110,11 @@ export const requestLayer = (env: Env, tenant: ProgramTenant | null) => {
 		Layer.provide(Layer.merge(infrastructure, workos))
 	);
 	const rateLimits = RateLimitsLive.pipe(Layer.provide(bindings));
+	const urlReputation = UrlReputationLive.pipe(Layer.provide(bindings));
+	const cachePurge = CloudflareCachePurgeLive.pipe(Layer.provide(bindings));
+	const scanner = ScannerLive.pipe(
+		Layer.provide(Layer.mergeAll(infrastructure, urlReputation, cachePurge))
+	);
 	const orgService = OrgLive.pipe(Layer.provide(infrastructure));
 	const grantSecrets = GrantSecretsLive.pipe(Layer.provide(infrastructure));
 	const tags = TagsLive.pipe(Layer.provide(infrastructure));
@@ -130,6 +138,9 @@ export const requestLayer = (env: Env, tenant: ProgramTenant | null) => {
 		workos,
 		auth,
 		rateLimits,
+		urlReputation,
+		cachePurge,
+		scanner,
 		orgService,
 		grantSecrets,
 		tags,

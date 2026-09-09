@@ -32,3 +32,18 @@ CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE="postgres://adrive:adri
 # Vite's allowlist is a SHELL setting, not a Worker variable. Start with:
 #   __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS="siva.otter-hawksbill.ts.net,.100.100.40.20.nip.io" bun --filter @adrive/web dev
 # Adjust both allowlist entries to match your dashboard/content hostnames.
+
+# Abuse controls (docs/abuse.md). All optional locally.
+# Comma-separated WorkOS user ids allowed on /admin. The WorkOS fake signs
+# you in as `user_local`, so that is the id to list here for local work.
+ADMIN_USER_IDS="user_local"
+# Cloudflare URL Scanner: links inside published HTML are checked against
+# it. Leave empty to skip the check (recorded as such on the verdict), or
+# set `fake:clean` / `fake:malicious` to exercise the pipeline offline.
+# CF_ACCOUNT_ID is the account that owns the token.
+URLSCAN_API_KEY=""
+CF_ACCOUNT_ID=""
+# Zone-level cache purge for the kill switch (Cache Purge permission on the
+# content zone). Leave empty to log the purge instead.
+CF_API_TOKEN=""
+CF_ZONE_ID=""
