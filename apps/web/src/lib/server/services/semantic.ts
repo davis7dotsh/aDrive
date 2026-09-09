@@ -36,7 +36,7 @@ export interface VectorIndexShape {
 		vector: ReadonlyArray<number> | null,
 		filter: CandidateFilter
 	) => Effect.Effect<ReadonlyArray<{ readonly fileId: string }>, StorageError>;
-	readonly count: Effect.Effect<number, StorageError>;
+	readonly count: (orgId: string) => Effect.Effect<number, StorageError>;
 }
 
 export class Embedder extends Context.Service<Embedder, EmbedderShape>()(
@@ -91,7 +91,7 @@ export const VectorIndexNull = Layer.succeed(
 		enabled: false,
 		upsert: () => Effect.void,
 		search: () => Effect.succeed([]),
-		count: Effect.succeed(0)
+		count: () => Effect.succeed(0)
 	})
 );
 
@@ -127,7 +127,9 @@ export const makeVectorIndex = (
 								SELECT c.file_id, c.embedding <=> ${vectorLiteral(vector)}::vector AS distance
 								FROM file_chunks c
 								JOIN files f ON f.id = c.file_id AND f.current_version = c.version
-								WHERE c.embedding IS NOT NULL
+								WHERE c.org_id = ${filter.orgId}
+									AND c.embedding IS NOT NULL
+									AND f.org_id = ${filter.orgId}
 									AND f.deleted_at IS NULL
 									AND (f.expires_at IS NULL OR f.expires_at > ${filter.now})
 									${selectedTagFilter(sql, filter.tagIds)}
@@ -147,14 +149,17 @@ export const makeVectorIndex = (
 								new StorageError({ operation: 'query semantic vectors', cause })
 						)
 					),
-	count: sql<{ count: number }>`
-		SELECT COUNT(*)::integer AS count FROM file_chunks WHERE embedding IS NOT NULL`.pipe(
-		Effect.map((rows) => rows[0]?.count ?? 0),
-		Effect.mapError(
-			(cause) =>
-				new StorageError({ operation: 'count semantic vectors', cause })
+	count: (orgId) =>
+		sql<{ count: number }>`
+			SELECT COUNT(*)::integer AS count
+			FROM file_chunks
+			WHERE org_id = ${orgId} AND embedding IS NOT NULL`.pipe(
+			Effect.map((rows) => rows[0]?.count ?? 0),
+			Effect.mapError(
+				(cause) =>
+					new StorageError({ operation: 'count semantic vectors', cause })
+			)
 		)
-	)
 });
 
 export const VectorIndexLive = (enabled: boolean) =>

@@ -94,13 +94,14 @@ describe('pgvector index', () => {
 				// Re-upserting the same key replaces the embedding in place.
 				yield* index.upsert([chunk(far, 2, 0, 2)]);
 				const query = between(0, 1);
-				const all = yield* index.search(query, { now: NOW, tagIds: [] });
+				const filter = { orgId: TEST_ORG_ID, now: NOW, tagIds: [] };
+				const all = yield* index.search(query, filter);
 				const tagged = yield* index.search(query, {
-					now: NOW,
+					...filter,
 					tagIds: [tagId]
 				});
-				const none = yield* index.search(null, { now: NOW, tagIds: [] });
-				const count = yield* index.count;
+				const none = yield* index.search(null, filter);
+				const count = yield* index.count(TEST_ORG_ID);
 				const mine = (rows: ReadonlyArray<{ fileId: string }>) =>
 					rows.map((row) => row.fileId).filter((id) => id.startsWith(prefix));
 				return { all: mine(all), tagged: mine(tagged), none, count };

@@ -1,6 +1,6 @@
 import { Effect } from 'effect';
 import { describe, expect, it, vi } from 'vitest';
-import { runLifecycleTasks } from './lifecycle';
+import { runLifecycleTasks, summarize } from './lifecycle';
 
 describe('scheduled lifecycle orchestration', () => {
 	it('runs every bounded task and returns aggregate counts', async () => {
@@ -45,5 +45,14 @@ describe('scheduled lifecycle orchestration', () => {
 		expect(calls).toEqual(['sites']);
 		expect(error).toHaveBeenCalledOnce();
 		error.mockRestore();
+	});
+
+	it('sums per-org sweeps beneath the global count', () => {
+		expect(
+			summarize(7, [
+				{ authentication: 0, sites: 1, indexing: 2, files: 3 },
+				{ authentication: 0, sites: 4, indexing: 5, files: 6 }
+			])
+		).toEqual({ authentication: 7, sites: 5, indexing: 7, files: 9 });
 	});
 });

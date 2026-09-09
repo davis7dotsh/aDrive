@@ -27,12 +27,12 @@ describe('postgres search index helpers', () => {
 				yield* sql`INSERT INTO tags (id, org_id, name, normalized_name, created_at)
 					VALUES (${tagId}, ${TEST_ORG_ID}, ${'Finance'}, ${`finance-${tagId}`}, ${now})`;
 				yield* sql`INSERT INTO file_tags (file_id, tag_id) VALUES (${id}, ${tagId})`;
-				yield* refreshSearchDocument(sql, id);
+				yield* refreshSearchDocument(sql, id, TEST_ORG_ID);
 				const before = yield* sql<{ name: string; tags: string; hit: boolean }>`
 					SELECT name, tags, tsv @@ websearch_to_tsquery('english', 'revenue quarter') AS hit
 					FROM search_documents WHERE file_id = ${id}`;
 				yield* sql`UPDATE tags SET name = ${'Money'} WHERE id = ${tagId}`;
-				yield* refreshAllIndexedTags(sql);
+				yield* refreshAllIndexedTags(sql, TEST_ORG_ID);
 				const after = yield* sql<{ tags: string }>`
 					SELECT tags FROM search_documents WHERE file_id = ${id}`;
 				const quota = yield* ensureStoredBytesWithin(sql, 1_000_000, 5).pipe(
@@ -89,7 +89,7 @@ describe('postgres search index helpers', () => {
 									yield* sql`UPDATE tags SET name = ${newName} WHERE id = ${tagId}`;
 									yield* refreshAllIndexedTags(sql);
 								} else {
-									yield* refreshSearchDocument(sql, id);
+									yield* refreshSearchDocument(sql, id, TEST_ORG_ID);
 								}
 								if (pause) {
 									firstPaused = true;
@@ -126,7 +126,7 @@ describe('postgres search index helpers', () => {
 				);
 				if (existingDocument) {
 					await run(
-						Effect.flatMap(PgSql, (sql) => refreshSearchDocument(sql, id))
+						Effect.flatMap(PgSql, (sql) => refreshSearchDocument(sql, id, TEST_ORG_ID))
 					);
 				}
 

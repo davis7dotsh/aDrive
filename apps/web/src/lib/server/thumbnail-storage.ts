@@ -10,6 +10,7 @@ export interface ThumbnailStorageState {
 // a purge that has claimed the file wins over any in-flight render.
 export const thumbnailStorageState = (
 	sql: PgClient.PgClient,
+	orgId: string,
 	fileId: string,
 	version: number
 ) =>
@@ -17,7 +18,7 @@ export const thumbnailStorageState = (
 		SELECT v.thumbnail_r2_key, v.thumbnail_size_bytes
 		FROM file_versions v
 		JOIN files f ON f.id = v.file_id
-		WHERE v.file_id = ${fileId} AND v.version = ${version}
+		WHERE v.file_id = ${fileId} AND v.org_id = ${orgId} AND v.version = ${version}
 			AND f.purge_state = 'none'
 		LIMIT 1`.pipe(Effect.map((rows) => rows[0] ?? null));
 
@@ -26,6 +27,7 @@ export const thumbnailStorageState = (
 // Resolves to whether this writer won.
 export const commitThumbnailStorage = (
 	sql: PgClient.PgClient,
+	orgId: string,
 	fileId: string,
 	version: number,
 	r2Key: string,
@@ -35,7 +37,7 @@ export const commitThumbnailStorage = (
 	sql<{ file_id: string }>`
 		UPDATE file_versions
 		SET thumbnail_r2_key = ${r2Key}, thumbnail_size_bytes = ${size}
-		WHERE file_id = ${fileId} AND version = ${version}
+		WHERE file_id = ${fileId} AND org_id = ${orgId} AND version = ${version}
 			AND thumbnail_r2_key IS NOT DISTINCT FROM ${expectedR2Key}::text
 			AND EXISTS (
 				SELECT 1 FROM files f

@@ -39,7 +39,7 @@ export const createInternals = ({ sql, blobs, config, org }: CoreDeps) => {
 			sql`
 				SELECT id, file_id, display_name, version, status, created_at, expires_at
 				FROM site_upload_sessions
-				WHERE id = ${sessionId}
+				WHERE id = ${sessionId} AND org_id = ${org.id}
 				LIMIT 1`,
 			SiteSessionRow,
 			'find site upload session'
@@ -228,7 +228,7 @@ export const createInternals = ({ sql, blobs, config, org }: CoreDeps) => {
 					SELECT id, file_id, display_name, version, status, created_at,
 						expires_at
 					FROM site_upload_sessions
-					WHERE status = 'open' AND expires_at <= ${now}
+					WHERE org_id = ${org.id} AND status = 'open' AND expires_at <= ${now}
 					ORDER BY expires_at
 					LIMIT ${bounded}`,
 				SiteSessionRow,
@@ -253,10 +253,12 @@ export const createInternals = ({ sql, blobs, config, org }: CoreDeps) => {
 	) {
 		const bounded = Math.max(1, Math.min(limit, 25));
 		const rows = yield* sql<{ file_id: string }>`
-			SELECT file_id
-			FROM pending_site_asset_deletes
-			GROUP BY file_id
-			ORDER BY MIN(queued_at)
+			SELECT p.file_id
+			FROM pending_site_asset_deletes p
+			LEFT JOIN files f ON f.id = p.file_id
+			WHERE f.id IS NULL OR f.org_id = ${org.id}
+			GROUP BY p.file_id
+			ORDER BY MIN(p.queued_at)
 			LIMIT ${bounded}`.pipe(
 			Effect.mapError(
 				(cause) =>

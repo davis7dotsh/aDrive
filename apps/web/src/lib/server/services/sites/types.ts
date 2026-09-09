@@ -38,6 +38,7 @@ export const SiteFileRow = Schema.Struct({
 });
 
 export const SiteAssetRow = Schema.Struct({
+	org_id: Schema.String,
 	path: Schema.String,
 	r2_key: Schema.String,
 	content_type: Schema.String,
@@ -77,6 +78,7 @@ export interface SiteCommitResult {
 }
 
 export interface SiteContent {
+	readonly orgId: string;
 	readonly path: string;
 	readonly r2Key: string;
 	readonly contentType: string;

@@ -7,20 +7,17 @@ import {
 	normalizeTagName,
 	uniqueTagNames
 } from '../tag-policy';
-import { createObjectTtlCache } from '../isolate-cache';
+import { createTtlCache } from '../isolate-cache';
 import { PgSql } from '../pg';
 import { CurrentOrg } from './current-org';
 
 const TAG_LIST_CACHE_TTL_MS = 5_000;
-// One database per deployment, so the per-isolate cache needs a single
-// stable key; the Postgres client is rebuilt per request and cannot be it.
-const tagListCacheKey = {};
-const tagListCache = createObjectTtlCache<object, ReadonlyArray<Tag>>(
-	TAG_LIST_CACHE_TTL_MS
-);
+// Per isolate, per org: the Postgres client is rebuilt per request so it
+// cannot be the key, and one org's writes must never expire another's.
+const tagListCache = createTtlCache<ReadonlyArray<Tag>>(TAG_LIST_CACHE_TTL_MS);
 
-export const forgetTagListCache = () => {
-	tagListCache.delete(tagListCacheKey);
+export const forgetTagListCache = (orgId: string) => {
+	tagListCache.delete(orgId);
 };
 
 const TagRow = Schema.Struct({
@@ -85,10 +82,11 @@ const makeTags = Effect.gen(function* () {
 	const select = sql.literal(tagSelect);
 
 	const list = Effect.gen(function* () {
-		const cached = tagListCache.get(tagListCacheKey);
+		const cached = tagListCache.get(org.id);
 		if (cached) return cached;
 		const rows = yield* sql`
 			${select}
+			WHERE t.org_id = ${org.id}
 			GROUP BY t.id
 			ORDER BY t.normalized_name, t.id`.pipe(
 			Effect.mapError(
@@ -96,14 +94,14 @@ const makeTags = Effect.gen(function* () {
 			)
 		);
 		const tags = decodeTagRows(rows).map(toTag);
-		tagListCache.set(tagListCacheKey, tags);
+		tagListCache.set(org.id, tags);
 		return tags;
 	}).pipe(Effect.withSpan('Tags.list'));
 
 	const find = Effect.fn('Tags.find')(function* (id: string) {
 		const rows = yield* sql`
 			${select}
-			WHERE t.id = ${id}
+			WHERE t.id = ${id} AND t.org_id = ${org.id}
 			GROUP BY t.id
 			LIMIT 1`.pipe(
 			Effect.mapError(
@@ -121,7 +119,8 @@ const makeTags = Effect.gen(function* () {
 		if (normalizedNames.length === 0) return [];
 		const rows = yield* sql`
 			${select}
-			WHERE ${sql.in('t.normalized_name', normalizedNames)}
+			WHERE t.org_id = ${org.id}
+				AND ${sql.in('t.normalized_name', normalizedNames)}
 			GROUP BY t.id
 			ORDER BY t.normalized_name`.pipe(
 			Effect.mapError(
@@ -160,7 +159,7 @@ const makeTags = Effect.gen(function* () {
 					(cause) => new StorageError({ operation: 'auto-create tags', cause })
 				)
 			);
-			forgetTagListCache();
+			forgetTagListCache(org.id);
 		}
 		const resolved = yield* findByNormalized(normalized);
 		const byNormalized = new Map(
@@ -198,7 +197,7 @@ const makeTags = Effect.gen(function* () {
 					cause: 'Tag was not returned after creation'
 				});
 			}
-			forgetTagListCache();
+			forgetTagListCache(org.id);
 			return result;
 		}),
 		update: Effect.fn('Tags.update')(function* (id, input) {
@@ -232,14 +231,16 @@ const makeTags = Effect.gen(function* () {
 						UPDATE tags
 						SET name = ${name.name}, normalized_name = ${name.normalizedName},
 							color = ${color}
-						WHERE id = ${id}`.pipe(Effect.andThen(refreshAllIndexedTags(sql)))
+						WHERE id = ${id} AND org_id = ${org.id}`.pipe(
+						Effect.andThen(refreshAllIndexedTags(sql, org.id))
+					)
 				)
 				.pipe(
 					Effect.mapError(
 						(cause) => new StorageError({ operation: 'update tag', cause })
 					)
 				);
-			forgetTagListCache();
+			forgetTagListCache(org.id);
 			return yield* find(id);
 		}),
 		remove: Effect.fn('Tags.remove')(function* (id) {
@@ -247,8 +248,8 @@ const makeTags = Effect.gen(function* () {
 			// file_tags cascades from tags, so one delete drops the links.
 			yield* sql
 				.withTransaction(
-					sql`DELETE FROM tags WHERE id = ${id}`.pipe(
-						Effect.andThen(refreshAllIndexedTags(sql))
+					sql`DELETE FROM tags WHERE id = ${id} AND org_id = ${org.id}`.pipe(
+						Effect.andThen(refreshAllIndexedTags(sql, org.id))
 					)
 				)
 				.pipe(
@@ -256,16 +257,17 @@ const makeTags = Effect.gen(function* () {
 						(cause) => new StorageError({ operation: 'delete tag', cause })
 					)
 				);
-			forgetTagListCache();
+			forgetTagListCache(org.id);
 		}),
 		setFileTags: Effect.fn('Tags.setFileTags')(function* (fileId, names) {
+
 			yield* sql
 				.withTransaction(
 					Effect.gen(function* () {
 						// Replacements must serialize even when the file has no tags.
 						// Locking only existing file_tags rows leaves that case unprotected.
 						const file = yield* sql`
-							SELECT id FROM files WHERE id = ${fileId} FOR UPDATE`;
+							SELECT id FROM files WHERE id = ${fileId} AND org_id = ${org.id} FOR UPDATE`;
 						if (file.length === 0) return yield* new NotFound({ id: fileId });
 						const resolved = yield* resolveNames(names);
 						yield* sql`DELETE FROM file_tags WHERE file_id = ${fileId}`;
@@ -275,7 +277,7 @@ const makeTags = Effect.gen(function* () {
 									resolved.map((tag) => ({ file_id: fileId, tag_id: tag.id }))
 								)}`;
 						}
-						yield* refreshSearchDocument(sql, fileId);
+						yield* refreshSearchDocument(sql, fileId, org.id);
 					})
 				)
 				.pipe(
@@ -283,7 +285,7 @@ const makeTags = Effect.gen(function* () {
 						Effect.fail(new StorageError({ operation: 'set file tags', cause }))
 					)
 				);
-			forgetTagListCache();
+			forgetTagListCache(org.id);
 		})
 	});
 });

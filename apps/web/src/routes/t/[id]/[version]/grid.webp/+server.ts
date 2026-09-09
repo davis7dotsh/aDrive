@@ -244,6 +244,7 @@ export const GET: RequestHandler = ({ params, platform, request, url }) =>
 			});
 			const body = new Response(bytes).body;
 			const result = yield* files.storeDashboardThumbnail(
+				content.orgId,
 				params.id,
 				content.file.version,
 				body,

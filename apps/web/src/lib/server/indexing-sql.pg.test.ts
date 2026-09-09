@@ -48,6 +48,7 @@ const lease = (
 	tokenCharacter: string
 ) =>
 	({
+		orgId: TEST_ORG_ID,
 		fileId,
 		version,
 		attempt,

@@ -52,7 +52,7 @@ const seedFile = (id: string, seed: Seed) =>
 		if (seed.tagId) {
 			yield* sql`INSERT INTO file_tags (file_id, tag_id) VALUES (${id}, ${seed.tagId})`;
 		}
-		yield* refreshSearchDocument(sql, id);
+		yield* refreshSearchDocument(sql, id, TEST_ORG_ID);
 	});
 
 // Other test files share the database, so only rows seeded here count.
@@ -64,7 +64,7 @@ const onlyMine = (
 const search = (
 	kind: 'fullText' | 'trigram',
 	query: string,
-	filter: CandidateFilter = { now: NOW, tagIds: [] }
+	filter: CandidateFilter = { orgId: TEST_ORG_ID, now: NOW, tagIds: [] }
 ) =>
 	Effect.gen(function* () {
 		const sql = yield* PgSql;
@@ -204,17 +204,23 @@ describe('postgres search candidates', () => {
 				return {
 					fullText: onlyMine(
 						yield* search('fullText', 'haystack', {
+							orgId: TEST_ORG_ID,
 							now: NOW,
 							tagIds: [wanted]
 						}),
 						all
 					),
 					trigram: onlyMine(
-						yield* search('trigram', 'crowd', { now: NOW, tagIds: [wanted] }),
+						yield* search('trigram', 'crowd', {
+							orgId: TEST_ORG_ID,
+							now: NOW,
+							tagIds: [wanted]
+						}),
 						all
 					),
 					wrongTag: onlyMine(
 						yield* search('fullText', 'haystack', {
+							orgId: TEST_ORG_ID,
 							now: NOW,
 							tagIds: [wrong]
 						}),

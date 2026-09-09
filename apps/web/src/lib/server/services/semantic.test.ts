@@ -18,10 +18,11 @@ describe('semantic null-object layers', () => {
 					documents: yield* embedder.documents(['hello']),
 					query: yield* embedder.query('hello'),
 					search: yield* vectors.search(null, {
+						orgId: 'org_test',
 						now: new Date().toISOString(),
 						tagIds: []
 					}),
-					count: yield* vectors.count
+					count: yield* vectors.count('org_test')
 				};
 			}).pipe(Effect.provide(Layer.merge(EmbedderNull, VectorIndexNull)))
 		);

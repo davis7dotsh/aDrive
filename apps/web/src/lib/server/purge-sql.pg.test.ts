@@ -77,7 +77,7 @@ describe('purge completion on postgres', () => {
 					const sql = yield* PgSql;
 					yield* seedPurgingFile(fileId, kind);
 					const before = yield* counts(fileId);
-					yield* completePurge(sql, fileId);
+					yield* completePurge(sql, TEST_ORG_ID, fileId);
 					const after = yield* counts(fileId);
 					return { before, after };
 				})
@@ -108,7 +108,7 @@ describe('purge completion on postgres', () => {
 				const sql = yield* PgSql;
 				yield* seedPurgingFile(fileId, 'file');
 				yield* sql`UPDATE files SET purge_state = 'failed' WHERE id = ${fileId}`;
-				const outcome = yield* completePurge(sql, fileId).pipe(
+				const outcome = yield* completePurge(sql, TEST_ORG_ID, fileId).pipe(
 					Effect.as('completed'),
 					Effect.catchTag('StorageError', (failure) =>
 						Effect.succeed(failure.operation)

@@ -16,8 +16,13 @@ export const thumbnailOps = (
 	const { checkStorageQuota, compensateStoredBlob } = internals;
 	return {
 		storeDashboardThumbnail: Effect.fn('Files.storeDashboardThumbnail')(
-			function* (id, version, body, size, expectedR2Key) {
-				const state = yield* thumbnailStorageState(sql, id, version).pipe(
+			function* (orgId, id, version, body, size, expectedR2Key) {
+				const state = yield* thumbnailStorageState(
+					sql,
+					orgId,
+					id,
+					version
+				).pipe(
 					Effect.mapError(
 						(cause) =>
 							new StorageError({
@@ -41,6 +46,7 @@ export const thumbnailOps = (
 				const stored = yield* blobs.put(r2Key, body, size, 'image/webp');
 				const commit = commitThumbnailStorage(
 					sql,
+					orgId,
 					id,
 					version,
 					r2Key,
@@ -74,7 +80,12 @@ export const thumbnailOps = (
 						r2Key,
 						'dashboard thumbnail'
 					).pipe(Effect.catchTag('NotFound', () => Effect.void));
-					const winner = yield* thumbnailStorageState(sql, id, version).pipe(
+					const winner = yield* thumbnailStorageState(
+						sql,
+						orgId,
+						id,
+						version
+					).pipe(
 						Effect.mapError(
 							(cause) =>
 								new StorageError({
