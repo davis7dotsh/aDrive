@@ -33,7 +33,8 @@ describe('Cloudflare Worker facade', () => {
 		expect(source).toContain("name: 'HMAC', hash: 'SHA-256'");
 		expect(source).toContain('ctx.waitUntil(');
 		expect(source).not.toContain('const { waitUntil } = ctx');
-		expect(source).not.toContain('PASSCODE:');
+		expect(source).not.toContain('PASSCODE');
+		expect(source).toContain('env.MAINTENANCE_SECRET');
 		const executable = source
 			.replace(
 				'import sveltekit from "./_sveltekit.js";',

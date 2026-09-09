@@ -53,23 +53,23 @@ const setup = () => {
 };
 
 describe('KV auth guard', () => {
-	it('limits passcode login attempts within a fixed window', async () => {
+	it('limits device authorization requests within a fixed window', async () => {
 		const { guard } = setup();
-		for (let attempt = 1; attempt <= 10; attempt += 1) {
+		for (let attempt = 1; attempt <= 5; attempt += 1) {
 			await expect(
-				guard((service) => service.consume('passcodeLogin', '203.0.113.8'))
+				guard((service) => service.consume('deviceCreate', '203.0.113.8'))
 			).resolves.toMatchObject({
 				allowed: true,
-				remaining: 10 - attempt
+				remaining: 5 - attempt
 			});
 		}
 
 		await expect(
-			guard((service) => service.consume('passcodeLogin', '203.0.113.8'))
+			guard((service) => service.consume('deviceCreate', '203.0.113.8'))
 		).resolves.toMatchObject({
 			allowed: false,
 			reason: 'rate-limit',
-			retryAfterSeconds: 300
+			retryAfterSeconds: 600
 		});
 	});
 
@@ -88,43 +88,6 @@ describe('KV auth guard', () => {
 		advance(10 * 60 * 1_000);
 		await expect(
 			guard((service) => service.consume('deviceCreate', '198.51.100.1'))
-		).resolves.toMatchObject({ allowed: true, remaining: 4 });
-	});
-
-	it('locks a client after five bad passcodes and clears failures on success', async () => {
-		const { guard } = setup();
-		for (let failure = 1; failure < 5; failure += 1) {
-			await expect(
-				guard((service) => service.recordPasscodeFailure('192.0.2.40'))
-			).resolves.toMatchObject({
-				allowed: true,
-				remaining: 5 - failure
-			});
-		}
-
-		await expect(
-			guard((service) => service.recordPasscodeFailure('192.0.2.40'))
-		).resolves.toMatchObject({
-			allowed: false,
-			reason: 'lockout',
-			retryAfterSeconds: 30 * 60
-		});
-		await expect(
-			guard((service) => service.checkPasscodeLock('192.0.2.40'))
-		).resolves.toMatchObject({ allowed: false, reason: 'lockout' });
-
-		await guard((service) => service.clearPasscodeFailures('192.0.2.40'));
-		await expect(
-			guard((service) => service.checkPasscodeLock('192.0.2.40'))
-		).resolves.toMatchObject({ allowed: true });
-	});
-
-	it('starts a fresh failure window after fifteen minutes', async () => {
-		const { guard, advance } = setup();
-		await guard((service) => service.recordPasscodeFailure('192.0.2.50'));
-		advance(15 * 60 * 1_000);
-		await expect(
-			guard((service) => service.recordPasscodeFailure('192.0.2.50'))
 		).resolves.toMatchObject({ allowed: true, remaining: 4 });
 	});
 
@@ -151,7 +114,7 @@ describe('KV auth guard', () => {
 		);
 		const program = Effect.gen(function* () {
 			const service = yield* AuthGuard;
-			return yield* service.consume('passcodeLogin', '203.0.113.9');
+			return yield* service.consume('deviceCreate', '203.0.113.9');
 		}).pipe(Effect.provide(layer));
 
 		await expect(Effect.runPromise(program)).rejects.toBeInstanceOf(
@@ -172,7 +135,7 @@ describe('KV auth guard', () => {
 		);
 		const program = Effect.gen(function* () {
 			const service = yield* AuthGuard;
-			return yield* service.consume('passcodeLogin', '203.0.113.10');
+			return yield* service.consume('deviceCreate', '203.0.113.10');
 		}).pipe(Effect.provide(layer));
 
 		await expect(Effect.runPromise(program)).resolves.toMatchObject({
@@ -182,10 +145,32 @@ describe('KV auth guard', () => {
 		});
 	});
 
+	it('tolerates a contended KV write for uploads', async () => {
+		const contendedStore: AuthGuardStoreShape = {
+			get: async () => null,
+			put: async () => {
+				throw new Error('429: one write per second');
+			},
+			delete: async () => {}
+		};
+		const layer = AuthGuardLive().pipe(
+			Layer.provide(Layer.succeed(AuthGuardStore, contendedStore))
+		);
+		const program = Effect.gen(function* () {
+			const service = yield* AuthGuard;
+			return yield* service.consume('upload', 'key-1');
+		}).pipe(Effect.provide(layer));
+
+		await expect(Effect.runPromise(program)).resolves.toMatchObject({
+			allowed: true,
+			remaining: 119
+		});
+	});
+
 	it('returns a private 429 response with retry guidance', async () => {
 		const response = authRateLimitResponse({
 			allowed: false,
-			reason: 'lockout',
+			reason: 'rate-limit',
 			retryAfterSeconds: 90,
 			resetAtMs: Date.now() + 90_000
 		});
@@ -193,7 +178,7 @@ describe('KV auth guard', () => {
 		expect(response.headers.get('retry-after')).toBe('90');
 		expect(response.headers.get('cache-control')).toBe('private, no-store');
 		await expect(response.json()).resolves.toEqual({
-			message: 'Too many incorrect passcode attempts. Try again later.'
+			message: 'Too many authentication requests. Try again later.'
 		});
 	});
 });

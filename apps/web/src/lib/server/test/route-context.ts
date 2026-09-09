@@ -63,7 +63,8 @@ export const call = async <E, R>(
 ): Promise<R extends Promise<infer A> ? A : R> => {
 	if (event.locals.auth === null && event.platform?.env) {
 		const { resolveEventAuth } = await import('../request-auth');
-		event.locals.auth = await resolveEventAuth(event.platform.env, event);
+		const resolved = await resolveEventAuth(event.platform.env, event);
+		event.locals.auth = resolved.auth;
 	}
 	return (handler as (event: RequestEvent) => R)(event) as Promise<
 		R extends Promise<infer A> ? A : R
@@ -76,11 +77,18 @@ export const createRouteContext = async (): Promise<RouteTestContext> => {
 	const platformEnv = proxy.env as Env;
 	// Origins are pinned so a developer's .dev.vars overrides (for example
 	// a Tailscale hostname) do not change what the suite asserts.
+	// The WorkOS fake is forced so a developer's real credentials in
+	// .dev.vars never leak into the suite.
 	const env = {
 		...platformEnv,
 		DASHBOARD_ORIGIN,
 		CONTENT_ORIGIN: 'http://localhost:5174',
-		PASSCODE: platformEnv.PASSCODE ?? 'adrive-route-test-passcode'
+		MAINTENANCE_SECRET:
+			platformEnv.MAINTENANCE_SECRET ?? 'adrive-route-test-maintenance',
+		WORKOS_API_KEY: 'fake:route-tests',
+		WORKOS_CLIENT_ID: 'client_test',
+		WORKOS_COOKIE_PASSWORD: 'route-test-cookie-password-of-32-characters!',
+		WORKOS_WEBHOOK_SECRET: 'route-test-webhook'
 	} as Env;
 	const cookies = new TestCookieStore();
 

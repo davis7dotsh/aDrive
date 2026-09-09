@@ -35,7 +35,7 @@ Failures and suspicious shrinkage post to `ALERT_WEBHOOK_URL` from
   bucket — it cannot delete or overwrite anything upstream.
 - The Postgres dump uses a read-only database role (`DATABASE_URL` in
   `backup.env`).
-- Neither the PASSCODE, session secrets, nor deploy-capable tokens exist
+- Neither the Worker secrets (WorkOS, maintenance), session cookies, nor deploy-capable tokens exist
   on the backup host. `backup.env` is `chmod 600` and gitignored.
 
 ## Restore procedures
@@ -93,7 +93,8 @@ a complete restore.
    `env.production`.
 2. Restore Postgres from the latest dump (above).
 3. Restore R2: `rclone sync ~/Backups/a-drive/r2-mirror adrive-r2-rw:<bucket>`
-4. Set the secret: `wrangler secret put PASSCODE --env production`.
+4. Set the secrets: `wrangler secret put <NAME> --env production` for
+   `MAINTENANCE_SECRET` and the four `WORKOS_*` values.
 5. Deploy: `bun release` (or `wrangler deploy --env production`).
 6. DNS: point `drive.davis7.space` and `files.davis7.space` at the new
    Worker (custom domains attach from the routes in wrangler.jsonc).

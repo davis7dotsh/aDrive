@@ -77,7 +77,9 @@
 	//   3. Create the production job queue and its dead-letter queue
 	//      (docs/release.md, "Queues").
 	//   4. Point DNS for both hostnames at the Worker (routes below).
-	//   5. `wrangler secret put PASSCODE --env production`
+	//   5. `wrangler secret put` MAINTENANCE_SECRET, WORKOS_API_KEY,
+	//      WORKOS_CLIENT_ID, WORKOS_COOKIE_PASSWORD, WORKOS_WEBHOOK_SECRET
+	//      (all `--env production`)
 	//   6. `DATABASE_URL=postgres://... bun db:pg:migrate` (see docs/release.md)
 	"env": {
 		"production": {

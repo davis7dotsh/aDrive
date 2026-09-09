@@ -1,12 +1,24 @@
 import { Context, Layer } from 'effect';
 import { normalizeOrigins } from './host-gate';
 
+// WorkOS credentials. apiKey is null when the deployment runs the in-memory
+// fake (local development and tests): WORKOS_API_KEY unset, empty, or
+// starting with `fake:`. See services/workos.ts.
+export interface WorkOSConfig {
+	readonly apiKey: string | null;
+	readonly clientId: string;
+	readonly cookiePassword: string;
+	readonly webhookSecret: string;
+}
+
 export interface AppConfigShape {
 	readonly dashboardOrigin: string;
 	readonly contentOrigin: string;
 	readonly maxUploadBytes: number;
 	readonly maxTotalBytes: number;
-	readonly passcode: string;
+	// Signs the Worker facade's cron and queue self-requests.
+	readonly maintenanceSecret: string;
+	readonly workos: WorkOSConfig;
 	readonly semanticSearch: 'off' | 'auto' | 'required';
 	readonly embeddingModel: '@cf/baai/bge-small-en-v1.5';
 	readonly embeddingPooling: 'cls';
@@ -28,6 +40,36 @@ const semanticMode = (value: string) => {
 	}
 };
 
+const optionalString = (value: unknown) =>
+	typeof value === 'string' ? value : '';
+
+export const isFakeWorkOSKey = (apiKey: string) =>
+	apiKey === '' || apiKey.startsWith('fake:');
+
+const workosFromEnv = (env: Env): WorkOSConfig => {
+	const rawApiKey = optionalString(env.WORKOS_API_KEY);
+	const clientId = optionalString(env.WORKOS_CLIENT_ID);
+	const cookiePassword = optionalString(env.WORKOS_COOKIE_PASSWORD);
+	const webhookSecret = optionalString(env.WORKOS_WEBHOOK_SECRET);
+	if (isFakeWorkOSKey(rawApiKey)) {
+		return { apiKey: null, clientId, cookiePassword, webhookSecret };
+	}
+	if (!clientId) {
+		throw new Error('WORKOS_CLIENT_ID is required alongside WORKOS_API_KEY');
+	}
+	if (cookiePassword.length < 32) {
+		throw new Error(
+			'WORKOS_COOKIE_PASSWORD must contain at least 32 characters'
+		);
+	}
+	if (!webhookSecret) {
+		throw new Error(
+			'WORKOS_WEBHOOK_SECRET is required alongside WORKOS_API_KEY'
+		);
+	}
+	return { apiKey: rawApiKey, clientId, cookiePassword, webhookSecret };
+};
+
 export const configFromEnv = (env: Env) => {
 	const origins = normalizeOrigins({
 		dashboardOrigin: env.DASHBOARD_ORIGIN,
@@ -47,8 +89,11 @@ export const configFromEnv = (env: Env) => {
 	if (!Number.isSafeInteger(maxTotalBytes) || maxTotalBytes <= 0) {
 		throw new Error('MAX_TOTAL_BYTES must be a positive safe integer');
 	}
-	if (typeof env.PASSCODE !== 'string' || env.PASSCODE.length < 12) {
-		throw new Error('PASSCODE must contain at least 12 characters');
+	if (
+		typeof env.MAINTENANCE_SECRET !== 'string' ||
+		env.MAINTENANCE_SECRET.length < 12
+	) {
+		throw new Error('MAINTENANCE_SECRET must contain at least 12 characters');
 	}
 	const semanticSearch = semanticMode(String(env.SEMANTIC_SEARCH));
 	if (env.EMBEDDING_MODEL !== '@cf/baai/bge-small-en-v1.5') {
@@ -64,7 +109,8 @@ export const configFromEnv = (env: Env) => {
 		...origins,
 		maxUploadBytes,
 		maxTotalBytes,
-		passcode: env.PASSCODE,
+		maintenanceSecret: env.MAINTENANCE_SECRET,
+		workos: workosFromEnv(env),
 		semanticSearch,
 		embeddingModel: '@cf/baai/bge-small-en-v1.5',
 		embeddingPooling: 'cls',

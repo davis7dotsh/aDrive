@@ -39,8 +39,12 @@ the repository root.
    the zone that owns `CONTENT_ORIGIN` (`davis7.space` for
    `files.davis7.space`), and enable transformations. Dashboard thumbnails
    require this zone-level setting.
-7. From `apps/web`: `wrangler secret put PASSCODE --env production`
-   (12+ characters).
+7. From `apps/web`, set each secret with `wrangler secret put <NAME> --env production`:
+   `MAINTENANCE_SECRET` (12+ characters), `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`,
+   `WORKOS_COOKIE_PASSWORD` (32+ characters), `WORKOS_WEBHOOK_SECRET`. Point the
+   WorkOS redirect URI at `<DASHBOARD_ORIGIN>/auth/callback` and the webhook at
+   `<DASHBOARD_ORIGIN>/api/webhooks/workos` (events `user.deleted`,
+   `organization_membership.deleted`).
 8. The `davis7.space` zone must be active in Cloudflare. Remove existing
    CNAME records for `drive.davis7.space`, `files.davis7.space`, and
    `adrive.davis7.space` before deployment; the custom-domain routes in
@@ -148,9 +152,9 @@ radius:
 
 ### Secrets
 
-`wrangler secret put PASSCODE --env production` any time. The scheduled
-maintenance job detects the change and revokes all browser sessions and
-pending device codes automatically (API keys stay).
+Rotate `MAINTENANCE_SECRET` with `wrangler secret put` any time; only the
+Worker's own cron and queue self-requests use it. Browser sessions live in
+WorkOS: revoke them from the WorkOS dashboard (API keys stay).
 
 ## Deployment records
 

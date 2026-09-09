@@ -7,14 +7,13 @@
 	import { untrack } from 'svelte';
 
 	let { children, data }: LayoutProps = $props();
-	const session = createDashboardSession(untrack(() => data.browserSession));
+	const session = createDashboardSession(untrack(() => data.session !== null));
 	createToasts();
-	const authError = $derived(
-		session.error || (!session.ready ? data.authError : '')
-	);
 
+	// A stale page whose cookie expired shows the sign-in state after the
+	// next check instead of a wall of 401 toasts.
 	$effect(() => {
-		if (!session.ready) void session.restore();
+		if (data.session === null && session.token) void session.restore();
 	});
 </script>
 
@@ -62,31 +61,34 @@
 			<a href="/" class="text-sm font-semibold tracking-tight text-zinc-950">
 				adrive
 			</a>
-			{#if session.token}
+			{#if data.session}
 				<nav class="flex items-center gap-1" aria-label="Account">
+					<span class="truncate px-3 py-2 text-sm text-zinc-500">
+						{data.session.org.name}
+					</span>
 					<a
 						href="/settings"
 						class="rounded-md px-3 py-2 text-sm text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900"
 					>
 						Settings
 					</a>
-					<button
-						type="button"
-						disabled={session.connecting}
-						class="rounded-md px-3 py-2 text-sm text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900"
-						onclick={() => void session.disconnect()}
-					>
-						{session.connecting ? 'Signing out…' : 'Sign out'}
-					</button>
+					<form method="post" action="/auth/sign-out" data-sveltekit-reload>
+						<button
+							type="submit"
+							class="rounded-md px-3 py-2 text-sm text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900"
+						>
+							Sign out
+						</button>
+					</form>
 				</nav>
 			{/if}
 		</div>
-		{#if authError}
+		{#if session.error}
 			<p
 				class="mx-auto max-w-7xl px-4 pb-3 text-right text-xs text-red-700 sm:px-6"
 				aria-live="polite"
 			>
-				{authError}
+				{session.error}
 			</p>
 		{/if}
 	</header>

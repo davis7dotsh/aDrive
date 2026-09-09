@@ -1,33 +1,48 @@
 import { Effect, Schema } from 'effect';
 import { FileListResponseSchema, type FileListResponse } from '@adrive/shared';
+import { SESSION_COOKIE } from '../auth-policy';
 import { call, type RouteTestContext } from './route-context';
 
-// Use the real local dev passcode when present, otherwise the isolated
-// route context supplies a safe test-only fallback for clean checkouts.
-const passcode = (ctx: RouteTestContext) => {
-	const value = ctx.env.PASSCODE;
-	if (!value) throw new Error('PASSCODE missing from platform proxy env');
-	return value;
-};
+export interface TestIdentity {
+	readonly userId: string;
+	readonly orgId?: string;
+}
 
-// Login is idempotent: the cookie jar keeps the session across tests, so
-// repeated logins (which would trip the KV passcode rate limiter) never
-// happen.
-export const login = async (ctx: RouteTestContext) => {
-	if (ctx.cookies.get('__Host-adrive-session')) return;
-	const { POST } = await import('../../../routes/api/auth/session/+server.js');
+// Signs the cookie jar in through the WorkOS fake: the fake accepts
+// `fake:<userId>:<orgId>` as an authorization code, and the callback
+// bootstraps the tenant rows exactly as a real first sign-in would. With
+// no org given, the callback creates a personal org for the user, so
+// repeated logins as the same user land in the same org.
+export const loginAs = async (
+	ctx: RouteTestContext,
+	identity: TestIdentity
+) => {
+	const { fakeSession } = await import('../services/workos');
+	const { STATE_COOKIE } = await import('../auth-policy');
+	const { GET } = await import('../../../routes/auth/callback/+server.js');
+	ctx.cookies.delete(SESSION_COOKIE);
+	ctx.cookies.set(STATE_COOKIE, 'test-state');
+	const code = fakeSession(identity.userId, identity.orgId ?? null);
 	const response = await call(
-		POST,
+		GET,
 		ctx.event({
-			method: 'POST',
-			path: '/api/auth/session',
-			body: JSON.stringify({ passcode: passcode(ctx) }),
-			headers: { 'content-type': 'application/json' }
+			path: `/auth/callback?code=${encodeURIComponent(code)}&state=test-state`
 		})
 	);
-	if (response.status !== 200) {
+	if (response.status !== 302) {
 		throw new Error(`Login failed: ${response.status}`);
 	}
+	const cookie = ctx.cookies.get(SESSION_COOKIE);
+	if (!cookie) throw new Error('Login did not set the session cookie');
+	return cookie;
+};
+
+export const TEST_LOGIN: TestIdentity = { userId: 'user_test' };
+
+// Login is idempotent: the cookie jar keeps the session across tests.
+export const login = async (ctx: RouteTestContext) => {
+	if (ctx.cookies.get(SESSION_COOKIE)) return;
+	await loginAs(ctx, TEST_LOGIN);
 };
 
 export const listFiles = async (
@@ -106,14 +121,27 @@ export const mutateFile = async (
 	return (await response.json()) as { file: { id: string } };
 };
 
+// The current cookie's identity, as the hook would resolve it.
+export const currentIdentity = async (ctx: RouteTestContext) => {
+	const { resolveEventAuth } = await import('../request-auth');
+	const resolved = await resolveEventAuth(
+		ctx.env,
+		ctx.event({ path: '/api/auth/check' })
+	);
+	if (!resolved.auth) throw new Error('No session in the cookie jar');
+	return resolved.auth;
+};
+
 export const indexFile = async (ctx: RouteTestContext, fileId: string) => {
 	const { runWorkerProgram } = await import('$lib/server/edge');
 	const { Indexing } = await import('$lib/server/services/indexing');
+	const identity = await currentIdentity(ctx);
 	await runWorkerProgram(
 		ctx.env,
 		Effect.gen(function* () {
 			const indexing = yield* Indexing;
 			yield* indexing.process(fileId);
-		})
+		}),
+		identity
 	);
 };

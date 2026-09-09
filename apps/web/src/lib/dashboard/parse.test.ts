@@ -7,7 +7,6 @@ import {
 	parseFileListResponse,
 	parseFileMutationResponse,
 	parseFileTagsResponse,
-	parseSessionsRevokedResponse,
 	parseTagResponse,
 	parseUploadResponse
 } from './parse';
@@ -171,7 +170,6 @@ describe('dashboard response parsing', () => {
 		expect(parseApiKeyCreateResponse({ key, token: 'adr_secret' }).token).toBe(
 			'adr_secret'
 		);
-		expect(parseSessionsRevokedResponse({ revoked: 3 }).revoked).toBe(3);
 		expect(() =>
 			parseApiKeyListResponse({ keys: [{ ...key, scope: 'admin' }] })
 		).toThrow();

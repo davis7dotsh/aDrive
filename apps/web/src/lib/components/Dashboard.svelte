@@ -251,7 +251,7 @@
 	{#if !session.ready}
 		<DashboardSkeleton view={loadingLayout} />
 	{:else if !session.token}
-		<SignIn {session} />
+		<SignIn />
 	{:else}
 		{#if deviceCode}
 			<DeviceApproval

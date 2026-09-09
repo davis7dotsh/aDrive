@@ -9,6 +9,7 @@ import { AppConfig } from './config';
 import { runWorkerProgram } from './edge';
 import { InvalidRequest, MisdirectedRequest, Unauthorized } from './errors';
 import { classifyRoute } from './host-gate';
+import type { ResolvedCredential } from './identity';
 import { Auth } from './services/auth';
 
 type AuthEvent = Pick<RequestEvent, 'locals' | 'url'>;
@@ -51,10 +52,12 @@ export const requireWrite = (event: AuthEvent) =>
 
 export interface CredentialInput {
 	readonly authorization: string | null;
-	readonly sessionToken: string | undefined;
+	readonly sessionCookie: string | undefined;
 	readonly method: string;
 	readonly origin: string | null;
 }
+
+const anonymous: ResolvedCredential = { auth: null, refreshedSession: null };
 
 // Turns a request's credential into locals.auth. An adr_ bearer key wins
 // over a cookie. A cookie on a state-changing request must arrive with the
@@ -68,8 +71,11 @@ export const resolveCredential = (env: Env, input: CredentialInput) =>
 			const auth = yield* Auth;
 			const config = yield* AppConfig;
 			const bearer = bearerToken(input.authorization);
-			if (bearer) return yield* auth.resolveApiKey(bearer);
-			if (!input.sessionToken) return null;
+			if (bearer) {
+				const resolved = yield* auth.resolveApiKey(bearer);
+				return { auth: resolved, refreshedSession: null };
+			}
+			if (!input.sessionCookie) return anonymous;
 			if (
 				!allowsCredentialOrigin(
 					input.method,
@@ -77,10 +83,10 @@ export const resolveCredential = (env: Env, input: CredentialInput) =>
 					config.dashboardOrigin
 				)
 			) {
-				return null;
+				return anonymous;
 			}
-			return yield* auth.resolveSession(input.sessionToken);
-		}).pipe(Effect.catchTag('Unauthorized', () => Effect.succeed(null)))
+			return yield* auth.resolveSession(input.sessionCookie);
+		}).pipe(Effect.catchTag('Unauthorized', () => Effect.succeed(anonymous)))
 	);
 
 // Credentials only mean something on the dashboard origin; content routes
@@ -90,10 +96,10 @@ export const resolveEventAuth = (
 	event: Pick<RequestEvent, 'request' | 'cookies' | 'url'>
 ) =>
 	classifyRoute(event.url.pathname) === 'content'
-		? Promise.resolve(null)
+		? Promise.resolve(anonymous)
 		: resolveCredential(env, {
 				authorization: event.request.headers.get('authorization'),
-				sessionToken: event.cookies.get(SESSION_COOKIE),
+				sessionCookie: event.cookies.get(SESSION_COOKIE),
 				method: event.request.method,
 				origin: event.request.headers.get('origin')
 			});

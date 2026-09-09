@@ -50,7 +50,10 @@ const rpc = async (scope: 'read-only' | 'read-write', body: unknown) => {
 					userId: 'user_test',
 					role: 'owner',
 					via: 'api-key',
-					scope
+					scope,
+					email: 'user_test@example.test',
+					orgName: 'org_test drive',
+					orgSlug: 'org-test'
 				}
 			}),
 		{
