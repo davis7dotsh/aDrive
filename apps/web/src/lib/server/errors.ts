@@ -22,6 +22,12 @@ export class StorageError extends Data.TaggedError('StorageError')<{
 	readonly cause: unknown;
 }> {}
 
+// A program was asked to run for an org that no longer exists. Background
+// jobs treat this as done: there is nothing left to act on.
+export class OrgMissing extends Data.TaggedError('OrgMissing')<{
+	readonly orgId: string;
+}> {}
+
 export type AppError =
 	InvalidRequest | MisdirectedRequest | Unauthorized | NotFound | StorageError;
 
