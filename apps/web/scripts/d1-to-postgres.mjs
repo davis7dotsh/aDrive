@@ -1,17 +1,24 @@
 // One-off data move from the D1 export of a single-tenant adrive instance
-// into Postgres. Reads the SQL dump produced by
-// `wrangler d1 export DB --env production --remote --output d1.sql`,
-// replays it into an in-memory SQLite database, then copies each table
-// row by row with type conversion (0/1 -> boolean, ISO text -> timestamptz).
+// into Postgres. `wrangler d1 export` refuses databases that contain FTS5
+// virtual tables, so export one table at a time into a directory:
 //
-//   bun apps/web/scripts/d1-to-postgres.mjs --dump d1.sql --url postgres://...
-//   bun apps/web/scripts/d1-to-postgres.mjs --dump d1.sql --url ... --wipe   # truncate first
+//   for t in files file_versions tags file_tags site_assets api_keys \
+//            pending_site_asset_deletes instance_secrets; do
+//     wrangler d1 export DB --env production --remote --table $t --output d1/$t.sql
+//   done
+//
+// Each file is replayed into an in-memory SQLite database, then copied row
+// by row with type conversion (0/1 -> boolean, ISO text -> timestamptz).
+//
+//   bun apps/web/scripts/d1-to-postgres.mjs --dump d1/ --url postgres://...
+//   bun apps/web/scripts/d1-to-postgres.mjs --dump d1/ --url ... --wipe   # truncate first
 //
 // R2 objects do not move. Keyword search documents are rebuilt from the
 // copied rows; semantic vectors are not carried over (Vectorize is gone),
 // so every file is left in index_state = 'pending' for the queue/cron to
 // re-embed.
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import Pg from 'pg';
 
@@ -31,16 +38,35 @@ if (!dumpPath || !url) {
 }
 
 const sqlite = new DatabaseSync(':memory:');
-// D1 exports include the FTS virtual tables and their shadow tables, which
-// node:sqlite may not be able to create. Skip anything mentioning them.
-const skip = /files_fts|files_trgm|sqlite_sequence|_cf_KV|d1_migrations/i;
-const statements = readFileSync(dumpPath, 'utf8')
-	.split(/;\s*\n/)
-	.map((statement) => statement.trim())
-	.filter((statement) => statement && !skip.test(statement));
-for (const statement of statements) sqlite.exec(`${statement};`);
+const dumpFiles = statSync(dumpPath).isDirectory()
+	? readdirSync(dumpPath)
+			.filter((name) => name.endsWith('.sql'))
+			.sort()
+			.map((name) => join(dumpPath, name))
+	: [dumpPath];
+// Per-table exports repeat PRAGMA lines and reference tables that another
+// file creates. The scratch schema only exists so the INSERTs replay, so
+// foreign key clauses are dropped rather than ordering the files.
+const skip =
+	/files_fts|files_trgm|sqlite_sequence|_cf_KV|d1_migrations|^PRAGMA/i;
+const withoutForeignKeys = (statement) =>
+	statement.replace(/\s+REFERENCES\s+\w+\s*\([^)]*\)(\s+ON DELETE \w+)?/gi, '');
+for (const file of dumpFiles) {
+	const statements = readFileSync(file, 'utf8')
+		.split(/;\s*\n/)
+		.map((statement) => statement.trim())
+		.filter((statement) => statement && !skip.test(statement));
+	for (const statement of statements) {
+		sqlite.exec(`${withoutForeignKeys(statement)};`);
+	}
+}
+const tableExists = (table) =>
+	sqlite
+		.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
+		.get(table) !== undefined;
 
-const rows = (table) => sqlite.prepare(`SELECT * FROM ${table}`).all();
+const rows = (table) =>
+	tableExists(table) ? sqlite.prepare(`SELECT * FROM ${table}`).all() : [];
 const bool = (value) => value === 1 || value === true;
 const ts = (value) => (value == null ? null : new Date(value).toISOString());
 
