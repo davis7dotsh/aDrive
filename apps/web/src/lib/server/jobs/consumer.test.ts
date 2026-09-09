@@ -2,8 +2,7 @@ import { Effect } from 'effect';
 import { describe, expect, it, vi } from 'vitest';
 import type { Job } from '@adrive/shared';
 import { StorageError } from '../errors';
-import { consumeBatch, dispatchJob, liveJobHandlers } from './consumer';
-import { Indexing, type IndexingShape } from '../services/indexing';
+import { consumeBatch, dispatchJob, indexOutcome } from './consumer';
 
 vi.mock('$app/server', () => ({ getRequestEvent: vi.fn() }));
 
@@ -173,31 +172,10 @@ describe('job batch consumer', () => {
 		expect(calls).toEqual(['index:a', 'site-cleanup:b', 'purge:c']);
 	});
 
-	it('asks for a redelivery only when indexing could not run', async () => {
-		const outcomes: Array<'indexed' | 'skipped' | 'retry' | 'failed'> = [
-			'indexed',
-			'skipped',
-			'failed',
-			'retry'
-		];
-		const indexing = Indexing.of({
-			runOne: () => Effect.succeed(outcomes.shift() ?? 'skipped'),
-			enqueue: () => Effect.void,
-			process: () => Effect.void,
-			runDue: () => Effect.succeed(0),
-			status: Effect.die('unused')
-		} satisfies IndexingShape);
-		const handlers = await Effect.runPromise(
-			liveJobHandlers.pipe(Effect.provideService(Indexing, indexing))
-		);
-		const run = () =>
-			Effect.runPromise(
-				handlers.index({ kind: 'index', orgId: 'o', fileId: 'f', version: 3 })
-			);
-
-		expect(await run()).toBe('done');
-		expect(await run()).toBe('done');
-		expect(await run()).toBe('done');
-		expect(await run()).toBe('retry');
+	it('asks for a redelivery only when indexing could not run', () => {
+		expect(indexOutcome('indexed')).toBe('done');
+		expect(indexOutcome('skipped')).toBe('done');
+		expect(indexOutcome('failed')).toBe('done');
+		expect(indexOutcome('retry')).toBe('retry');
 	});
 });

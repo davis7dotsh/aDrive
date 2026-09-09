@@ -4,7 +4,9 @@ import type { AppServices } from '../edge';
 import { StorageError } from '../errors';
 import { retryDelaySeconds } from '../job-policy';
 import { requestLayer } from '../layer';
-import { Indexing } from '../services/indexing';
+import { Files } from '../services/files';
+import { Indexing, type IndexOutcome } from '../services/indexing';
+import { Sites } from '../services/sites';
 
 // The subset of a Cloudflare MessageBatch the consumer needs. A real
 // MessageBatch satisfies it, and so does the JSON the Worker facade posts
@@ -80,23 +82,26 @@ export const dispatchJob = (handlers: JobHandlers) => (job: Job) => {
 	}
 };
 
-const indexOutcome = (outcome: 'indexed' | 'skipped' | 'retry' | 'failed') =>
-	outcome === 'retry' ? ('retry' as const) : ('done' as const);
+// Only an attempt that could not run asks for a redelivery; a permanent
+// failure is already on the row and a stale version has nothing to do.
+export const indexOutcome = (outcome: IndexOutcome): JobOutcome =>
+	outcome === 'retry' ? 'retry' : 'done';
 
 const received = (job: Job) =>
 	log({ message: 'job received', ...job }).pipe(Effect.as('done' as const));
 
 export const liveJobHandlers = Effect.gen(function* () {
 	const indexing = yield* Indexing;
+	const files = yield* Files;
+	const sites = yield* Sites;
 	return {
 		index: (job) => indexing.runOne(job).pipe(Effect.map(indexOutcome)),
 		// Content scanning arrives with the abuse stack; until then the job
 		// is acknowledged so a stray send never dead-letters.
 		scan: received,
-		// TODO(D3): files.purgeOne(job.fileId) after the retention delay.
-		purge: received,
-		// TODO(D3): sites.cleanupSession(job.sessionId).
-		siteCleanup: received
+		purge: (job) => files.purgeOne(job.fileId).pipe(Effect.as('done')),
+		siteCleanup: (job) =>
+			sites.cleanupSession(job.sessionId).pipe(Effect.as('done'))
 	} satisfies JobHandlers;
 });
 
@@ -173,12 +178,17 @@ export const consumeBatch = <R>(
 
 // Each job runs in its own layer bound to the job's org (the same layer
 // runWorkerProgram builds), so the services only ever see that tenant's
-// rows. A defect (a bug, not a StorageError) escapes the batch as a
-// rejection; the facade then retries every message, which is the safe
-// default for an unknown failure.
+// rows. `local` matters: the jobs route already runs under a tenant-less
+// layer, and nested provides otherwise share memoized services, which
+// would hand the job the anonymous org. A defect (a bug, not a
+// StorageError) escapes the batch as a rejection; the facade then
+// retries every message, which is the safe default for an unknown
+// failure.
 export const runJobForOrg = (env: Env) => (job: Job) =>
 	runJob(job).pipe(
-		Effect.provide(requestLayer(env, { orgId: job.orgId, userId: 'system' })),
+		Effect.provide(requestLayer(env, { orgId: job.orgId, userId: 'system' }), {
+			local: true
+		}),
 		Effect.catchTag('SqlError', (cause) =>
 			Effect.fail(new StorageError({ operation: 'connect for job', cause }))
 		)

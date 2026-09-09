@@ -132,6 +132,11 @@ export interface FilesShape {
 		DashboardThumbnailStoreResult,
 		InvalidRequest | NotFound | StorageError
 	>;
+	// One purge attempt, run from the queue. Re-sends itself when the
+	// file's deadline (trash retention or expiry) is still ahead.
+	readonly purgeOne: (fileId: string) => Effect.Effect<void, StorageError>;
+	// Reconciliation: re-sends jobs for files due long ago that the queue
+	// never finished. Returns how many were re-sent.
 	readonly sweepPurges: (limit: number) => Effect.Effect<number, StorageError>;
 	readonly findContent: (
 		id: string,

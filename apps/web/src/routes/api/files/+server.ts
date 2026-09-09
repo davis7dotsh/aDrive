@@ -1,6 +1,6 @@
 import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
-import { runEdge, runEdgeWithEvent, runWorkerProgram } from '$lib/server/edge';
+import { runEdge } from '$lib/server/edge';
 import { requireAuth, requireWrite } from '$lib/server/request-auth';
 import { AppConfig } from '$lib/server/config';
 import { validateExpiration } from '$lib/server/auth-policy';
@@ -194,10 +194,9 @@ export const PUT: RequestHandler = (event) => {
 	);
 };
 
-export const DELETE: RequestHandler = async (event) => {
-	const { request, url } = event;
-	const output = await runEdgeWithEvent(
-		event,
+export const DELETE: RequestHandler = (event) => {
+	const { url } = event;
+	return runEdge(
 		Effect.gen(function* () {
 			const files = yield* Files;
 			yield* requireWrite(event);
@@ -207,23 +206,8 @@ export const DELETE: RequestHandler = async (event) => {
 					message: 'Only trash can be emptied'
 				});
 			}
-			return {
-				count: yield* files.scheduleAllPurgesNow,
-				response: Response.json({ ok: true as const })
-			};
+			yield* files.scheduleAllPurgesNow;
+			return Response.json({ ok: true as const });
 		})
 	);
-	if (output.count > 0 && event.platform) {
-		event.platform.ctx.waitUntil(
-			runWorkerProgram(
-				event.platform.env,
-				Effect.gen(function* () {
-					const files = yield* Files;
-					yield* files.sweepPurges(10);
-				}),
-				event.locals.auth
-			)
-		);
-	}
-	return output.response;
 };

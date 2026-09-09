@@ -60,8 +60,12 @@ export interface RouteTestContext {
 	// Every job the app sent since the last drain, in order. The delay is
 	// recorded, never waited for.
 	readonly jobs: Array<SentJob>;
-	// Runs the consumer in-process over the collected jobs, including any
-	// they send in turn, until the queue is empty. Returns every decision.
+	// Runs the consumer in-process over every collected job as if its
+	// delay had elapsed, then over anything those runs sent or asked to
+	// retry, until nothing is left to run. A job the consumer re-sends
+	// with a delay (a purge that arrived before its deadline) stays in
+	// `jobs` for a later drain, since the clock has not moved. Returns
+	// every decision.
 	readonly drainJobs: () => Promise<ReadonlyArray<JobDecision>>;
 }
 
@@ -250,6 +254,7 @@ export const createRouteContext = async (): Promise<RouteTestContext> => {
 		drainJobs: async () => {
 			const { handleJobBatch } = await import('../jobs/consumer');
 			const decisions: Array<JobDecision> = [];
+			const parked: Array<SentJob> = [];
 			let id = 0;
 			const attempts = new Map<string, number>();
 			// A retry decision re-queues the same body with attempts + 1,
@@ -272,6 +277,9 @@ export const createRouteContext = async (): Promise<RouteTestContext> => {
 					messages: batch
 				});
 				decisions.push(...batchDecisions);
+				for (const sent of jobs.splice(0)) {
+					(sent.delaySeconds > 0 ? parked : jobs).push(sent);
+				}
 				for (const decision of batchDecisions) {
 					if (!('retry' in decision)) continue;
 					const message = batch.find((entry) => entry.id === decision.id);
@@ -283,6 +291,7 @@ export const createRouteContext = async (): Promise<RouteTestContext> => {
 					}
 				}
 			}
+			jobs.push(...parked);
 			return decisions;
 		}
 	};

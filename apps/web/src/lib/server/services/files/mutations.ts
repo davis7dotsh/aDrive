@@ -26,7 +26,7 @@ export const mutationOps = (
 	| 'recordDownload'
 > => {
 	const { sql, org } = internals;
-	const { findDashboardFile, sendIndexJob } = internals;
+	const { findDashboardFile, sendIndexJob, sendPurgeJob } = internals;
 	return {
 		setVisibility: Effect.fn('Files.setVisibility')(function* (id, isPublic) {
 			const current = yield* findDashboardFile(id);
@@ -78,6 +78,7 @@ export const mutationOps = (
 			if (rows.length !== 1) {
 				return yield* new NotFound({ id });
 			}
+			yield* sendPurgeJob(id, purgeAt);
 			return {
 				file: { ...current, deletedAt, updatedAt: deletedAt },
 				forcedPublic: false
@@ -122,6 +123,7 @@ export const mutationOps = (
 						new StorageError({ operation: 'update file expiration', cause })
 				)
 			);
+			if (expiresAt !== null) yield* sendPurgeJob(id, expiresAt);
 			return {
 				file: { ...current, expiresAt, updatedAt },
 				forcedPublic: false
@@ -204,27 +206,28 @@ export const mutationOps = (
 					message: 'This file is already being purged'
 				});
 			}
+			yield* sendPurgeJob(id, EPOCH);
 			return { file: current, forcedPublic: false };
 		}),
-		// Suspended so the org is read when the effect runs, not when the
+		// A generator body reads the org when the effect runs, not when the
 		// layer is built (content routes build the layer with no tenant).
-		scheduleAllPurgesNow: Effect.suspend(
-			() => sql<{ id: string }>`
+		scheduleAllPurgesNow: Effect.gen(function* () {
+			const rows = yield* sql<{ id: string }>`
 				UPDATE files
 				SET purge_at = ${EPOCH}, purge_state = 'none', purge_error = NULL,
 					purge_next_run_at = NULL
 				WHERE org_id = ${org.id} AND deleted_at IS NOT NULL
 					AND purge_state <> 'pending'
 				RETURNING id
-			`
-		).pipe(
-			Effect.map((rows) => rows.length),
-			Effect.mapError(
-				(cause) =>
-					new StorageError({ operation: 'schedule empty trash', cause })
-			),
-			Effect.withSpan('Files.scheduleAllPurgesNow')
-		),
+			`.pipe(
+				Effect.mapError(
+					(cause) =>
+						new StorageError({ operation: 'schedule empty trash', cause })
+				)
+			);
+			for (const row of rows) yield* sendPurgeJob(row.id, EPOCH);
+			return rows.length;
+		}).pipe(Effect.withSpan('Files.scheduleAllPurgesNow')),
 		recordDownload: Effect.fn('Files.recordDownload')(function* (id) {
 			const now = new Date().toISOString();
 			// Content routes have no tenant; the file id alone identifies it.
