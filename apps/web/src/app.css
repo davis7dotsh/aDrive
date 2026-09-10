@@ -340,6 +340,9 @@
 [data-theme] .vis-dot[data-public='false'] {
 	background: var(--color-zinc-300);
 }
+[data-theme] .bulk-bar {
+	border-color: color-mix(in srgb, var(--color-accent-500) 35%, transparent);
+}
 [data-theme] .file-name:hover {
 	color: var(--color-accent-600);
 }

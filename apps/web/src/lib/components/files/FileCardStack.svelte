@@ -2,6 +2,7 @@
 	import type { DashboardFile } from '@adrive/shared';
 	import { fileFamily } from '$lib/dashboard/file-family';
 	import { formatBytes, formatShortDate } from '$lib/dashboard/format';
+	import { shiftSelectHandlers } from '$lib/dashboard/shift-select';
 	import FileMenu from './FileMenu.svelte';
 	import FileThumb from './FileThumb.svelte';
 
@@ -35,6 +36,8 @@
 		onselect?: (selected: boolean, shift: boolean) => void;
 	} = $props();
 
+	const shiftSelect = shiftSelectHandlers(() => ({ selected, onselect }));
+
 	const detailUrl = $derived(
 		`/files/${file.id}${returnQuery ? `?from=${encodeURIComponent(returnQuery)}` : ''}`
 	);
@@ -64,6 +67,7 @@
 <li
 	class="stack-card group relative flex min-w-0 flex-col rounded-2xl bg-zinc-50 p-4 transition-colors hover:bg-zinc-100"
 	data-selected={selected}
+	{...shiftSelect}
 >
 	<div class="flex items-center gap-3">
 		<a
