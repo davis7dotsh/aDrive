@@ -2,6 +2,7 @@
 	import type { DashboardFile } from '@adrive/shared';
 	import { formatBytes, formatDate } from '$lib/dashboard/format';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import { shiftSelectHandlers } from '$lib/dashboard/shift-select';
 	import FileMenu from './FileMenu.svelte';
 	import FileThumb from './FileThumb.svelte';
 
@@ -33,12 +34,14 @@
 		onselect?: (selected: boolean, shift: boolean) => void;
 	} = $props();
 
+	const shiftSelect = shiftSelectHandlers(() => ({ selected, onselect }));
+
 	const detailUrl = $derived(
 		`/files/${file.id}${returnQuery ? `?from=${encodeURIComponent(returnQuery)}` : ''}`
 	);
 </script>
 
-<li class="group min-w-0">
+<li class="group min-w-0" {...shiftSelect}>
 	<a href={detailUrl} aria-label={`Open ${file.displayName}`}>
 		{#if file.quarantined}
 			<div
