@@ -605,8 +605,6 @@
 	--stack-card: var(--color-zinc-50);
 	--stack-card-hover: #f0f0f0;
 	--stack-sheet: #ffffff;
-	--stack-sheet-shadow:
-		0 0 0 1px rgb(0 0 0 / 0.04), 0 2px 6px -1px rgb(0 0 0 / 0.1);
 	--stack-shadow:
 		0 0 0 1px rgb(0 0 0 / 0.04), 0 1px 2px rgb(0 0 0 / 0.05),
 		0 8px 18px -6px rgb(0 0 0 / 0.14);
@@ -674,25 +672,6 @@
 [data-theme='e'] .stack-card:has(.vis-dot[data-public='true']) .hex-badge {
 	background: var(--color-accent-500);
 	color: var(--accent-fg);
-}
-/* The preview sits on a small pile of sheets. */
-[data-theme='e'] .stack::before,
-[data-theme='e'] .stack::after {
-	content: '';
-	position: absolute;
-	left: 0.5rem;
-	right: 0.5rem;
-	bottom: 0.4375rem;
-	height: 1.5rem;
-	border-radius: 0.625rem;
-	background: var(--stack-sheet);
-	box-shadow: var(--stack-sheet-shadow);
-}
-[data-theme='e'] .stack::after {
-	left: 1rem;
-	right: 1rem;
-	bottom: 0;
-	opacity: 0.7;
 }
 [data-theme='e'] .stack .thumb {
 	position: relative;
@@ -782,8 +761,6 @@
 		--stack-card: #121212;
 		--stack-card-hover: #181818;
 		--stack-sheet: #202020;
-		--stack-sheet-shadow:
-			0 0 0 1px rgb(255 255 255 / 0.08), 0 2px 6px -1px rgb(0 0 0 / 0.5);
 		--stack-shadow:
 			0 0 0 1px rgb(255 255 255 / 0.08), 0 8px 20px -8px rgb(0 0 0 / 0.6);
 	}

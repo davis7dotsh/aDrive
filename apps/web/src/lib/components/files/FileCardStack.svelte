@@ -146,7 +146,7 @@
 		href={detailUrl}
 		tabindex="-1"
 		aria-hidden="true"
-		class="stack relative mt-4 block pb-3"
+		class="stack relative mt-4 block"
 	>
 		<FileThumb
 			{file}
