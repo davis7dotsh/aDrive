@@ -6,14 +6,16 @@
 	import type { LayoutProps } from './$types';
 	import { page } from '$app/state';
 	import { untrack } from 'svelte';
+	import {
+		DESIGN_VARIANTS as VARIANTS,
+		parseDesignVariant,
+		provideDesignVariant
+	} from '$lib/dashboard/design-variant';
 
 	let { children, data }: LayoutProps = $props();
 	// /A … /E render the files page under one of the design variants.
-	const VARIANTS = ['a', 'b', 'c', 'd', 'e'] as const;
-	const variant = $derived.by(() => {
-		const letter = page.params.design?.toLowerCase();
-		return VARIANTS.find((candidate) => candidate === letter) ?? null;
-	});
+	const variant = $derived(parseDesignVariant(page.params.design));
+	provideDesignVariant(() => variant);
 	const variantNames = {
 		a: 'Ember',
 		b: 'Iris',

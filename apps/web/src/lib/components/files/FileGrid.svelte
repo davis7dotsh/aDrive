@@ -3,6 +3,8 @@
 	import { formatBytes } from '$lib/dashboard/format';
 	import Button from '$lib/components/ui/Button.svelte';
 	import FileCard from './FileCard.svelte';
+	import FileCardStack from './FileCardStack.svelte';
+	import { useDesignVariant } from '$lib/dashboard/design-variant';
 	import FileGridSkeleton from './FileGridSkeleton.svelte';
 	import FileList from './FileList.svelte';
 
@@ -48,6 +50,8 @@
 		files.reduce((sum, file) => sum + file.sizeBytes, 0)
 	);
 	const initialLoading = $derived(loading && files.length === 0);
+	const variant = useDesignVariant();
+	const Card = $derived(variant() === 'e' ? FileCardStack : FileCard);
 </script>
 
 <div
@@ -125,7 +129,7 @@
 		class="file-grid grid grid-cols-2 gap-x-4 gap-y-8 py-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6"
 	>
 		{#each files as file (file.id)}
-			<FileCard
+			<Card
 				{file}
 				{token}
 				{contentOrigin}
