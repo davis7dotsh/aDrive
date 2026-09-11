@@ -107,6 +107,26 @@ describe('host gate', () => {
 		);
 	});
 
+	it('keeps legacy long organization slugs routable within the DNS label limit', () => {
+		for (const length of [45, 63]) {
+			const slug = 'a'.repeat(length);
+			expect(
+				assertHostRoute(
+					new URL(`https://${slug}.content.example.com/f/file-id`),
+					origins
+				)
+			).toEqual({ route: 'content', slug });
+		}
+		for (const slug of ['a'.repeat(64), '-leading', 'trailing-']) {
+			expect(
+				contentSlugFromHost(
+					`${slug}.content.example.com`,
+					origins.contentDomain
+				)
+			).toBeNull();
+		}
+	});
+
 	it('returns a typed 421 candidate for a dashboard route on a content host', () => {
 		expect(() =>
 			assertHostRoute(

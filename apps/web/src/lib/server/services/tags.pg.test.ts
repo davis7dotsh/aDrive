@@ -15,7 +15,10 @@ const tagRunner = (applicationName: string) => {
 		Layer.provide(
 			Layer.merge(
 				pgLayer({ connectionString: url.href }),
-				Layer.succeed(CurrentOrg, { id: TEST_ORG_ID })
+				Layer.succeed(CurrentOrg, {
+					id: TEST_ORG_ID,
+					slug: TEST_ORG_ID.replaceAll('_', '-')
+				})
 			)
 		)
 	);

@@ -4,6 +4,7 @@ import { AppConfig } from '../config';
 import { forgetContentSlug } from '../content-host';
 import { InvalidRequest, StorageError } from '../errors';
 import { PgSql } from '../pg';
+import { lockSlugClaims } from '../slug-claims';
 import {
 	SLUG_REDIRECT_WINDOW_MS,
 	nextSlugChangeAt,
@@ -84,33 +85,58 @@ const makeOrg = Effect.gen(function* () {
 					message: validated.message
 				});
 			}
-			const now = new Date();
-			const current = yield* load;
-			if (validated.slug === current.slug) return toSettings(current, now);
-			const allowedAt = nextSlugChangeAt(current.slug_changed_at, now);
-			if (allowedAt !== null) {
-				return yield* new InvalidRequest({
-					status: 409,
-					message: `The slug can change again on ${allowedAt.slice(0, 10)}`
-				});
-			}
-			const redirectCutoff = new Date(
-				now.getTime() - SLUG_REDIRECT_WINDOW_MS
-			).toISOString();
-			const nowIso = now.toISOString();
-			// The update fails on the unique slug when another org owns the
-			// name; a parked slug that still redirects is refused first unless
-			// this org is the one that parked it (taking it back is fine).
 			const changed = yield* sql
 				.withTransaction(
 					Effect.gen(function* () {
+						// A slug moves between the live and parked tables. Serialize that
+						// namespace before reading either table, including this org's
+						// cooldown. A separate statement gives waiters a fresh snapshot.
+						// Renames happen at most once per org per 30 days, so a brief
+						// global lock avoids a more complex multi-slug lock protocol.
+						yield* lockSlugClaims(sql);
+						const current = yield* load;
+						const now = new Date();
+						if (validated.slug === current.slug) {
+							return { settings: toSettings(current, now), previousSlug: null };
+						}
+						const allowedAt = nextSlugChangeAt(current.slug_changed_at, now);
+						if (allowedAt !== null) {
+							return yield* new InvalidRequest({
+								status: 409,
+								message: `The slug can change again on ${allowedAt.slice(0, 10)}`
+							});
+						}
+						const redirectCutoff = new Date(
+							now.getTime() - SLUG_REDIRECT_WINDOW_MS
+						).toISOString();
+						const nowIso = now.toISOString();
 						const parked = yield* sql<{ org_id: string }>`
 							SELECT org_id FROM org_slug_history
 							WHERE slug = ${validated.slug} AND released_at > ${redirectCutoff}
 							LIMIT 1
 						`;
 						const holder = parked[0];
-						if (holder && holder.org_id !== org.id) return null;
+						if (holder && holder.org_id !== org.id) {
+							return yield* new InvalidRequest({
+								status: 409,
+								message: 'That slug is taken'
+							});
+						}
+						const rows = yield* sql`
+							UPDATE orgs
+							SET slug = ${validated.slug}, slug_changed_at = ${nowIso}
+							WHERE id = ${org.id} AND slug = ${current.slug}
+							RETURNING id, slug, name, slug_changed_at
+						`;
+						const updated = Schema.decodeUnknownOption(OrgRow)(rows[0]);
+						if (updated._tag === 'None') {
+							// A writer outside this protocol changed the row. Fail inside
+							// the transaction so no history changes can be committed.
+							return yield* new InvalidRequest({
+								status: 409,
+								message: 'The organization changed; try again'
+							});
+						}
 						yield* sql`
 							DELETE FROM org_slug_history
 							WHERE slug = ${validated.slug}
@@ -122,13 +148,10 @@ const makeOrg = Effect.gen(function* () {
 							ON CONFLICT (slug) DO UPDATE
 							SET org_id = EXCLUDED.org_id, released_at = EXCLUDED.released_at
 						`;
-						const rows = yield* sql`
-							UPDATE orgs
-							SET slug = ${validated.slug}, slug_changed_at = ${nowIso}
-							WHERE id = ${org.id} AND slug = ${current.slug}
-							RETURNING id, slug, name, slug_changed_at
-						`;
-						return Schema.decodeUnknownOption(OrgRow)(rows[0]);
+						return {
+							settings: toSettings(updated.value, now),
+							previousSlug: current.slug
+						};
 					})
 				)
 				.pipe(
@@ -136,23 +159,31 @@ const makeOrg = Effect.gen(function* () {
 						(cause) =>
 							cause instanceof SqlError &&
 							cause.cause._tag === 'UniqueViolation',
-						() => Effect.succeed(null)
+						() =>
+							Effect.fail(
+								new InvalidRequest({
+									status: 409,
+									message: 'That slug is taken'
+								})
+							)
 					),
-					storageError('change org slug')
+					Effect.catchTag('SqlError', (cause) =>
+						Effect.fail(
+							new StorageError({ operation: 'change org slug', cause })
+						)
+					)
 				);
-			if (changed === null || changed._tag === 'None') {
-				return yield* new InvalidRequest({
-					status: 409,
-					message: 'That slug is taken'
-				});
-			}
+			if (changed.previousSlug === null) return changed.settings;
 			yield* Effect.all(
-				[forgetContentSlug(current.slug), forgetContentSlug(validated.slug)],
+				[
+					forgetContentSlug(changed.previousSlug),
+					forgetContentSlug(validated.slug)
+				],
 				{ concurrency: 'unbounded' }
 			).pipe(Effect.provideService(AuthGuardStore, store));
 			// A session pins the slug it signed in with; it is refreshed on
 			// the next request through the membership row, so no cookie work.
-			return toSettings(changed.value, now);
+			return changed.settings;
 		})
 	});
 });

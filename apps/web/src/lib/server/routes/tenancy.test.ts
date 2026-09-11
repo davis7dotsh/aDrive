@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { Effect } from 'effect';
+import { FileContentLinkResponseSchema } from '@adrive/shared';
+import { Effect, Schema } from 'effect';
 import type { PgSql } from '$lib/server/pg';
 
 vi.mock('$app/server', async () => {
@@ -408,6 +409,56 @@ describe('org slugs (local platform)', () => {
 		);
 	};
 
+	it('serves an existing private link after following the old host redirect', async () => {
+		const ctx = await setup();
+		await loginAs(ctx, { userId: `user_grant_rename_${crypto.randomUUID()}` });
+		const before = await currentIdentity(ctx);
+		const file = await uploadFile(ctx, {
+			name: 'private-moving.txt',
+			content: 'private content after rename',
+			isPublic: false
+		});
+		const { GET: linkGET } =
+			await import('../../../routes/api/files/[id]/link/+server.js');
+		const linked = await call(
+			linkGET,
+			ctx.event({
+				path: `/api/files/${file.id}/link`,
+				params: { id: file.id }
+			})
+		);
+		const link = await Schema.decodeUnknownPromise(
+			FileContentLinkResponseSchema
+		)(await linked.json());
+		expect(link.public).toBe(false);
+		const oldUrl = new URL(link.url);
+		expect(oldUrl.origin).toBe(`http://${before.orgSlug}.localhost:5174`);
+		const { handle } = await import('../../../hooks.server.js');
+		const { GET: serveGET } = await import('../../../routes/f/[id]/+server.js');
+		const requestContent = (url: URL) =>
+			handle({
+				event: ctx.event({
+					path: `${url.pathname}${url.search}`,
+					url,
+					params: { id: file.id }
+				}),
+				resolve: (event) => call(serveGET, event)
+			});
+		expect((await requestContent(oldUrl)).status).toBe(200);
+		const next = `private-${crypto.randomUUID().slice(0, 8)}`;
+		expect((await patchSlug(ctx, next)).status).toBe(200);
+		const redirected = await requestContent(oldUrl);
+		expect(redirected.status).toBe(301);
+		const location = redirected.headers.get('location');
+		expect(location).toBe(
+			`http://${next}.localhost:5174${oldUrl.pathname}${oldUrl.search}`
+		);
+		if (!location) throw new Error('The renamed content host did not redirect');
+		const served = await requestContent(new URL(location));
+		expect(served.status).toBe(200);
+		expect(await served.text()).toBe('private content after rename');
+	});
+
 	it('lets an owner rename the content host once per 30 days with redirects', async () => {
 		const ctx = await setup();
 		await loginAs(ctx, OWNER);
@@ -493,14 +544,24 @@ describe('org slugs (local platform)', () => {
 
 		// A non-owner cannot rename at all.
 		const other = await currentIdentity(ctx);
-		await queryPg(
-			ctx.env,
-			(sql) => sql`
-				UPDATE memberships SET role = 'member'
-				WHERE org_id = ${other.orgId} AND user_id = ${other.userId}`
+		// Session resolution mirrors the verified provider role, so change
+		// that authority instead of a local membership it would overwrite.
+		const { workOSFake } = await import('../services/workos');
+		const memberSession = vi.spyOn(workOSFake, 'loadSession').mockReturnValue(
+			Effect.succeed({
+				authenticated: true,
+				sessionId: `fake-session:${other.userId}`,
+				userId: other.userId,
+				orgId: other.orgId,
+				role: 'member'
+			})
 		);
-		await expect(
-			patchSlug(ctx, `member-${crypto.randomUUID().slice(0, 8)}`)
-		).rejects.toMatchObject({ status: 403 });
+		try {
+			await expect(
+				patchSlug(ctx, `member-${crypto.randomUUID().slice(0, 8)}`)
+			).rejects.toMatchObject({ status: 403 });
+		} finally {
+			memberSession.mockRestore();
+		}
 	});
 });

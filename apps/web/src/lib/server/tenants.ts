@@ -1,5 +1,8 @@
 import type { PgClient } from '@effect/sql-pg';
 import { Effect } from 'effect';
+import { StorageError } from './errors';
+import { lockSlugClaims } from './slug-claims';
+import { SLUG_MAX_LENGTH, SLUG_REDIRECT_WINDOW_MS } from './slug-policy';
 
 export interface TenantRows {
 	readonly orgId: string;
@@ -20,6 +23,27 @@ export interface TenantRows {
 export const ensureTenant = (sql: PgClient.PgClient, tenant: TenantRows) =>
 	sql.withTransaction(
 		Effect.gen(function* () {
+			yield* lockSlugClaims(sql);
+			const existing = yield* sql<{ id: string }>`
+				SELECT id FROM orgs WHERE id = ${tenant.orgId}
+			`;
+			if (existing.length === 0) {
+				const redirectCutoff = new Date(
+					Date.now() - SLUG_REDIRECT_WINDOW_MS
+				).toISOString();
+				const reserved = yield* sql<{ org_id: string }>`
+					SELECT org_id FROM org_slug_history
+					WHERE slug = ${tenant.slug} AND org_id <> ${tenant.orgId}
+						AND released_at > ${redirectCutoff}
+					LIMIT 1
+				`;
+				if (reserved.length > 0) {
+					return yield* new StorageError({
+						operation: 'create tenant',
+						cause: 'The organization slug is reserved by another organization'
+					});
+				}
+			}
 			yield* sql`
 			INSERT INTO orgs (id, slug, name)
 			VALUES (${tenant.orgId}, ${tenant.slug}, ${tenant.name})
@@ -62,6 +86,8 @@ export const personalOrgFor = (email: string) => {
 	const local = email.split('@')[0] ?? email;
 	return {
 		name: `${local}'s drive`,
-		slug: `${slugify(local)}-${randomHex(2)}`
+		slug: `${slugify(local)
+			.slice(0, SLUG_MAX_LENGTH - 5)
+			.replace(/-+$/, '')}-${randomHex(2)}`
 	};
 };

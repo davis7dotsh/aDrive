@@ -1,6 +1,6 @@
 // Rules for the label an org's content is served under
 // (`<slug>.<CONTENT_DOMAIN>`). The host gate accepts a superset of this
-// (any 3-32 char [a-z0-9-] label) so an old slug can still redirect; only
+// (DNS-valid labels of 3-63 characters) so old slugs keep working; only
 // slugs an owner may choose go through validateSlug.
 
 export const SLUG_MIN_LENGTH = 3;

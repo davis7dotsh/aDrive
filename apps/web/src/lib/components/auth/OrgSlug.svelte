@@ -7,7 +7,15 @@
 	import { getToasts } from '$lib/dashboard/toast.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 
-	let { token, org }: { token: string; org: OrgSettings } = $props();
+	let {
+		token,
+		org,
+		onchanged
+	}: {
+		token: string;
+		org: OrgSettings;
+		onchanged: (updated: OrgSettings) => void;
+	} = $props();
 	const toasts = getToasts();
 	// The settings page keys this component on the slug, so the prop only
 	// seeds local state; a successful change replaces it from the response.
@@ -24,8 +32,11 @@
 		try {
 			current = await changeOrgSlug(token, slug);
 			slug = current.slug;
+			onchanged(current);
 			toasts.success(`Content now lives at ${current.contentOrigin}`);
-			await invalidateAll();
+			await invalidateAll().catch((cause) => {
+				toasts.error(cause, 'Could not refresh the page');
+			});
 		} catch (cause) {
 			toasts.error(cause, 'Could not change the slug');
 		} finally {
@@ -35,7 +46,7 @@
 </script>
 
 <form
-	class="mt-4 flex max-w-xl items-end gap-2"
+	class="flex max-w-xl items-end gap-2"
 	onsubmit={(event) => {
 		event.preventDefault();
 		void save();

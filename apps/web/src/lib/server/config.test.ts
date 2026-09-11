@@ -12,7 +12,7 @@ import { configFromEnv } from './config';
 // Config reads these scalar bindings only; no platform services are needed.
 const env = {
 	DASHBOARD_ORIGIN: 'https://drive.example.com',
-	CONTENT_ORIGIN: 'https://content.example.com',
+	CONTENT_DOMAIN: 'content.example.com',
 	MAX_UPLOAD_BYTES: '99614720',
 	MAINTENANCE_SECRET: 'config-test-maintenance-secret',
 	SEMANTIC_SEARCH: 'auto',

@@ -9,8 +9,9 @@ export interface OriginConfig {
 
 // The leading host label a content request is allowed to carry. The slug
 // policy (slug-policy.ts) is stricter for slugs an owner may choose; the
-// gate only has to reject hosts that can never name an org.
-const HOST_SLUG_PATTERN = /^[a-z0-9-]{3,32}$/;
+// gate also accepts longer slugs generated before the owner policy was
+// introduced, up to the DNS label limit. Existing URLs keep working.
+const HOST_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/;
 
 const origin = (value: string, label: string) => {
 	const parsed = new URL(value);

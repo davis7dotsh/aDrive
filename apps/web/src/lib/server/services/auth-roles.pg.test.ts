@@ -14,7 +14,10 @@ const authLayer = (client: WorkOSClientShape, orgId: string, userId: string) =>
 			Layer.mergeAll(
 				testPgLayer(),
 				Layer.succeed(WorkOSClient, client),
-				Layer.succeed(CurrentOrg, { id: orgId }),
+				Layer.succeed(CurrentOrg, {
+					id: orgId,
+					slug: orgId.replaceAll('_', '-')
+				}),
 				Layer.succeed(CurrentUser, { id: userId })
 			)
 		)

@@ -55,7 +55,9 @@ const live = WorkOSLive.pipe(
 	Layer.provide(
 		Layer.succeed(AppConfig, {
 			dashboardOrigin: 'https://drive.example.com',
-			contentOrigin: 'https://content.example.com',
+			contentDomain: 'content.example.com',
+			contentScheme: 'https:',
+			contentOriginFor: (slug) => `https://${slug}.content.example.com`,
 			maxUploadBytes: 1_000_000,
 			maintenanceSecret: 'workos-adapter-maintenance',
 			workos: {
