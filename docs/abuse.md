@@ -65,6 +65,21 @@ public gets a `scan` job on the queue. For a verified org the row stays
 private with `files.publish_pending = true` until the scan clears it; for
 an established org it is public at once and scanned after.
 
+Each version write records its scan obligation in Postgres before enqueueing.
+The lifecycle sweep requeues overdue obligations in bounded batches, so a queue
+outage cannot silently lose the initial scan. A completed suspicious verdict
+ends automatic scanning and leaves the file for review. When only some URL
+submissions succeed, their results are still collected; failed submissions
+keep a suspicious minimum verdict, and any malicious result quarantines.
+
+Publishing the current version does not expose unscanned older bytes. Older
+versions need their own completed clean scan or operator clearance for anonymous
+access. Owners can still request signed links for pending/private versions;
+a malicious version stays blocked even with an existing grant. Clearing the
+current version does not clear older versions. Admin actions include the
+displayed current version and reject an outdated overview with a
+refresh-required response.
+
 Checks, in order, each writing one `scan_verdicts` row per
 `(file, version, source)`:
 
@@ -149,10 +164,15 @@ files, so it is the right first move when in doubt.
 Workers rate limit bindings (`wrangler.jsonc` `ratelimits`, per colo,
 approximate, 60 second windows): `RL_UPLOAD` 60/min per org (uploads,
 site sessions), `RL_PUBLISH` 10/min per org (reserved for publish
-counting), `RL_AUTH` 10/min per client address (device auth), `RL_ANON`
+counting), `RL_AUTH` 30/min per client address (shared device creation and
+token polling), `RL_ANON`
 300/min per client address (content fetches past the edge cache, and
 reports). A refused request is 429 with `Retry-After: 60`. A binding that
-errors lets the request through and logs.
+errors lets the request through and logs. The auth budget accommodates the
+advertised five-second polling interval. Refused token polls return
+`{ "status": "slow_down" }`; the CLI honors `Retry-After` before polling
+again. Device creation still consumes the shared limit and returns a normal
+error response when refused.
 
 ## Operating
 

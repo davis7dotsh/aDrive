@@ -176,6 +176,121 @@ const setup = async (
 };
 
 describe('scanner publication and delivery recovery', () => {
+	it.each(['clean', 'malicious'] as const)(
+		'polls successful submissions after a partial failure and preserves the %s result',
+		async (verdict) => {
+			const submissions: string[] = [];
+			let failSubmission = true;
+			const fixture = await setup({
+				public: verdict === 'malicious',
+				pending: verdict === 'clean',
+				contentType: 'text/html',
+				content:
+					'<html><a href="https://links.example.test/accepted">one</a><a href="https://links.example.test/unavailable">two</a></html>',
+				reputation: {
+					enabled: true,
+					submit: (url) =>
+						Effect.suspend(() => {
+							submissions.push(url);
+							return failSubmission && url.endsWith('/unavailable')
+								? Effect.fail(
+										new StorageError({
+											operation: 'submit URL',
+											cause: 'provider offline'
+										})
+									)
+								: Effect.succeed(url);
+						}),
+					result: (id) =>
+						Effect.succeed({ _tag: 'Settled', verdict, details: { id } })
+				}
+			});
+			try {
+				expect(await fixture.run()).toEqual({
+					_tag: 'Polling',
+					ids: ['https://links.example.test/accepted']
+				});
+				const poll = fixture.sent[0];
+				if (!poll || poll.kind !== 'scan')
+					throw new Error('Expected scan continuation');
+				expect(await fixture.run(poll)).toEqual({
+					_tag: 'Settled',
+					verdict: verdict === 'malicious' ? 'malicious' : 'suspicious'
+				});
+				expect(submissions).toHaveLength(2);
+				expect(fixture.sent).toHaveLength(1);
+				expect(await fixture.state()).toMatchObject({
+					public: false,
+					quarantined: verdict === 'malicious',
+					publish_pending: verdict === 'clean',
+					scan_next_run_at: null
+				});
+				expect(
+					(
+						await fixture.control.query(
+							"SELECT verdict FROM scan_verdicts WHERE file_id = $1 AND source = 'urlscan-submit'",
+							[fixture.fileId]
+						)
+					).rows
+				).toEqual([{ verdict: 'suspicious' }]);
+				if (verdict === 'clean') {
+					// A later explicit rescan may clear the hold once every link
+					// can be submitted; failed submissions do not retry forever.
+					failSubmission = false;
+					fixture.sent.splice(0);
+					await fixture.run();
+					const retried = fixture.sent[0];
+					if (!retried || retried.kind !== 'scan')
+						throw new Error('Expected retried scan continuation');
+					expect(await fixture.run(retried)).toEqual({
+						_tag: 'Settled',
+						verdict: 'clean'
+					});
+					expect(await fixture.state()).toMatchObject({
+						public: true,
+						publish_pending: false
+					});
+				}
+			} finally {
+				await fixture.close();
+			}
+		}
+	);
+
+	it('settles failed submissions without scheduling an empty poll or an automatic retry loop', async () => {
+		const fixture = await setup({
+			contentType: 'text/html',
+			content:
+				'<html><a href="https://links.example.test/unavailable">link</a></html>',
+			reputation: {
+				enabled: true,
+				submit: () =>
+					Effect.fail(
+						new StorageError({
+							operation: 'submit URL',
+							cause: 'provider offline'
+						})
+					),
+				result: () => Effect.die('No scan ids exist to poll')
+			}
+		});
+		try {
+			expect(await fixture.run()).toEqual({
+				_tag: 'Settled',
+				verdict: 'suspicious'
+			});
+			expect(fixture.sent).toEqual([]);
+			expect(await fixture.state()).toMatchObject({
+				public: false,
+				publish_pending: true,
+				scan_next_run_at: null
+			});
+			expect(await fixture.recover()).toBe(0);
+		} finally {
+			await fixture.close();
+		}
+	});
+
 	it('holds publication when the required object is missing', async () => {
 		const fixture = await setup();
 		fixture.objects.clear();

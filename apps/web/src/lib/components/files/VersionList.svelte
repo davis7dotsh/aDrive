@@ -60,7 +60,7 @@
 						disabled={file.quarantined}
 						onclick={() => onopen(version.version)}
 					>
-						{file.public ? 'Open' : 'Download'}
+						{file.public || file.kind === 'site' ? 'Open' : 'Download'}
 					</button>
 				{/if}
 			</div>

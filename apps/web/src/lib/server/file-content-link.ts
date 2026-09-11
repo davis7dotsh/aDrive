@@ -73,7 +73,7 @@ export const resolveFileContentLink = (
 					message: 'Only the current site version can be previewed'
 				});
 			}
-			if (!includeUnavailable && !requireGrant) {
+			if (resolved.file.public && !includeUnavailable && !requireGrant) {
 				return {
 					url: new URL(
 						`/s/${encodeURIComponent(resolved.file.id)}/`,

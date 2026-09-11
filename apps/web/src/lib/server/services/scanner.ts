@@ -515,12 +515,24 @@ const makeScanner = Effect.gen(function* () {
 		);
 		const submitted = ids.flatMap((id) => (id === null ? [] : [id]));
 		if (submitted.length < ids.length) {
-			// A link that could not be submitted is not cleared.
-			yield* record(row.id, job.version, 'urlscan', 'suspicious', {
+			// Keep submission failures separate from poll results: successful
+			// submissions can still reveal malicious links, while clean results
+			// cannot clear the links the provider never accepted.
+			yield* record(row.id, job.version, 'urlscan-submit', 'suspicious', {
 				links: [...links],
 				submitted: submitted.length,
 				failed: ids.length - submitted.length
 			});
+		} else {
+			// A later explicit scan can recover from a provider outage. Only a
+			// complete submission supersedes the earlier incomplete attempt.
+			yield* sql`
+				DELETE FROM scan_verdicts
+				WHERE file_id = ${row.id} AND org_id = ${org.id}
+					AND version = ${job.version} AND source = 'urlscan-submit'
+			`.pipe(storageError('clear recovered URL submissions'));
+		}
+		if (submitted.length === 0) {
 			return {
 				_tag: 'Settled' as const,
 				verdict: yield* finalize(row, job.version)

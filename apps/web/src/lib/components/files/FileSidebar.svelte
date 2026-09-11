@@ -76,7 +76,7 @@
 				onclick={ondownload}
 				disabled={file.quarantined}
 			>
-				{file.public ? 'Open' : 'Download'}
+				{file.public || file.kind === 'site' ? 'Open' : 'Download'}
 			</Button>
 		</div>
 		<div class="mt-4 grid grid-cols-2 gap-2">

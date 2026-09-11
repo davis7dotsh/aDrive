@@ -161,7 +161,7 @@
 
 	const linkFor = async (version?: number) => {
 		const current = detail.current;
-		if (!current) return { url: '', expiresAt: null };
+		if (!current) return { url: '', expiresAt: null, public: false };
 		if (current.file.quarantined) {
 			throw new Error('Sharing is unavailable while this file is quarantined');
 		}
@@ -172,9 +172,13 @@
 		const unavailable =
 			current.file.deletedAt !== null ||
 			(Number.isFinite(expirationTime) && expirationTime <= Date.now());
+		// Historical bytes have their own scan clearance. Resolve those
+		// through the API so an owner grant can cover an unreviewed version.
+		const currentVersion =
+			version === undefined || version === current.file.version;
 		const link =
-			current.file.public && !unavailable
-				? { url: fileUrl(version), expiresAt: null }
+			current.file.public && !unavailable && currentVersion
+				? { url: fileUrl(version), expiresAt: null, public: true }
 				: getContentLink(
 						session.token,
 						current.file.id,
@@ -198,7 +202,7 @@
 			const fileId = current.file.id;
 			const link = await linkFor(version);
 			if (detail.current?.file.id !== fileId) return;
-			if (current.file.public) {
+			if (link.public || current.file.kind === 'site') {
 				window.open(link.url, '_blank', 'noopener');
 			} else {
 				const anchor = document.createElement('a');

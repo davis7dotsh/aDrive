@@ -1,7 +1,7 @@
 import { DeviceTokenRequestSchema } from '@adrive/shared';
 import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
-import { rateLimitResponse } from '$lib/server/auth-rate-limit-response';
+import { RATE_LIMIT_PERIOD_SECONDS } from '$lib/server/auth-rate-limit-response';
 import { runEdge } from '$lib/server/edge';
 import { decodeJson } from '$lib/server/request-json';
 import { Auth } from '$lib/server/services/auth';
@@ -14,8 +14,15 @@ export const POST: RequestHandler = ({ request, getClientAddress }) =>
 			const rateLimits = yield* RateLimits;
 			const rateLimit = yield* rateLimits.auth(getClientAddress());
 			if (!rateLimit.allowed) {
-				return rateLimitResponse(
-					'Too many authentication requests. Try again later.'
+				return Response.json(
+					{ status: 'slow_down' },
+					{
+						status: 429,
+						headers: {
+							'Cache-Control': 'private, no-store',
+							'Retry-After': String(RATE_LIMIT_PERIOD_SECONDS)
+						}
+					}
 				);
 			}
 			const input = yield* decodeJson(
