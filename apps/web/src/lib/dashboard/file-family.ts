@@ -8,6 +8,7 @@ const CODE_EXT =
 	/\.(ts|tsx|js|jsx|mjs|py|rb|go|rs|sh|json|ya?ml|toml|xml|css)$/i;
 const DATA = /(csv|tab-separated|sql|parquet)/i;
 const ARCHIVE = /(zip|gzip|x-tar|x-7z|x-rar|x-bzip)/i;
+const ARCHIVE_EXT = /\.(zip|gz|tar|tgz|7z|rar|bz2)$/i;
 const DOC = /(pdf|msword|officedocument|markdown)/i;
 
 // A coarse grouping for color and iconography. Based on the content type
@@ -25,5 +26,6 @@ export const fileFamily = (
 	if (DOC.test(type) || /\.(pdf|docx?|md)$/i.test(file.displayName))
 		return 'doc';
 	if (type.startsWith('text/')) return 'text';
+	if (ARCHIVE_EXT.test(file.displayName)) return 'archive';
 	return 'other';
 };
