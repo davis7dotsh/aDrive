@@ -31,15 +31,15 @@
 </script>
 
 <div
-	class="pointer-events-none fixed right-4 bottom-4 z-[100] flex w-[min(24rem,calc(100%-2rem))] flex-col gap-2"
+	class="toast-region pointer-events-none fixed top-4 right-4 z-[100] flex max-h-[calc(50dvh-1.5rem)] w-[min(24rem,calc(100vw-2rem))] flex-col gap-2 overflow-y-auto overscroll-contain"
 	aria-live="polite"
 	aria-atomic="false"
 >
 	{#each toasts.items as item (item.id)}
 		<div
-			transition:fly={{ y: 12, duration: 180 }}
+			transition:fly={{ y: -12, duration: 180 }}
 			animate:flip={{ duration: 150 }}
-			class="pointer-events-auto flex items-start gap-3 rounded-lg border bg-white p-3 shadow-lg {item.tone ===
+			class="pointer-events-auto flex shrink-0 items-start gap-3 rounded-lg border bg-white p-3 shadow-lg {item.tone ===
 			'error'
 				? 'border-red-200'
 				: item.tone === 'success'
@@ -68,3 +68,10 @@
 		</div>
 	{/each}
 </div>
+
+<style>
+	/* Keep both fixed regions reachable on short screens while notices exist. */
+	:global(body:has(.toast-region > *) .dashboard-dock) {
+		max-height: calc(50dvh - 1.5rem);
+	}
+</style>
