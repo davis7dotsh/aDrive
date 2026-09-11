@@ -19,7 +19,7 @@ import { isSearchableText, searchTextLimit } from '../search-text';
 import { createTtlCache } from '../isolate-cache';
 import { stuckBefore } from '../job-policy';
 import { PgSql } from '../pg';
-import { recordAiOps } from '../usage';
+import { commitAiOps, releaseAiOps, reserveAiOps } from '../usage';
 import { BillingGates } from './billing-gates';
 import { Blobs } from './blobs';
 import { CurrentOrg } from './current-org';
@@ -106,24 +106,6 @@ const makeIndexing = Effect.gen(function* () {
 	const sendUsageSync = Effect.suspend(() =>
 		jobs.trySend({ kind: 'usage-sync', orgId: org.id })
 	);
-
-	// The embeddings are committed; what they cost is best effort on top.
-	const meterAiOps = (fileId: string, chunks: number) =>
-		recordAiOps(sql, org.id, chunks).pipe(
-			Effect.andThen(sendUsageSync),
-			Effect.catchCause((cause) =>
-				Effect.sync(() => {
-					console.error(
-						JSON.stringify({
-							message: 'AI usage could not be recorded',
-							fileId,
-							chunks,
-							cause: String(cause)
-						})
-					);
-				})
-			)
-		);
 
 	const storage = (operation: string) => (cause: unknown) =>
 		new StorageError({ operation, cause });
@@ -251,7 +233,15 @@ const makeIndexing = Effect.gen(function* () {
 			}
 
 			const chunks = chunkSearchText(initial.display_name, text);
-			const allowed = yield* gates.canEmbed(org.id, chunks.length);
+			const allowed =
+				(yield* gates.canEmbed(org.id, chunks.length)) &&
+				(yield* reserveAiOps(
+					sql,
+					org.id,
+					lease.token,
+					chunks.length,
+					leaseUntil
+				));
 			if (!allowed) {
 				const finished = yield* finishKeywordOnly(sql, lease, {
 					error: AI_QUOTA_EXHAUSTED,
@@ -273,25 +263,49 @@ const makeIndexing = Effect.gen(function* () {
 				});
 			}
 
-			const committed = yield* semanticCommit(
-				sql,
-				lease,
-				chunks.map((chunk, index) => ({
-					fileId,
-					version: lease.version,
-					ordinal: chunk.ordinal,
-					charStart: chunk.charStart,
-					charEnd: chunk.charEnd,
-					values: embeddings[index] ?? []
-				}))
-			).pipe(Effect.mapError(storage('commit semantic index state')));
+			const committed = yield* sql
+				.withTransaction(
+					Effect.gen(function* () {
+						const committed = yield* semanticCommit(
+							sql,
+							lease,
+							chunks.map((chunk, index) => ({
+								fileId,
+								version: lease.version,
+								ordinal: chunk.ordinal,
+								charStart: chunk.charStart,
+								charEnd: chunk.charEnd,
+								values: embeddings[index] ?? []
+							}))
+						);
+						if (committed && chunks.length > 0)
+							yield* commitAiOps(sql, org.id, lease.token);
+						return committed;
+					})
+				)
+				.pipe(Effect.mapError(storage('commit semantic index state')));
 			if (!committed) {
 				yield* stale('stale semantic indexing completion rolled back');
 				return 'skipped' as const;
 			}
-			yield* meterAiOps(fileId, chunks.length);
+			yield* sendUsageSync;
 			return 'indexed' as const;
 		}).pipe(
+			Effect.ensuring(
+				releaseAiOps(sql, org.id, lease.token).pipe(
+					Effect.catchCause((cause) =>
+						Effect.sync(() => {
+							console.error(
+								JSON.stringify({
+									message: 'AI reservation release failed; lease will expire',
+									fileId,
+									cause: String(cause)
+								})
+							);
+						})
+					)
+				)
+			),
 			Effect.catchCause((cause) =>
 				markFailure(lease, Cause.pretty(cause)).pipe(
 					Effect.catchCause((recordCause) =>

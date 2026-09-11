@@ -12,7 +12,8 @@ export type Plan = keyof typeof PLAN_LIMITS;
 
 export const PRO_PLAN_ID: Plan = 'pro';
 
-export const isPlan = (value: string): value is Plan => value in PLAN_LIMITS;
+export const isPlan = (value: string): value is Plan =>
+	Object.hasOwn(PLAN_LIMITS, value);
 
 // Unknown plans fall back to free so a typo in the column can only make
 // an org smaller, never unlimited.

@@ -92,24 +92,53 @@ export const changeOrgSlug = async (token: string, slug: string) => {
 	return json(parseOrgSettings, response);
 };
 
-export const getBilling = async (token: string, signal?: AbortSignal) => {
-	const response = await request('/api/billing', token, { signal });
-	return json(parseBillingSummary, response);
+// Billing requests need a deadline through body decoding as well as fetch.
+// Clear our timer when the request settles or its caller cancels it.
+const withBillingTimeout = async <A>(
+	signal: AbortSignal | undefined,
+	run: (signal: AbortSignal) => Promise<A>
+) => {
+	const timeout = new AbortController();
+	const timer = setTimeout(() => {
+		timeout.abort(new Error('Billing request timed out. Please try again.'));
+	}, 15_000);
+	try {
+		return await run(
+			signal ? AbortSignal.any([signal, timeout.signal]) : timeout.signal
+		);
+	} catch (cause) {
+		if (timeout.signal.aborted) throw timeout.signal.reason;
+		throw cause;
+	} finally {
+		clearTimeout(timer);
+	}
 };
 
-export const startCheckout = async (token: string) => {
-	const response = await request('/api/billing/checkout', token, {
-		method: 'POST'
+export const getBilling = (token: string, signal?: AbortSignal) =>
+	withBillingTimeout(signal, async (requestSignal) => {
+		const response = await request('/api/billing', token, {
+			signal: requestSignal
+		});
+		return json(parseBillingSummary, response);
 	});
-	return (await json(parseBillingLink, response)).url;
-};
 
-export const openBillingPortal = async (token: string) => {
-	const response = await request('/api/billing/portal', token, {
-		method: 'POST'
+export const startCheckout = (token: string, signal?: AbortSignal) =>
+	withBillingTimeout(signal, async (requestSignal) => {
+		const response = await request('/api/billing/checkout', token, {
+			method: 'POST',
+			signal: requestSignal
+		});
+		return (await json(parseBillingLink, response)).url;
 	});
-	return (await json(parseBillingLink, response)).url;
-};
+
+export const openBillingPortal = (token: string, signal?: AbortSignal) =>
+	withBillingTimeout(signal, async (requestSignal) => {
+		const response = await request('/api/billing/portal', token, {
+			method: 'POST',
+			signal: requestSignal
+		});
+		return (await json(parseBillingLink, response)).url;
+	});
 
 export const listApiKeys = async (token: string, signal?: AbortSignal) => {
 	const response = await request('/api/auth/keys', token, { signal });

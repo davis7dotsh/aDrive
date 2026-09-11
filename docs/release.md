@@ -83,8 +83,10 @@ the repository root.
    and `AUTUMN_WEBHOOK_SECRET` (the Svix signing secret of an Autumn
    webhook endpoint at `<DASHBOARD_ORIGIN>/api/webhooks/autumn` subscribed
    to `billing.updated`), and deploy the plans with
-   `bun --filter @adrive/web billing:push`. Without the key every plan gate
-   fails open and nothing is metered.
+   `bun --filter @adrive/web billing:push`. Without the key external billing
+   is disabled; local quotas still apply. Fake billing keys are development
+   only. See [the billing contract](billing.md) for UTC allowance resets,
+   durable usage reconciliation, and sandbox validation before cutover.
 8. Activate the zones for the hosted target's dashboard and content domains
    in Cloudflare. The `custom_domain` routes create DNS records for their
    exact hostnames; they do not create the tenant wildcard. Create a proxied

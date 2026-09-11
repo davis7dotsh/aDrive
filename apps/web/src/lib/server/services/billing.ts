@@ -2,25 +2,27 @@ import type { BillingSummary } from '@adrive/shared';
 import { Context, Effect, Layer } from 'effect';
 import { AppConfig } from '../config';
 import { StorageError } from '../errors';
+import { STUCK_JOB_MS } from '../job-policy';
 import { PgSql } from '../pg';
 import { PRO_PLAN_ID, planLimits } from '../plans';
-import { readOrgUsage, settleAiOps } from '../usage';
+import { readOrgUsage } from '../usage';
 import { AutumnClient } from './autumn';
 import { CurrentOrg } from './current-org';
 
 const PLAN_NAMES: Record<string, string> = { free: 'Free', pro: 'Pro' };
 
 export interface BillingShape {
-	readonly summary: Effect.Effect<BillingSummary, StorageError>;
-	// Hosted checkout for the pro plan; null when the plan attached with
-	// no payment step, or billing is not configured.
+	readonly summary: Effect.Effect<
+		Omit<BillingSummary, 'canManageBilling'>,
+		StorageError
+	>;
+	// Hosted checkout for the pro plan; null when billing is not configured.
 	readonly checkoutUrl: Effect.Effect<string | null, StorageError>;
 	// The customer portal (cards, invoices, cancellation).
 	readonly portalUrl: Effect.Effect<string | null, StorageError>;
 	// The usage-sync job: pushes the current stored bytes to Autumn as the
-	// storage balance and tracks the AI operations recorded since the last
-	// sync. Reads the row at run time, so several sends coalesce into the
-	// same answer and a failed run is retried with nothing lost.
+	// storage balance and the current UTC month's successful AI operations.
+	// Absolute snapshots are safe to retry after a lost acknowledgement.
 	readonly syncUsage: Effect.Effect<void, StorageError>;
 }
 
@@ -58,7 +60,7 @@ const makeBilling = Effect.gen(function* () {
 			billingEnabled: autumn.enabled,
 			storage: { used: usage.storedBytes, limit: limits.storedBytes },
 			aiOps: { used: usage.aiOpsMonth, limit: limits.aiOpsPerMonth }
-		} satisfies BillingSummary;
+		} satisfies Omit<BillingSummary, 'canManageBilling'>;
 	}).pipe(Effect.withSpan('Billing.summary'));
 
 	// Suspended: the layer is also built for tenant-less programs, where
@@ -76,22 +78,49 @@ const makeBilling = Effect.gen(function* () {
 	).pipe(Effect.withSpan('Billing.portalUrl'));
 
 	const syncUsage = Effect.gen(function* () {
-		const usage = yield* readOrgUsage(sql, org.id);
-		// The org was deleted after the job was sent: nothing to report.
-		if (usage === null) return;
-		yield* autumn.updateBalance({
-			customerId: org.id,
-			featureId: 'storage_bytes',
-			usage: usage.storedBytes
-		});
-		if (usage.aiOpsPending > 0) {
-			yield* autumn.track({
-				customerId: org.id,
-				featureId: 'ai_ops',
-				value: usage.aiOpsPending
-			});
-			yield* settleAiOps(sql, org.id, usage.aiOpsPending);
-		}
+		// Retain obligations while billing is unconfigured; a no-op provider
+		// must never acknowledge and discard real usage.
+		if (!autumn.enabled) return;
+		yield* sql
+			.withTransaction(
+				Effect.gen(function* () {
+					// Serialize the bounded provider calls with usage mutations, so
+					// older storage snapshots cannot overwrite newer ones out of order.
+					yield* sql`SELECT org_id FROM org_usage WHERE org_id = ${org.id} FOR UPDATE`;
+					const rows = yield* sql<{
+						stored_bytes: number;
+						ai_ops_month: number;
+						ai_ops_reset_at: number;
+					}>`SELECT stored_bytes,
+					CASE WHEN ai_ops_month_reset_at IS NULL OR ai_ops_month_reset_at <= now()
+						THEN 0 ELSE ai_ops_month END AS ai_ops_month,
+					EXTRACT(epoch FROM ((date_trunc('month', now() AT TIME ZONE 'UTC') + interval '1 month') AT TIME ZONE 'UTC')) * 1000 AS ai_ops_reset_at
+				FROM org_usage WHERE org_id = ${org.id}`;
+					const usage = rows.at(0);
+					if (!usage) return;
+					yield* autumn.updateBalance({
+						customerId: org.id,
+						featureId: 'storage_bytes',
+						usage: usage.stored_bytes
+					});
+					yield* autumn.updateBalance({
+						customerId: org.id,
+						featureId: 'ai_ops',
+						usage: usage.ai_ops_month,
+						interval: 'month',
+						nextResetAt: usage.ai_ops_reset_at
+					});
+					yield* sql`UPDATE org_usage
+				SET usage_sync_next_run_at = clock_timestamp() + ${STUCK_JOB_MS} * interval '1 millisecond'
+				WHERE org_id = ${org.id}`;
+				})
+			)
+			.pipe(
+				Effect.mapError(
+					(cause) =>
+						new StorageError({ operation: 'sync billing usage', cause })
+				)
+			);
 	}).pipe(Effect.withSpan('Billing.syncUsage'));
 
 	return Billing.of({ summary, checkoutUrl, portalUrl, syncUsage });

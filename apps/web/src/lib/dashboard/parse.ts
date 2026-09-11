@@ -281,6 +281,7 @@ export const parseBillingSummary = (value: unknown): BillingSummary => {
 		plan: text(record.plan, 'billing.plan'),
 		planName: text(record.planName, 'billing.planName'),
 		billingEnabled: flag(record.billingEnabled, 'billing.billingEnabled'),
+		canManageBilling: flag(record.canManageBilling, 'billing.canManageBilling'),
 		storage: {
 			used: integer(storage.used, 'billing.storage.used'),
 			limit: integer(storage.limit, 'billing.storage.limit')

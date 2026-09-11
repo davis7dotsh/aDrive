@@ -16,8 +16,8 @@ WORKOS_COOKIE_PASSWORD="replace-with-at-least-32-characters-of-random-text"
 WORKOS_WEBHOOK_SECRET="replace"
 
 # Autumn billing. Leave AUTUMN_SECRET_KEY empty to run without billing:
-# every plan gate allows and nothing is metered. `fake:` selects the
-# in-memory fake used by tests. The webhook secret is the Svix signing
+# external billing is disabled; local quotas still apply. `fake:` selects
+# the in-memory fake in development only. The webhook secret is the Svix signing
 # secret of the /api/webhooks/autumn endpoint.
 AUTUMN_SECRET_KEY=""
 AUTUMN_WEBHOOK_SECRET=""

@@ -10,6 +10,7 @@
 	import Button from '$lib/components/ui/Button.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { resource } from 'runed';
+	import { onDestroy } from 'svelte';
 
 	const session = getDashboardSession();
 	const toasts = getToasts();
@@ -19,6 +20,8 @@
 			ready && token ? getBilling(token, signal) : Promise.resolve(null)
 	);
 	let busy = $state<'checkout' | 'portal' | null>(null);
+	let actionController: AbortController | undefined;
+	onDestroy(() => actionController?.abort());
 
 	const percent = (used: number, limit: number) =>
 		limit <= 0 ? 0 : Math.min(100, Math.round((used / limit) * 100));
@@ -27,23 +30,37 @@
 
 	const follow = async (
 		kind: 'checkout' | 'portal',
-		start: (token: string) => Promise<string | null>,
+		start: (token: string, signal?: AbortSignal) => Promise<string | null>,
 		fallback: string
 	) => {
-		if (busy || !session.token) return;
+		if (
+			busy ||
+			!session.token ||
+			!billing.current?.canManageBilling ||
+			!billing.current.billingEnabled
+		)
+			return;
+		const token = session.token;
+		const controller = new AbortController();
+		actionController = controller;
 		busy = kind;
 		try {
-			const url = await start(session.token);
+			const url = await start(token, controller.signal);
+			if (controller.signal.aborted || session.token !== token) return;
 			if (url) {
 				window.location.assign(url);
 				return;
 			}
 			toasts.info(fallback);
-			void billing.refetch();
 		} catch (cause) {
-			toasts.error(cause, 'Billing is unavailable right now');
+			if (!controller.signal.aborted && session.token === token) {
+				toasts.error(cause, 'Billing is unavailable right now');
+			}
 		} finally {
-			busy = null;
+			if (actionController === controller) {
+				actionController = undefined;
+				busy = null;
+			}
 		}
 	};
 </script>
@@ -84,38 +101,60 @@
 		</div>
 	{:else if billing.current}
 		{@const summary = billing.current}
-		<div class="mt-8 flex items-center justify-between gap-4">
+		<div class="mt-8 flex flex-wrap items-center justify-between gap-4">
 			<p class="text-sm text-zinc-500">
 				Current plan
 				<span class="ml-2 font-medium text-zinc-950">{summary.planName}</span>
 			</p>
-			<div class="flex gap-2">
-				{#if summary.plan !== 'pro'}
+			{#if summary.canManageBilling}
+				<div class="flex gap-2">
+					{#if summary.plan !== 'pro'}
+						<Button
+							disabled={busy !== null || !summary.billingEnabled}
+							aria-busy={busy === 'checkout'}
+							onclick={() =>
+								void follow(
+									'checkout',
+									startCheckout,
+									'Checkout is unavailable right now'
+								)}
+						>
+							<span class="relative">
+								<span class:invisible={busy === 'checkout'}>Upgrade to Pro</span
+								>
+								{#if busy === 'checkout'}
+									<span
+										class="absolute inset-0 flex items-center justify-center"
+										>Opening…</span
+									>
+								{/if}
+							</span>
+						</Button>
+					{/if}
 					<Button
+						variant="secondary"
 						disabled={busy !== null || !summary.billingEnabled}
+						aria-busy={busy === 'portal'}
 						onclick={() =>
 							void follow(
-								'checkout',
-								startCheckout,
-								'Your plan was updated without a checkout step'
+								'portal',
+								openBillingPortal,
+								'The billing portal is unavailable right now'
 							)}
 					>
-						Upgrade to Pro
+						<span class="relative">
+							<span class:invisible={busy === 'portal'}>Manage billing</span>
+							{#if busy === 'portal'}
+								<span class="absolute inset-0 flex items-center justify-center"
+									>Opening…</span
+								>
+							{/if}
+						</span>
 					</Button>
-				{/if}
-				<Button
-					variant="secondary"
-					disabled={busy !== null || !summary.billingEnabled}
-					onclick={() =>
-						void follow(
-							'portal',
-							openBillingPortal,
-							'Billing is not configured for this deployment'
-						)}
-				>
-					Manage billing
-				</Button>
-			</div>
+				</div>
+			{:else}
+				<p class="text-xs text-zinc-500">Only owners can manage billing.</p>
+			{/if}
 		</div>
 
 		<dl class="mt-8 space-y-6">
