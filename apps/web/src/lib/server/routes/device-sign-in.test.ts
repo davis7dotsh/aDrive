@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { STATE_COOKIE } from '../auth-policy';
+import { STATE_COOKIE } from '../test/helpers';
 
 vi.mock('$app/server', async () => {
 	const { mockGetRequestEvent } = await import('../test/route-context.js');

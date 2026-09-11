@@ -1,5 +1,6 @@
 import type { Tag } from '@adrive/shared';
 import { uploadFile } from './api';
+import { createClientId } from './client-id';
 
 export type UploadItem = {
 	readonly id: string;
@@ -69,7 +70,7 @@ export class UploadManager {
 
 		const additions = files.map((file) => {
 			const item = {
-				id: crypto.randomUUID(),
+				id: createClientId(),
 				name: file.name,
 				status: 'queued',
 				uploaded: 0,

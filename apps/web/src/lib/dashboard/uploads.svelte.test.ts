@@ -1,5 +1,5 @@
 import type { UploadResponse } from '@adrive/shared';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { partitionUploadFiles, UploadManager } from './uploads.svelte';
 
 type UploadFile = typeof import('./api').uploadFile;
@@ -48,6 +48,10 @@ beforeEach(() => {
 	uploadFileMock.mockReset();
 });
 
+afterEach(() => {
+	vi.unstubAllGlobals();
+});
+
 describe('upload file limits', () => {
 	it('separates oversized files without retaining their File objects', () => {
 		const accepted = file('small.txt', 'small');
@@ -67,6 +71,35 @@ describe('upload file limits', () => {
 });
 
 describe('UploadManager', () => {
+	it('uploads and removes individual items when HTTP omits randomUUID', async () => {
+		vi.stubGlobal('crypto', {
+			getRandomValues: crypto.getRandomValues.bind(crypto)
+		});
+		expect(crypto.randomUUID).toBeUndefined();
+		uploadFileMock.mockResolvedValue(uploadResponse);
+		const onComplete = vi.fn();
+		const uploads = new UploadManager(onComplete);
+
+		try {
+			uploads.enqueue([file('one.txt'), file('two.txt')], defaults);
+			await vi.waitFor(() => {
+				expect(uploads.items.map((item) => item.status)).toEqual([
+					'done',
+					'done'
+				]);
+			});
+			expect(onComplete).toHaveBeenCalledTimes(2);
+			expect(uploadFileMock).toHaveBeenCalledTimes(2);
+			const [first, second] = uploads.items;
+			if (!first || !second) throw new Error('Expected two completed uploads');
+			expect(first.id).not.toBe(second.id);
+			uploads.remove(first.id);
+			expect(uploads.items).toEqual([second]);
+		} finally {
+			uploads.dispose();
+		}
+	});
+
 	it('releases completed files while keeping display metadata', async () => {
 		const onComplete = vi.fn();
 		uploadFileMock.mockResolvedValue(uploadResponse);

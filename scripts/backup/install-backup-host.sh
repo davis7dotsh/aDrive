@@ -11,6 +11,10 @@ command -v rclone >/dev/null || {
 	echo "rclone is required: https://rclone.org/install/" >&2
 	exit 1
 }
+command -v pg_dump >/dev/null || {
+	echo "pg_dump is required (postgresql-client): https://www.postgresql.org/download/" >&2
+	exit 1
+}
 command -v curl >/dev/null || { echo "curl is required" >&2; exit 1; }
 command -v python3 >/dev/null || { echo "python3 is required" >&2; exit 1; }
 command -v pg_dump >/dev/null || { echo "pg_dump is required (Postgres client tools)" >&2; exit 1; }
