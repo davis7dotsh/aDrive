@@ -4,8 +4,10 @@ adrive is a Cloudflare-backed file spine with a dashboard, tags, hybrid
 search, static-site publishing, deployment-based authentication, and
 scheduled storage lifecycle management. It is becoming a hosted product:
 one deployment serving many organisations, each with its own files, keys,
-and usage (`docs/plans/hosted-product.md`). Self-hosting a single-tenant
-copy keeps working and is what the setup below describes.
+and usage (`docs/plans/hosted-product.md`). The setup below runs the hosted
+schema locally with development authentication. Existing single-tenant
+deployments keep their own database; follow `docs/release.md` to provision
+a separate hosted target rather than migrating a populated old database.
 Uploads stream directly to R2, metadata and append-only version history live in
 Postgres (PlanetScale via Hyperdrive), and file/site bytes are served from a
 separate cookie-less content origin. Search combines weighted keyword
@@ -50,6 +52,21 @@ Worker (no build step) deployed by `bun release` to
 ## Local setup
 
 Requirements: Node 26+ and Bun 1.4+.
+
+The defaults below use the docker database named `adrive`. On a machine
+with an existing drive, create a separate development database and select
+it before running migrations, creating a key, or starting the preview:
+
+```bash
+export DATABASE_URL="postgres://adrive:adrive@127.0.0.1:5432/<new_dev_database>"
+export CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE="$DATABASE_URL"
+```
+
+Replace `<new_dev_database>` with the new target and verify its identity.
+Wrangler reads the Hyperdrive override from the dev server's shell
+environment; putting it in `.dev.vars` alone does not change the database
+binding. `DATABASE_URL` separately selects the migration and local key
+creation target. Keep both pointed at the same intended development database.
 
 ```bash
 bun install

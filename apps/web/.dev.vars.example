@@ -22,9 +22,14 @@ WORKOS_WEBHOOK_SECRET="replace"
 AUTUMN_SECRET_KEY=""
 AUTUMN_WEBHOOK_SECRET=""
 
-# Local Postgres. `docker compose up -d` at the repo root starts one with
-# these credentials. Wrangler points the HYPERDRIVE binding at it.
-CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE="postgres://adrive:adrive@127.0.0.1:5432/adrive"
+# Local Postgres defaults to the docker database in wrangler.jsonc.
+# A custom Hyperdrive connection is a SHELL setting read by Wrangler's
+# getPlatformProxy, not a Worker variable loaded from this file. Export
+# it in the shell that starts the dev server, for example:
+#   export DATABASE_URL="postgres://adrive:adrive@127.0.0.1:5432/<new_dev_database>"
+#   export CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE="$DATABASE_URL"
+# DATABASE_URL separately selects the migration/key-creation target.
+# Create and verify that isolated database before running those commands.
 
 # Optional: develop over Tailscale. Both dev servers bind 0.0.0.0.
 # MagicDNS resolves the dashboard machine name, but not tenant subdomains.

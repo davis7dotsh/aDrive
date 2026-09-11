@@ -119,8 +119,11 @@ Semantic search notes for the first deploy:
 
 - Files uploaded before the index existed (or while bindings were absent)
   sit in `index_state = 'disabled'` and are backfilled by the maintenance
-  cron at 5 files per 5 minutes. A large pre-existing corpus takes hours;
-  the settings page's "indexed chunks" count shows progress.
+  cron in bounded batches across a rotating sample of live organizations.
+  Each selected org currently receives up to two indexing recovery jobs
+  per five-minute tick; quota-denied work waits for its retry time. This
+  is not a fixed global throughput guarantee. The settings page's
+  "indexed chunks" count shows progress.
 - Embeddings live in Postgres beside the file rows, so they are restored
   with the database. Files whose embeddings are missing after a partial
   restore regenerate on reindex.
@@ -144,6 +147,26 @@ CREATE ROLE adrive_runtime LOGIN INHERIT
   NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
 GRANT adrive_app TO adrive_runtime;
 ```
+
+After restoring a dump made with `--no-privileges`, recreate `adrive_app`
+if it is absent and reapply its grants as the schema-owning administrator:
+
+```sql
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'adrive_app') THEN
+    CREATE ROLE adrive_app NOLOGIN;
+  END IF;
+END $$;
+GRANT USAGE ON SCHEMA public TO adrive_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO adrive_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO adrive_app;
+```
+
+Create or reuse the restricted runtime login and grant it `adrive_app` as
+above. These commands do not grant schema ownership or permission to bypass
+RLS. If the provider restricts role creation, complete it through the
+provider's administrator workflow before pointing Hyperdrive at the target.
 
 Set its password through the provider or `\password adrive_runtime` in
 `psql`. Connect using `ADRIVE_RUNTIME_DATABASE_URL` and verify:
@@ -260,10 +283,10 @@ bun x wrangler rollback
 There is no in-place downgrade. Recovery options, in order of blast
 radius:
 
-1. **PlanetScale backups** (automatic daily, plus point-in-time):
-   PlanetScale point-in-time restore from the database's Backups page.
-   This rewinds the whole database — anything written after the
-   timestamp is lost.
+1. **PlanetScale backups**: use the database's verified backup/PITR
+   configuration to restore into a separate target, then validate before
+   cutover. The selected snapshot excludes writes after its timestamp;
+   retain the existing database for reconciliation and rollback.
 2. **Nightly export**: restore per `docs/backup-restore.md` (full
    database or targeted rows).
 
