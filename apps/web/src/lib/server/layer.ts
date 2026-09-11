@@ -4,6 +4,9 @@ import { OrgMissing, StorageError } from './errors';
 import type { ProgramTenant } from './identity';
 import { PgSql } from './pg';
 import { AuthLive } from './services/auth';
+import { AutumnLive } from './services/autumn';
+import { BillingLive } from './services/billing';
+import { BillingGatesLive } from './services/billing-gates';
 import {
 	AuthGuardStore,
 	Bucket,
@@ -107,8 +110,13 @@ export const requestLayer = (env: Env, tenant: ProgramTenant | null) => {
 		Layer.provide(infrastructure)
 	);
 	const workos = WorkOSLive.pipe(Layer.provide(bindings));
+	const autumn = AutumnLive.pipe(Layer.provide(bindings));
+	const billingGates = BillingGatesLive.pipe(Layer.provide(autumn));
+	const billing = BillingLive.pipe(
+		Layer.provide(Layer.mergeAll(infrastructure, autumn))
+	);
 	const auth = AuthLive.pipe(
-		Layer.provide(Layer.merge(infrastructure, workos))
+		Layer.provide(Layer.mergeAll(infrastructure, workos, autumn))
 	);
 	const rateLimits = RateLimitsLive.pipe(Layer.provide(bindings));
 	const urlReputation = UrlReputationLive.pipe(Layer.provide(bindings));
@@ -130,7 +138,7 @@ export const requestLayer = (env: Env, tenant: ProgramTenant | null) => {
 		Layer.provide(Layer.mergeAll(infrastructure, tags))
 	);
 	const indexing = IndexingLive.pipe(
-		Layer.provide(Layer.mergeAll(infrastructure, semantic))
+		Layer.provide(Layer.mergeAll(infrastructure, semantic, billingGates))
 	);
 	const lifecycle = LifecycleLive.pipe(
 		Layer.provide(Layer.mergeAll(infrastructure, auth, sites, files, indexing))
@@ -140,6 +148,9 @@ export const requestLayer = (env: Env, tenant: ProgramTenant | null) => {
 		infrastructure,
 		semantic,
 		workos,
+		autumn,
+		billingGates,
+		billing,
 		auth,
 		rateLimits,
 		urlReputation,

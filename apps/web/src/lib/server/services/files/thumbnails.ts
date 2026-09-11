@@ -12,7 +12,7 @@ import type { FilesShape } from './types';
 export const thumbnailOps = (
 	internals: FileInternals
 ): Pick<FilesShape, 'storeDashboardThumbnail'> => {
-	const { sql, blobs } = internals;
+	const { sql, blobs, jobs } = internals;
 	const { reserveBytes, compensateStoredBlob } = internals;
 	return {
 		storeDashboardThumbnail: Effect.fn('Files.storeDashboardThumbnail')(
@@ -116,6 +116,9 @@ export const thumbnailOps = (
 						r2Key: winner.thumbnail_r2_key
 					} as const;
 				}
+				// Thumbnails arrive on the content origin, so the org is the
+				// caller's, not the layer's.
+				yield* jobs.trySend({ kind: 'usage-sync', orgId });
 				return { _tag: 'Stored', blob: stored } as const;
 			}
 		)

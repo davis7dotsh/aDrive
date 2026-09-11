@@ -1,3 +1,4 @@
+import { AutumnNull } from './autumn';
 import { Effect, Layer } from 'effect';
 import Pg from 'pg';
 import { expect, it } from 'vitest';
@@ -24,6 +25,7 @@ it('mints only one API key when approved device polls overlap', async () => {
 	const authLayer = AuthLive.pipe(
 		Layer.provide(
 			Layer.mergeAll(
+				AutumnNull,
 				databaseLayer,
 				Layer.succeed(CurrentOrg, {
 					id: TEST_ORG_ID,
@@ -44,6 +46,7 @@ it('mints only one API key when approved device polls overlap', async () => {
 						cookiePassword: '',
 						webhookSecret: ''
 					},
+					autumn: { secretKey: null, webhookSecret: '' },
 					urlScanner: null,
 					cloudflareZone: null,
 					adminUserIds: new Set<string>(),

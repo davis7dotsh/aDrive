@@ -32,6 +32,7 @@ const config: AppConfigShape = {
 	urlScanner: null,
 	cloudflareZone: null,
 	adminUserIds: new Set(),
+	autumn: { secretKey: null, webhookSecret: '' },
 	semanticSearch: 'off',
 	embeddingModel: '@cf/baai/bge-small-en-v1.5',
 	embeddingPooling: 'cls',

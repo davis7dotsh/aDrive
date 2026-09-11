@@ -16,6 +16,8 @@ declare global {
 		CF_ACCOUNT_ID?: string;
 		CF_API_TOKEN?: string;
 		CF_ZONE_ID?: string;
+		AUTUMN_SECRET_KEY?: string;
+		AUTUMN_WEBHOOK_SECRET?: string;
 	}
 
 	namespace Cloudflare {
@@ -31,6 +33,8 @@ declare global {
 			CF_ACCOUNT_ID?: string;
 			CF_API_TOKEN?: string;
 			CF_ZONE_ID?: string;
+			AUTUMN_SECRET_KEY?: string;
+			AUTUMN_WEBHOOK_SECRET?: string;
 		}
 	}
 }

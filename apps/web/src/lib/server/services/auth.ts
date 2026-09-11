@@ -18,6 +18,7 @@ import type { AuthContext, ResolvedCredential } from '../identity';
 import { PgSql } from '../pg';
 import { ensureTenant, personalOrgFor } from '../tenants';
 import { promoteVerified } from '../trust';
+import { AutumnClient } from './autumn';
 import { CurrentOrg, CurrentUser } from './current-org';
 import { WorkOSClient } from './workos';
 
@@ -233,6 +234,7 @@ const suspendedOrg = () =>
 const makeAuth = Effect.gen(function* () {
 	const sql = yield* PgSql;
 	const workos = yield* WorkOSClient;
+	const autumn = yield* AutumnClient;
 	const org = yield* CurrentOrg;
 	const user = yield* CurrentUser;
 
@@ -478,6 +480,38 @@ const makeAuth = Effect.gen(function* () {
 						)
 					)
 				);
+			// Customer creation happens after the local sign-in commits. Use
+			// the stored org and a deterministic known owner, even when a member
+			// is the first to sign in after billing is enabled. Without an owner,
+			// defer creation until a later sign-in can supply that contact.
+			if (autumn.enabled) {
+				yield* Effect.gen(function* () {
+					const contacts = yield* sql<{ name: string; email: string }>`
+							SELECT o.name, u.email
+							FROM orgs o
+							JOIN memberships m ON m.org_id = o.id AND m.role = 'owner'
+							JOIN users u ON u.id = m.user_id
+							WHERE o.id = ${orgId} AND u.email <> ''
+							ORDER BY u.created_at, u.id
+							LIMIT 1`;
+					const contact = contacts[0];
+					if (!contact) return;
+					yield* autumn.ensureCustomer({ customerId: orgId, ...contact });
+				}).pipe(
+					Effect.catchCause((cause) =>
+						Effect.sync(() => {
+							// A provider or lookup failure is retried on a later sign-in.
+							console.error(
+								JSON.stringify({
+									message: 'Autumn customer could not be created',
+									orgId,
+									cause: String(cause)
+								})
+							);
+						})
+					)
+				);
+			}
 			// Pin the org on the session so every later request carries it.
 			const pinned =
 				exchanged.organizationId === orgId

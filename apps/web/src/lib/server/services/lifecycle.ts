@@ -2,6 +2,7 @@ import { Context, Effect, Layer } from 'effect';
 import { PgSql } from '../pg';
 import { recoverScanJobs } from '../scan-jobs';
 import { promoteEstablished } from '../trust';
+import { recoverUsageSync } from '../usage';
 import { Auth } from './auth';
 import { Files } from './files';
 import { Indexing } from './indexing';
@@ -14,6 +15,7 @@ export interface LifecycleSummary {
 	readonly sites: number;
 	readonly indexing: number;
 	readonly scans: number;
+	readonly usage: number;
 	readonly files: number;
 }
 
@@ -41,6 +43,7 @@ export interface LifecycleTasks {
 	readonly sites: Effect.Effect<number, unknown>;
 	readonly indexing: Effect.Effect<number, unknown>;
 	readonly scans: Effect.Effect<number, unknown>;
+	readonly usage: Effect.Effect<number, unknown>;
 	readonly files: Effect.Effect<number, unknown>;
 }
 
@@ -74,8 +77,9 @@ export const runLifecycleTasks = (tasks: LifecycleTasks) =>
 		const sites = yield* recover('sites', tasks.sites, 0);
 		const indexing = yield* recover('indexing', tasks.indexing, 0);
 		const scans = yield* recover('scans', tasks.scans, 0);
+		const usage = yield* recover('usage', tasks.usage, 0);
 		const files = yield* recover('files', tasks.files, 0);
-		return { authentication, sites, indexing, scans, files };
+		return { authentication, sites, indexing, scans, usage, files };
 	});
 
 export const summarize = (
@@ -88,9 +92,10 @@ export const summarize = (
 			sites: total.sites + summary.sites,
 			indexing: total.indexing + summary.indexing,
 			scans: total.scans + summary.scans,
+			usage: total.usage + summary.usage,
 			files: total.files + summary.files
 		}),
-		{ authentication, sites: 0, indexing: 0, scans: 0, files: 0 }
+		{ authentication, sites: 0, indexing: 0, scans: 0, usage: 0, files: 0 }
 	);
 
 const makeLifecycle = Effect.gen(function* () {
@@ -118,6 +123,7 @@ const makeLifecycle = Effect.gen(function* () {
 		scans: Effect.suspend(() =>
 			recoverScanJobs(sql, jobs, currentOrg.id, ORG_SWEEP_LIMIT)
 		),
+		usage: Effect.suspend(() => recoverUsageSync(sql, jobs, currentOrg.id)),
 		files: files.sweepPurges(ORG_SWEEP_LIMIT)
 	}).pipe(Effect.withSpan('Lifecycle.org'));
 

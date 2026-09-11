@@ -26,6 +26,14 @@ export interface CloudflareZoneConfig {
 	readonly zoneId: string;
 }
 
+// Autumn billing. secretKey is null when AUTUMN_SECRET_KEY is unset, in
+// which case every gate fails open; a `fake:` key picks the in-memory
+// fake only in development. See services/autumn.ts.
+export interface AutumnConfig {
+	readonly secretKey: string | null;
+	readonly webhookSecret: string;
+}
+
 export interface AppConfigShape {
 	readonly dashboardOrigin: string;
 	// Tenant content is served from `<slug>.<contentDomain>` over the
@@ -41,6 +49,7 @@ export interface AppConfigShape {
 	readonly cloudflareZone: CloudflareZoneConfig | null;
 	// WorkOS user ids allowed on /admin (ADMIN_USER_IDS, comma-separated).
 	readonly adminUserIds: ReadonlySet<string>;
+	readonly autumn: AutumnConfig;
 	readonly semanticSearch: 'off' | 'auto' | 'required';
 	readonly embeddingModel: '@cf/baai/bge-small-en-v1.5';
 	readonly embeddingPooling: 'cls';
@@ -123,6 +132,19 @@ const adminUserIdsFromEnv = (env: Env) =>
 			.map((id) => id.trim())
 			.filter((id) => id.length > 0)
 	);
+const autumnFromEnv = (env: Env): AutumnConfig => {
+	const secretKey = optionalString(env.AUTUMN_SECRET_KEY).trim() || null;
+	const webhookSecret = optionalString(env.AUTUMN_WEBHOOK_SECRET).trim();
+	if (secretKey?.startsWith('fake:') && !dev) {
+		throw new Error('Fake Autumn billing is only available in development');
+	}
+	if (secretKey && !secretKey.startsWith('fake:') && !webhookSecret) {
+		throw new Error(
+			'AUTUMN_WEBHOOK_SECRET is required alongside AUTUMN_SECRET_KEY'
+		);
+	}
+	return { secretKey, webhookSecret };
+};
 
 export const configFromEnv = (env: Env) => {
 	const origins = normalizeOrigins({
@@ -160,6 +182,7 @@ export const configFromEnv = (env: Env) => {
 		urlScanner: urlScannerFromEnv(env),
 		cloudflareZone: cloudflareZoneFromEnv(env),
 		adminUserIds: adminUserIdsFromEnv(env),
+		autumn: autumnFromEnv(env),
 		semanticSearch,
 		embeddingModel: '@cf/baai/bge-small-en-v1.5',
 		embeddingPooling: 'cls',

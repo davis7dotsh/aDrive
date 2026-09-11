@@ -16,6 +16,7 @@ describe('scheduled lifecycle orchestration', () => {
 				sites: task('sites', 2),
 				indexing: task('indexing', 3),
 				scans: task('scans', 5),
+				usage: task('usage', 6),
 				files: task('files', 4)
 			})
 		);
@@ -24,6 +25,7 @@ describe('scheduled lifecycle orchestration', () => {
 			'sites',
 			'indexing',
 			'scans',
+			'usage',
 			'files'
 		]);
 		expect(result).toEqual({
@@ -31,6 +33,7 @@ describe('scheduled lifecycle orchestration', () => {
 			sites: 2,
 			indexing: 3,
 			scans: 5,
+			usage: 6,
 			files: 4
 		});
 	});
@@ -47,6 +50,7 @@ describe('scheduled lifecycle orchestration', () => {
 				}),
 				indexing: Effect.succeed(0),
 				scans: Effect.succeed(0),
+				usage: Effect.succeed(0),
 				files: Effect.succeed(0)
 			})
 		);
@@ -59,14 +63,29 @@ describe('scheduled lifecycle orchestration', () => {
 	it('sums per-org sweeps beneath the global count', () => {
 		expect(
 			summarize(7, [
-				{ authentication: 0, sites: 1, indexing: 2, scans: 4, files: 3 },
-				{ authentication: 0, sites: 4, indexing: 5, scans: 7, files: 6 }
+				{
+					authentication: 0,
+					sites: 1,
+					indexing: 2,
+					scans: 4,
+					usage: 1,
+					files: 3
+				},
+				{
+					authentication: 0,
+					sites: 4,
+					indexing: 5,
+					scans: 7,
+					usage: 2,
+					files: 6
+				}
 			])
 		).toEqual({
 			authentication: 7,
 			sites: 5,
 			indexing: 7,
 			scans: 11,
+			usage: 3,
 			files: 9
 		});
 	});

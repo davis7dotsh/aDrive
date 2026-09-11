@@ -21,6 +21,7 @@ const config = AppConfig.of({
 		cookiePassword: '',
 		webhookSecret: ''
 	},
+	autumn: { secretKey: null, webhookSecret: '' },
 	urlScanner: null,
 	cloudflareZone: null,
 	adminUserIds: new Set(),

@@ -107,14 +107,18 @@ describe('queue-driven indexing (local platform)', () => {
 					version: 1
 				},
 				delaySeconds: 0
-			}
+			},
+			{ body: { kind: 'usage-sync', orgId: identity.orgId }, delaySeconds: 0 }
 		]);
 		expect((await fileDetail(ctx, file.id)).indexState).toBe('pending');
 
 		const decisions = await ctx.drainJobs();
+		// The index job meters its embeddings, which sends one more sync.
 		expect(decisions).toEqual([
 			{ id: 'test-1', ack: true },
-			{ id: 'test-2', ack: true }
+			{ id: 'test-2', ack: true },
+			{ id: 'test-3', ack: true },
+			{ id: 'test-4', ack: true }
 		]);
 		expect(embed).toHaveBeenCalledOnce();
 		const indexed = await fileDetail(ctx, file.id);
@@ -132,10 +136,8 @@ describe('queue-driven indexing (local platform)', () => {
 		});
 
 		const decisions = await ctx.drainJobs();
-		expect(decisions).toEqual([
-			{ id: 'test-1', retry: true, delaySeconds: 60 },
-			{ id: 'test-2', ack: true },
-			{ id: 'test-3', ack: true }
+		expect(decisions.filter((decision) => 'retry' in decision)).toEqual([
+			{ id: 'test-1', retry: true, delaySeconds: 60 }
 		]);
 		const indexed = await fileDetail(ctx, file.id);
 		expect(indexed.indexState).toBe('ready');
