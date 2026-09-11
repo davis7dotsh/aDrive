@@ -51,6 +51,11 @@ const serveFile: RequestHandler = ({
 			if (thumbnailSource && !hasGrant) {
 				return yield* new NotFound({ id: params.id });
 			}
+			// Invalid ids and denied grants cost database work too.
+			const rateLimits = yield* RateLimits;
+			const rateLimit = yield* rateLimits.anonymous(getClientAddress());
+			if (!rateLimit.allowed) return rateLimitResponse();
+
 			const content = yield* files.findContent(params.id, version, hasGrant);
 			const privateResponse = hasGrant || !content.file.public;
 			const dashboardPreview =
@@ -142,12 +147,6 @@ const serveFile: RequestHandler = ({
 					return cached;
 				}
 			}
-
-			// Past the edge cache every request costs a Postgres read and an R2
-			// read, so one client is capped here.
-			const rateLimits = yield* RateLimits;
-			const rateLimit = yield* rateLimits.anonymous(getClientAddress());
-			if (!rateLimit.allowed) return rateLimitResponse();
 
 			if (request.method === 'HEAD') {
 				const object = yield* blobs.head(content.r2Key);

@@ -20,9 +20,9 @@
 		"@modelcontextprotocol/server": "2.0.0",
 		"agents": "^0.20.1",
 		"effect": "4.0.0-beta.102",
-		"entities": "4.5.0",
 		"markdown-it": "^14.3.0",
 		"mime": "^4.1.0",
+		"parse5": "^8.0.1",
 		"pg": "^8.22.0",
 		"runed": "^0.37.1",
 		"zod": "^4.4.3"

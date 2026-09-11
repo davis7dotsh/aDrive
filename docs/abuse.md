@@ -96,6 +96,12 @@ Checks, in order, each writing one `scan_verdicts` row per
    never finishes is `suspicious`). Without `URLSCAN_API_KEY` the check is
    recorded as skipped and treated as clean.
 
+HTML targets use parsed attribute values and the document's effective base URL.
+An `inspection-limits` verdict records a suspicious floor when a site exceeds
+50 assets, HTML exceeds 512 KiB, or more than 10 outbound targets need inspection.
+Clean provider results cannot clear that floor; verified publications remain
+held for operator review. Established organizations retain the scan-after policy.
+
 The worst verdict decides:
 
 - `clean`: a held row is published (`public = true`,
@@ -166,7 +172,7 @@ approximate, 60 second windows): `RL_UPLOAD` 60/min per org (uploads,
 site sessions), `RL_PUBLISH` 10/min per org (reserved for publish
 counting), `RL_AUTH` 30/min per client address (shared device creation and
 token polling), `RL_ANON`
-300/min per client address (content fetches past the edge cache, and
+300/min per client address (file requests before metadata lookup, other content cache misses, and
 reports). A refused request is 429 with `Retry-After: 60`. A binding that
 errors lets the request through and logs. The auth budget accommodates the
 advertised five-second polling interval. Refused token polls return

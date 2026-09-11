@@ -152,18 +152,26 @@
 	};
 
 	const openFile = async (file: DashboardFile) => {
+		const opensTab = file.public || file.kind === 'site';
+		const tab = opensTab ? window.open('about:blank', '_blank') : null;
+		if (tab) tab.opener = null;
+		if (opensTab && !tab) {
+			toasts.info('Allow pop-ups to open this file');
+			return;
+		}
 		try {
 			const url = await resolveFileLink(
 				file,
 				session.token,
 				files.list.current.contentOrigin
 			);
-			if (file.public || file.kind === 'site') {
-				window.open(url, '_blank', 'noopener');
+			if (tab) {
+				tab.location.replace(url);
 			} else {
 				download(url, file.displayName);
 			}
 		} catch (cause) {
+			tab?.close();
 			toasts.error(cause, 'Could not open the file');
 		}
 	};
