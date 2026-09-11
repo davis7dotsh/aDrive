@@ -88,8 +88,10 @@ export const storeExtractedText = (
 		.withTransaction(
 			Effect.gen(function* () {
 				yield* holdLease(sql, lease);
+				// PostgreSQL text rejects NUL bytes; match the semantic chunker's
+				// cleanup before writing either the source text or keyword index.
 				yield* sql`
-					UPDATE file_versions SET text_content = ${text}
+					UPDATE file_versions SET text_content = ${text.replaceAll('\u0000', '')}
 					WHERE file_id = ${lease.fileId} AND version = ${lease.version}`;
 				yield* sql`
 					UPDATE files SET index_cursor = 1

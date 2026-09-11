@@ -4,11 +4,18 @@ import { upsertFileChunks, type VectorChunk } from '../indexing-sql';
 import { PgSql } from '../pg';
 import { createQueryEmbeddingCache } from '../query-embedding-cache';
 import { selectedTagFilter, type CandidateFilter } from '../search-candidates';
+import { CHUNK_CHARACTERS, CHUNK_OVERLAP_CHARACTERS } from '../semantic-policy';
+import { searchTextLimit } from '../search-text';
 
 const EMBEDDING_MODEL = '@cf/baai/bge-small-en-v1.5';
 // Vector candidates feed reciprocal rank fusion beside the keyword pool;
 // one hundred nearest files is plenty for a few result pages.
 const SEMANTIC_CANDIDATE_LIMIT = 100;
+// Reserve enough chunk candidates for 100 distinct files even when each
+// nearer file has the maximum number produced by chunkSearchText.
+const SEMANTIC_CHUNK_LIMIT =
+	SEMANTIC_CANDIDATE_LIMIT *
+	Math.ceil(searchTextLimit / (CHUNK_CHARACTERS - CHUNK_OVERLAP_CHARACTERS));
 
 export interface EmbedderShape {
 	readonly enabled: boolean;
@@ -107,26 +114,39 @@ export const makeVectorIndex = (
 		),
 	// The nearest chunk stands in for its file, and visibility and tags
 	// are filtered here so the caller never sees a file it cannot open.
+	// pgvector >= 0.8 iterative scans continue past filtered-out neighbors;
+	// the chunk limit is applied before grouping so HNSW can serve the sort.
 	search: (vector, filter) =>
 		vector === null
 			? Effect.succeed([])
-			: sql<{ file_id: string }>`
-					SELECT c.file_id
-					FROM file_chunks c
-					JOIN files f ON f.id = c.file_id AND f.current_version = c.version
-					WHERE c.embedding IS NOT NULL
-						AND f.deleted_at IS NULL
-						AND (f.expires_at IS NULL OR f.expires_at > ${filter.now})
-						${selectedTagFilter(sql, filter.tagIds)}
-					GROUP BY c.file_id
-					ORDER BY MIN(c.embedding <=> ${vectorLiteral(vector)}::vector), c.file_id
-					LIMIT ${SEMANTIC_CANDIDATE_LIMIT}`.pipe(
-					Effect.map((rows) => rows.map((row) => ({ fileId: row.file_id }))),
-					Effect.mapError(
-						(cause) =>
-							new StorageError({ operation: 'query semantic vectors', cause })
+			: sql
+					.withTransaction(
+						sql`SET LOCAL hnsw.iterative_scan = strict_order`.pipe(
+							Effect.andThen(sql<{ file_id: string }>`
+							WITH nearest_chunks AS MATERIALIZED (
+								SELECT c.file_id, c.embedding <=> ${vectorLiteral(vector)}::vector AS distance
+								FROM file_chunks c
+								JOIN files f ON f.id = c.file_id AND f.current_version = c.version
+								WHERE c.embedding IS NOT NULL
+									AND f.deleted_at IS NULL
+									AND (f.expires_at IS NULL OR f.expires_at > ${filter.now})
+									${selectedTagFilter(sql, filter.tagIds)}
+								ORDER BY c.embedding <=> ${vectorLiteral(vector)}::vector
+								LIMIT ${SEMANTIC_CHUNK_LIMIT}
+							)
+							SELECT file_id FROM nearest_chunks
+							GROUP BY file_id
+							ORDER BY MIN(distance), file_id
+							LIMIT ${SEMANTIC_CANDIDATE_LIMIT}`)
+						)
 					)
-				),
+					.pipe(
+						Effect.map((rows) => rows.map((row) => ({ fileId: row.file_id }))),
+						Effect.mapError(
+							(cause) =>
+								new StorageError({ operation: 'query semantic vectors', cause })
+						)
+					),
 	count: sql<{ count: number }>`
 		SELECT COUNT(*)::integer AS count FROM file_chunks WHERE embedding IS NOT NULL`.pipe(
 		Effect.map((rows) => rows[0]?.count ?? 0),

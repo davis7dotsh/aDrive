@@ -639,24 +639,24 @@ const makeAuth = Effect.gen(function* () {
 
 			const generated = yield* makeApiKey(row.name);
 			const consumedAt = now.toISOString();
-			// Guarded insert plus consume in one transaction: a concurrent poll
-			// that already consumed the code sees zero rows from both statements
-			// and the key it never minted is rolled back with it.
+			// Lock the approval before inserting a key. A concurrent poll must
+			// observe the consumed state before it can mint another credential.
 			const completed = yield* sql
 				.withTransaction(
 					Effect.gen(function* () {
-						const inserted = yield* sql`
+						const approved = yield* sql`
+							SELECT device_code_hash FROM device_codes
+							WHERE device_code_hash = ${hash} AND status = 'approved'
+							FOR UPDATE
+						`;
+						if (approved.length !== 1) return false;
+						yield* sql`
 							INSERT INTO api_keys (
 								id, name, prefix, secret_hash, created_at
 							)
-							SELECT ${generated.row.id}, ${generated.row.name},
+							VALUES (${generated.row.id}, ${generated.row.name},
 								${generated.row.prefix}, ${generated.secretHash},
-								${generated.row.createdAt}
-							WHERE EXISTS (
-								SELECT 1 FROM device_codes
-								WHERE device_code_hash = ${hash} AND status = 'approved'
-							)
-							RETURNING id
+								${generated.row.createdAt})
 						`;
 						const consumed = yield* sql`
 							UPDATE device_codes
@@ -665,7 +665,7 @@ const makeAuth = Effect.gen(function* () {
 							WHERE device_code_hash = ${hash} AND status = 'approved'
 							RETURNING device_code_hash
 						`;
-						return inserted.length === 1 && consumed.length === 1;
+						return consumed.length === 1;
 					})
 				)
 				.pipe(storageError('complete device authorization'));

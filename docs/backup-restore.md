@@ -72,6 +72,10 @@ copy for when the account itself is unavailable. Always restore into a
 fresh database and cut over — never import over the production database,
 so it stays untouched for rollback.
 
+The dump includes keyword search documents and semantic vectors, preserving
+the search state of files already marked ready. No reindex is required for
+a complete restore.
+
 1. Create a new PlanetScale Postgres database (or a local one for a drill).
 2. `gunzip -k postgres/daily/adrive-<date>.sql.gz`
 3. `psql "<new database url>" -f adrive-<date>.sql`

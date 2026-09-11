@@ -6,8 +6,8 @@ App Worker commands run from `apps/web`. Landing-site commands run from
 `apps/site` (no `--env`). `bun release` and the backup installer run from
 the repository root.
 
-1. Create a PlanetScale Postgres database (region close to most users)
-   with the `vector` and `pg_trgm` extensions available, then a Hyperdrive
+1. Create a PlanetScale Postgres 17+ database (region close to most users)
+   with `vector` 0.8 or newer and the `pg_trgm` extension available, then a Hyperdrive
    config pointing at its direct port 5432 with caching disabled:
 
    ```
@@ -146,7 +146,8 @@ binding (the commit before this one):
 cd apps/web
 mkdir -p /tmp/adrive-d1
 for t in files file_versions tags file_tags site_assets api_keys \
-         pending_site_asset_deletes instance_secrets; do
+         pending_site_asset_deletes instance_secrets \
+         site_upload_sessions staged_site_assets; do
   bun x wrangler d1 export DB --env production --remote --table $t --output /tmp/adrive-d1/$t.sql
 done
 ```
@@ -164,3 +165,8 @@ The script prints per-table counts and the Postgres totals at the end.
 Compare them with the row counts in the exports before flipping DNS. Run
 it with `--wipe` to truncate and retry. Tested against the local D1 state
 on 2026-09-09.
+
+All listed tables must be exported, including empty ones. Unfinished site
+uploads are not resumed: their stored assets enter the cleanup queue unless
+the key is referenced by a published site asset. Export while writes to the
+old drive are paused so the table snapshots describe the same state.

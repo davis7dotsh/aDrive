@@ -185,27 +185,37 @@ export const sessionOps = (
 				asset.contentType
 			);
 			const uploadedAt = new Date().toISOString();
-			const updated = yield* sql<{ path: string }>`
-				UPDATE staged_site_assets
-				SET r2_key = ${r2Key}, stored_size_bytes = ${stored.size},
-					uploaded_at = ${uploadedAt}
-				WHERE session_id = ${session.id} AND path = ${path} AND r2_key IS NULL
-					AND EXISTS (
-						SELECT 1 FROM site_upload_sessions
+			const updated = yield* sql
+				.withTransaction(
+					Effect.gen(function* () {
+						// Cleanup also locks the session before touching staged rows.
+						// Recheck after waiting so a late upload cannot lose its blob
+						// record behind an abort or an expiry sweep.
+						const open = yield* sql`
+						SELECT id FROM site_upload_sessions
 						WHERE id = ${session.id} AND status = 'open'
 							AND expires_at > ${uploadedAt}
-					)
-				RETURNING path`.pipe(
-				Effect.mapError(
-					(cause) =>
-						new StorageError({ operation: 'record staged site asset', cause })
-				),
-				Effect.catch((failure) =>
-					compensateStagedBlob(session, r2Key).pipe(
-						Effect.andThen(Effect.fail(failure))
-					)
+						FOR UPDATE`;
+						if (open.length === 0) return [];
+						return yield* sql<{ path: string }>`
+						UPDATE staged_site_assets
+						SET r2_key = ${r2Key}, stored_size_bytes = ${stored.size},
+							uploaded_at = ${uploadedAt}
+						WHERE session_id = ${session.id} AND path = ${path} AND r2_key IS NULL
+						RETURNING path`;
+					})
 				)
-			);
+				.pipe(
+					Effect.mapError(
+						(cause) =>
+							new StorageError({ operation: 'record staged site asset', cause })
+					),
+					Effect.catch((failure) =>
+						compensateStagedBlob(session, r2Key).pipe(
+							Effect.andThen(Effect.fail(failure))
+						)
+					)
+				);
 			if (updated.length !== 1) {
 				yield* compensateStagedBlob(session, r2Key);
 				return yield* new InvalidRequest({
@@ -265,6 +275,24 @@ export const sessionOps = (
 			const commit = sql
 				.withTransaction(
 					Effect.gen(function* () {
+						if (session.version > 1) {
+							// Purge claims this row before enumerating blobs. Hold it
+							// through publication so purge either sees the new version
+							// or makes this publish ineligible before any promotion.
+							const current = yield* sql<{ id: string }>`
+								SELECT id FROM files
+								WHERE id = ${session.fileId} AND is_site = true
+									AND current_version = ${session.version - 1}
+									AND deleted_at IS NULL AND purge_state = 'none'
+									AND (expires_at IS NULL OR expires_at > ${publishedAt})
+								FOR UPDATE`;
+							if (current.length !== 1) {
+								return yield* new StorageError({
+									operation: 'commit site version',
+									cause: 'The site changed while it was publishing'
+								});
+							}
+						}
 						const guarded = yield* guard;
 						if (guarded.length !== 1) {
 							return yield* new StorageError({

@@ -13,6 +13,7 @@ command -v rclone >/dev/null || {
 }
 command -v curl >/dev/null || { echo "curl is required" >&2; exit 1; }
 command -v python3 >/dev/null || { echo "python3 is required" >&2; exit 1; }
+command -v pg_dump >/dev/null || { echo "pg_dump is required (Postgres client tools)" >&2; exit 1; }
 
 umask 077
 mkdir -p "${INSTALL_DIR}"
