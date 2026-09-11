@@ -4,7 +4,8 @@ import { applySecurityHeaders } from './security-headers';
 const context = {
 	pathname: '/',
 	requestOrigin: 'https://drive.example.com',
-	contentOrigin: 'https://files.example.com'
+	contentDomain: 'files.example.com',
+	contentScheme: 'https:'
 };
 
 const htmlResponse = (csp?: string) =>
@@ -36,14 +37,29 @@ describe('applySecurityHeaders', () => {
 		expect(response.headers.get('Strict-Transport-Security')).toBeNull();
 	});
 
-	it('builds a dashboard CSP embedding the content origin', () => {
+	it('builds a dashboard CSP allowing every org host under the content domain', () => {
 		const response = applySecurityHeaders(htmlResponse(), context);
 		const csp = response.headers.get('Content-Security-Policy') ?? '';
 		expect(csp).toContain(`default-src 'self'`);
-		expect(csp).toContain(`frame-src https://files.example.com`);
-		expect(csp).toContain(`connect-src 'self' https://files.example.com`);
+		expect(csp).toContain(
+			`img-src 'self' data: blob: https://*.files.example.com`
+		);
+		expect(csp).toContain(`media-src 'self' blob: https://*.files.example.com`);
+		expect(csp).toContain(`frame-src https://*.files.example.com`);
+		expect(csp).toContain(`connect-src 'self' https://*.files.example.com`);
 		expect(csp).toContain(`frame-ancestors 'none'`);
 		expect(csp).toContain(`object-src 'none'`);
+	});
+
+	it('follows the dashboard scheme for local content hosts', () => {
+		const response = applySecurityHeaders(htmlResponse(), {
+			...context,
+			requestOrigin: 'http://localhost:5173',
+			contentDomain: 'localhost:5174',
+			contentScheme: 'http:'
+		});
+		const csp = response.headers.get('Content-Security-Policy') ?? '';
+		expect(csp).toContain(`frame-src http://*.localhost:5174`);
 	});
 
 	it('preserves the SvelteKit script-src nonce', () => {

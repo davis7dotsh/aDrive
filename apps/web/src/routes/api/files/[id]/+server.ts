@@ -8,6 +8,7 @@ import { validateExpiration } from '$lib/server/auth-policy';
 import { InvalidRequest } from '$lib/server/errors';
 import { decodeJson } from '$lib/server/request-json';
 import { parsePageSize } from '$lib/server/list-cursor';
+import { currentContentOrigin } from '$lib/server/services/current-org';
 import { Files } from '$lib/server/services/files';
 import { Tags } from '$lib/server/services/tags';
 import { Indexing } from '$lib/server/services/indexing';
@@ -50,7 +51,7 @@ export const GET: RequestHandler = (event) => {
 			return Response.json({
 				...detail,
 				availableTags: tagList,
-				contentOrigin: config.contentOrigin,
+				contentOrigin: yield* currentContentOrigin,
 				maxUploadBytes: config.maxUploadBytes,
 				semanticEnabled: semantic.enabled
 			});

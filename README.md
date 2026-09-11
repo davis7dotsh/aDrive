@@ -80,27 +80,45 @@ start both local origins:
 bun --filter @adrive/web dev
 ```
 
-The dashboard/API is at `http://localhost:5173/`. Public file bytes are
-served from `http://localhost:5174/`. The second port is a small streaming
-proxy into the same SvelteKit process so both origins share one local D1/R2
-state while the Worker still sees and enforces the content host.
+The dashboard/API is at `http://localhost:5173/`. Each org's file bytes are
+served from its own host under `CONTENT_DOMAIN`: `http://<org
+slug>.localhost:5174/` locally (browsers resolve `*.localhost` to loopback,
+so nothing needs configuring). The second port is a small streaming proxy
+into the same SvelteKit process so both origins share one local state
+while the Worker still sees and enforces the tenant host. The settings
+page shows your org's content origin.
 
 ### Developing over Tailscale (or another network hostname)
 
-The dev server binds `0.0.0.0`, so other devices can use it — phones,
-tablets, or a laptop pointed at a beefier dev box. Set both origins in
-`apps/web/.dev.vars` to the hostname the _browser_ will use. With
-Tailscale MagicDNS that's your machine name plus tailnet domain (see
-`tailscale status`):
+The dev server binds `0.0.0.0`, so other devices on your tailnet can reach
+it. MagicDNS resolves the dashboard's machine name, but does not resolve
+tenant subdomains beneath that name. For Siva, set these values in
+`apps/web/.dev.vars`:
 
 ```bash
-DASHBOARD_ORIGIN="http://<machine>.<tailnet>.ts.net:5173"
-CONTENT_ORIGIN="http://<machine>.<tailnet>.ts.net:5174"
+DASHBOARD_ORIGIN="http://siva.otter-hawksbill.ts.net:5173"
+CONTENT_DOMAIN="100.100.40.20.nip.io:5174"
 ```
 
-Any LAN hostname or IP works the same way; the origins just have to match
-how the browser addresses the machine, since the Worker enforces its
-host-routing rules even in dev.
+`CONTENT_DOMAIN` has no scheme; it follows the dashboard. An org's content
+URL is then `http://<slug>.100.100.40.20.nip.io:5174/`. The `nip.io` service
+resolves these tenant hosts to Siva's Tailscale IP while each tenant keeps
+its own hostname. For another machine, use its MagicDNS name and Tailscale
+IP (`tailscale ip -4`). Alternatively, use a domain whose wildcard DNS
+record points to that IP. Verify a sample tenant hostname resolves on the
+device running the browser; its resolver may block public DNS answers
+that point to private networks.
+
+Vite also needs to allow the dashboard hostname and content-domain suffix.
+Set this in the shell when starting development, separately from
+`.dev.vars`, and adjust both entries if you changed the domains:
+
+```bash
+__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS="siva.otter-hawksbill.ts.net,.100.100.40.20.nip.io" bun --filter @adrive/web dev
+```
+
+The content proxy preserves the tenant Host header, so the Worker still
+enforces its host-routing rules in development.
 
 Production passcode login creates a seven-day, host-only
 `__Host-adrive-session` cookie. That cookie is always `Secure`, `HttpOnly`, and
@@ -192,7 +210,8 @@ modify those source tables.
 The checked-in Wrangler D1 and R2 resource names are placeholders. The
 `AUTH_GUARD` KV namespace is already provisioned and bound. Before deployment,
 create one D1 database and one private R2 bucket, replace the D1 database ID,
-apply the migration remotely, set production dashboard/content origins, and set
+apply the migration remotely, set the production dashboard origin and
+content domain, and set
 the secrets (`MAINTENANCE_SECRET`, `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`,
 `WORKOS_COOKIE_PASSWORD`, `WORKOS_WEBHOOK_SECRET`):
 

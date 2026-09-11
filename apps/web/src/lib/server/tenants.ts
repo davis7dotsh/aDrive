@@ -1,5 +1,8 @@
 import type { PgClient } from '@effect/sql-pg';
 import { Effect } from 'effect';
+import { StorageError } from './errors';
+import { lockSlugClaims } from './slug-claims';
+import { SLUG_MAX_LENGTH, SLUG_REDIRECT_WINDOW_MS } from './slug-policy';
 
 export interface TenantRows {
 	readonly orgId: string;
@@ -20,6 +23,27 @@ export interface TenantRows {
 export const ensureTenant = (sql: PgClient.PgClient, tenant: TenantRows) =>
 	sql.withTransaction(
 		Effect.gen(function* () {
+			yield* lockSlugClaims(sql);
+			const existing = yield* sql<{ id: string }>`
+				SELECT id FROM orgs WHERE id = ${tenant.orgId}
+			`;
+			if (existing.length === 0) {
+				const redirectCutoff = new Date(
+					Date.now() - SLUG_REDIRECT_WINDOW_MS
+				).toISOString();
+				const reserved = yield* sql<{ org_id: string }>`
+					SELECT org_id FROM org_slug_history
+					WHERE slug = ${tenant.slug} AND org_id <> ${tenant.orgId}
+						AND released_at > ${redirectCutoff}
+					LIMIT 1
+				`;
+				if (reserved.length > 0) {
+					return yield* new StorageError({
+						operation: 'create tenant',
+						cause: 'The organization slug is reserved by another organization'
+					});
+				}
+			}
 			yield* sql`
 			INSERT INTO orgs (id, slug, name)
 			VALUES (${tenant.orgId}, ${tenant.slug}, ${tenant.name})
@@ -39,9 +63,8 @@ export const ensureTenant = (sql: PgClient.PgClient, tenant: TenantRows) =>
 		})
 	);
 
-// First-login org naming. Stack C owns the real slug rules; until then the
-// slug is the email's local part plus a short random suffix so two people
-// named `sam` never collide.
+// First-login org naming keeps a readable email prefix and 64 random bits
+// so common local parts have ample space without exceeding the slug limit.
 export const slugify = (value: string) =>
 	value
 		.normalize('NFKD')
@@ -60,8 +83,11 @@ const randomHex = (bytes: number) => {
 
 export const personalOrgFor = (email: string) => {
 	const local = email.split('@')[0] ?? email;
+	const suffix = randomHex(8);
 	return {
 		name: `${local}'s drive`,
-		slug: `${slugify(local)}-${randomHex(2)}`
+		slug: `${slugify(local)
+			.slice(0, SLUG_MAX_LENGTH - suffix.length - 1)
+			.replace(/-+$/, '')}-${suffix}`
 	};
 };

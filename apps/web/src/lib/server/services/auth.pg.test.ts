@@ -25,12 +25,17 @@ it('mints only one API key when approved device polls overlap', async () => {
 		Layer.provide(
 			Layer.mergeAll(
 				databaseLayer,
-				Layer.succeed(CurrentOrg, { id: TEST_ORG_ID }),
+				Layer.succeed(CurrentOrg, {
+					id: TEST_ORG_ID,
+					slug: TEST_ORG_ID.replaceAll('_', '-')
+				}),
 				Layer.succeed(CurrentUser, { id: TEST_USER_ID }),
 				WorkOSFake,
 				Layer.succeed(AppConfig, {
 					dashboardOrigin: 'http://localhost:5173',
-					contentOrigin: 'http://localhost:5174',
+					contentDomain: 'localhost:5174',
+					contentScheme: 'http:',
+					contentOriginFor: (slug) => `http://${slug}.localhost:5174`,
 					maxUploadBytes: 1_000_000,
 					maintenanceSecret: 'device-race-test-secret',
 					workos: {

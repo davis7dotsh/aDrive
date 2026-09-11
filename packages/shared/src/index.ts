@@ -336,6 +336,20 @@ export const ApiKeyCreateResponseSchema = Schema.Struct({
 	token: Schema.String
 });
 
+export const OrgSettingsSchema = Schema.Struct({
+	id: Schema.String,
+	name: Schema.String,
+	slug: Schema.String,
+	contentOrigin: Schema.String,
+	nextSlugChangeAt: Schema.NullOr(Schema.String)
+});
+
+export type OrgSettings = typeof OrgSettingsSchema.Type;
+
+export const OrgUpdateSchema = Schema.Struct({
+	slug: Schema.String
+});
+
 export const DeviceAuthorizationCreateSchema = Schema.Struct({
 	name: Schema.String
 });

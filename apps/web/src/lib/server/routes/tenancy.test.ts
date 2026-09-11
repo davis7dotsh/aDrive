@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { Effect } from 'effect';
+import { FileContentLinkResponseSchema } from '@adrive/shared';
+import { Effect, Schema } from 'effect';
 import type { PgSql } from '$lib/server/pg';
 
 vi.mock('$app/server', async () => {
@@ -140,14 +141,106 @@ describe('tenancy (local platform)', () => {
 			)
 		).rejects.toMatchObject({ status: 404 });
 
-		// Public content still serves regardless of who asks.
+		// Public content still serves regardless of who asks, on A's host.
+		const b = await currentIdentity(ctx);
+		await loginAs(ctx, ORG_A);
+		const a = await currentIdentity(ctx);
 		const { GET: serveGET } = await import('../../../routes/f/[id]/+server.js');
 		const served = await call(
 			serveGET,
-			ctx.event({ path: `/f/${fileA.id}`, params: { id: fileA.id } })
+			await ctx.contentEvent({
+				slug: a.orgSlug,
+				path: `/f/${fileA.id}`,
+				params: { id: fileA.id }
+			})
 		);
 		expect(served.status).toBe(200);
 		expect(await served.text()).toBe('zebra ledger for org a');
+
+		// The same public file on B's host is a 404: the host names the org.
+		await expect(
+			call(
+				serveGET,
+				await ctx.contentEvent({
+					slug: b.orgSlug,
+					path: `/f/${fileA.id}`,
+					params: { id: fileA.id }
+				})
+			)
+		).rejects.toMatchObject({ status: 404 });
+		const { GET: thumbnailGET } =
+			await import('../../../routes/t/[id]/[version]/grid.webp/+server.js');
+		await expect(
+			call(
+				thumbnailGET,
+				await ctx.contentEvent({
+					slug: b.orgSlug,
+					path: `/t/${fileA.id}/1/grid.webp`,
+					params: { id: fileA.id, version: '1' }
+				})
+			)
+		).rejects.toMatchObject({ status: 404 });
+	});
+
+	it('answers 404 on every path for a host that names no live org', async () => {
+		const ctx = await setup();
+		await loginAs(ctx, ORG_A);
+		const a = await currentIdentity(ctx);
+		const file = await uploadFile(ctx, {
+			name: 'hosted.txt',
+			content: 'hosted'
+		});
+		const { resolveContentHost } = await import('$lib/server/content-host');
+
+		// An unknown slug is refused by the hook before any route runs, and
+		// the miss is remembered in KV.
+		for (const path of [`/f/${file.id}`, '/f/anything', `/s/${file.id}/`]) {
+			await expect(
+				ctx.contentEvent({ slug: 'nobody-here', path })
+			).rejects.toMatchObject({ status: 404 });
+		}
+		expect(await resolveContentHost(ctx.env, 'nobody-here')).toEqual({
+			_tag: 'Missing'
+		});
+		expect(await ctx.env.AUTH_GUARD.get('org-slug:nobody-here')).toBe(
+			JSON.stringify({ missing: true })
+		);
+
+		// The live org resolves and is cached with its trust.
+		expect(await resolveContentHost(ctx.env, a.orgSlug)).toEqual({
+			_tag: 'Found',
+			host: { orgId: a.orgId, slug: a.orgSlug }
+		});
+		expect(await ctx.env.AUTH_GUARD.get(`org-slug:${a.orgSlug}`)).toBe(
+			JSON.stringify({ orgId: a.orgId, trust: 'new' })
+		);
+
+		// Suspending the org takes its host offline once the cache entry is
+		// dropped; the file itself is untouched.
+		await queryPg(
+			ctx.env,
+			(sql) => sql`UPDATE orgs SET trust = 'suspended' WHERE id = ${a.orgId}`
+		);
+		await ctx.env.AUTH_GUARD.delete(`org-slug:${a.orgSlug}`);
+		await expect(
+			ctx.contentEvent({ slug: a.orgSlug, path: `/f/${file.id}` })
+		).rejects.toMatchObject({ status: 404 });
+		await queryPg(
+			ctx.env,
+			(sql) => sql`UPDATE orgs SET trust = 'new' WHERE id = ${a.orgId}`
+		);
+		await ctx.env.AUTH_GUARD.delete(`org-slug:${a.orgSlug}`);
+		const { GET: serveGET } = await import('../../../routes/f/[id]/+server.js');
+		const served = await call(
+			serveGET,
+			await ctx.contentEvent({
+				slug: a.orgSlug,
+				path: `/f/${file.id}`,
+				params: { id: file.id }
+			})
+		);
+		expect(served.status).toBe(200);
+		expect(await served.text()).toBe('hosted');
 	});
 
 	it('meters stored bytes per org and enforces the plan limit', async () => {
@@ -295,5 +388,180 @@ describe('tenancy (local platform)', () => {
 			await call(keysGET, ctx.event({ path: '/api/auth/keys' }))
 		).json()) as { keys: ReadonlyArray<{ name: string }> };
 		expect(listedForA.keys.map((key) => key.name)).toContain('tenancy cli');
+	});
+});
+
+describe('org slugs (local platform)', () => {
+	let shared: RouteTestContext | undefined;
+	const setup = async () => (shared ??= await createRouteContext());
+	const OWNER = { userId: 'user_slug_owner' };
+
+	const patchSlug = async (ctx: RouteTestContext, slug: string) => {
+		const { PATCH } = await import('../../../routes/api/org/+server.js');
+		return call(
+			PATCH,
+			ctx.event({
+				method: 'PATCH',
+				path: '/api/org',
+				body: JSON.stringify({ slug }),
+				headers: { 'content-type': 'application/json' }
+			})
+		);
+	};
+
+	it('serves an existing private link after following the old host redirect', async () => {
+		const ctx = await setup();
+		await loginAs(ctx, { userId: `user_grant_rename_${crypto.randomUUID()}` });
+		const before = await currentIdentity(ctx);
+		const file = await uploadFile(ctx, {
+			name: 'private-moving.txt',
+			content: 'private content after rename',
+			isPublic: false
+		});
+		const { GET: linkGET } =
+			await import('../../../routes/api/files/[id]/link/+server.js');
+		const linked = await call(
+			linkGET,
+			ctx.event({
+				path: `/api/files/${file.id}/link`,
+				params: { id: file.id }
+			})
+		);
+		const link = await Schema.decodeUnknownPromise(
+			FileContentLinkResponseSchema
+		)(await linked.json());
+		expect(link.public).toBe(false);
+		const oldUrl = new URL(link.url);
+		expect(oldUrl.origin).toBe(`http://${before.orgSlug}.localhost:5174`);
+		const { handle } = await import('../../../hooks.server.js');
+		const { GET: serveGET } = await import('../../../routes/f/[id]/+server.js');
+		const requestContent = (url: URL) =>
+			handle({
+				event: ctx.event({
+					path: `${url.pathname}${url.search}`,
+					url,
+					params: { id: file.id }
+				}),
+				resolve: (event) => call(serveGET, event)
+			});
+		expect((await requestContent(oldUrl)).status).toBe(200);
+		const next = `private-${crypto.randomUUID().slice(0, 8)}`;
+		expect((await patchSlug(ctx, next)).status).toBe(200);
+		const redirected = await requestContent(oldUrl);
+		expect(redirected.status).toBe(301);
+		const location = redirected.headers.get('location');
+		expect(location).toBe(
+			`http://${next}.localhost:5174${oldUrl.pathname}${oldUrl.search}`
+		);
+		if (!location) throw new Error('The renamed content host did not redirect');
+		const served = await requestContent(new URL(location));
+		expect(served.status).toBe(200);
+		expect(await served.text()).toBe('private content after rename');
+	});
+
+	it('lets an owner rename the content host once per 30 days with redirects', async () => {
+		const ctx = await setup();
+		await loginAs(ctx, OWNER);
+		const before = await currentIdentity(ctx);
+		const file = await uploadFile(ctx, {
+			name: 'moving.txt',
+			content: 'moved'
+		});
+		const { resolveContentHost } = await import('$lib/server/content-host');
+		// Warm the cache for the old slug so the change has to purge it.
+		expect((await resolveContentHost(ctx.env, before.orgSlug))._tag).toBe(
+			'Found'
+		);
+
+		const { GET } = await import('../../../routes/api/org/+server.js');
+		const settings = (await (
+			await call(GET, ctx.event({ path: '/api/org' }))
+		).json()) as {
+			slug: string;
+			contentOrigin: string;
+			nextSlugChangeAt: null;
+		};
+		expect(settings.slug).toBe(before.orgSlug);
+		expect(settings.contentOrigin).toBe(
+			`http://${before.orgSlug}.localhost:5174`
+		);
+		expect(settings.nextSlugChangeAt).toBeNull();
+
+		for (const bad of ['ab', 'Has Space', '-lead', 'admin', 'x'.repeat(33)]) {
+			await expect(patchSlug(ctx, bad)).rejects.toMatchObject({ status: 400 });
+		}
+
+		const next = `moved-${crypto.randomUUID().slice(0, 8)}`;
+		const changed = (await (await patchSlug(ctx, next)).json()) as {
+			slug: string;
+			contentOrigin: string;
+			nextSlugChangeAt: string | null;
+		};
+		expect(changed.slug).toBe(next);
+		expect(changed.contentOrigin).toBe(`http://${next}.localhost:5174`);
+		expect(changed.nextSlugChangeAt).not.toBeNull();
+
+		// The session picks the new slug up on its next request, and links
+		// are generated for the new host.
+		const after = await currentIdentity(ctx);
+		expect(after.orgSlug).toBe(next);
+		const listed = await listFiles(ctx);
+		expect(listed.contentOrigin).toBe(`http://${next}.localhost:5174`);
+
+		// Old host redirects to the same path on the new one; the new host
+		// serves the file; both cache entries were purged and re-resolved.
+		expect(await resolveContentHost(ctx.env, before.orgSlug)).toEqual({
+			_tag: 'Moved',
+			slug: next
+		});
+		await expect(
+			ctx.contentEvent({ slug: before.orgSlug, path: `/f/${file.id}?v=1` })
+		).rejects.toMatchObject({
+			status: 301,
+			location: `http://${next}.localhost:5174/f/${file.id}?v=1`
+		});
+		const { GET: serveGET } = await import('../../../routes/f/[id]/+server.js');
+		const served = await call(
+			serveGET,
+			await ctx.contentEvent({
+				slug: next,
+				path: `/f/${file.id}`,
+				params: { id: file.id }
+			})
+		);
+		expect(await served.text()).toBe('moved');
+
+		// A second change inside the window is refused, and so is anyone
+		// else claiming the parked slug while it still redirects.
+		await expect(
+			patchSlug(ctx, `again-${crypto.randomUUID().slice(0, 8)}`)
+		).rejects.toMatchObject({ status: 409 });
+		await loginAs(ctx, { userId: 'user_slug_other' });
+		await expect(patchSlug(ctx, before.orgSlug)).rejects.toMatchObject({
+			status: 409
+		});
+		await expect(patchSlug(ctx, next)).rejects.toMatchObject({ status: 409 });
+
+		// A non-owner cannot rename at all.
+		const other = await currentIdentity(ctx);
+		// Session resolution mirrors the verified provider role, so change
+		// that authority instead of a local membership it would overwrite.
+		const { workOSFake } = await import('../services/workos');
+		const memberSession = vi.spyOn(workOSFake, 'loadSession').mockReturnValue(
+			Effect.succeed({
+				authenticated: true,
+				sessionId: `fake-session:${other.userId}`,
+				userId: other.userId,
+				orgId: other.orgId,
+				role: 'member'
+			})
+		);
+		try {
+			await expect(
+				patchSlug(ctx, `member-${crypto.randomUUID().slice(0, 8)}`)
+			).rejects.toMatchObject({ status: 403 });
+		} finally {
+			memberSession.mockRestore();
+		}
 	});
 });

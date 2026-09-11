@@ -2,6 +2,11 @@ import type { Cookies, RequestEvent } from '@sveltejs/kit';
 import { vi } from 'vitest';
 
 export const DASHBOARD_ORIGIN = 'http://localhost:5173';
+// Content is served from `<slug>.<CONTENT_DOMAIN>`; browsers resolve
+// `*.localhost` to loopback, which is also what the suite pins.
+export const CONTENT_DOMAIN = 'localhost:5174';
+export const contentOrigin = (slug: string) =>
+	`http://${slug}.${CONTENT_DOMAIN}`;
 
 // Route handlers read the event through two paths: runEdgeWithEvent takes
 // the event directly, and runEdge calls SvelteKit's getRequestEvent() —
@@ -39,6 +44,10 @@ export interface RouteTestContext {
 	readonly cookies: TestCookieStore;
 	readonly url: (path: string) => URL;
 	readonly event: (input: EventInput) => RequestEvent;
+	// A request on `<slug>.<CONTENT_DOMAIN>`, as the hook would hand it to
+	// a content route: the slug is resolved to locals.content first, so an
+	// unknown or suspended slug rejects with the hook's 404.
+	readonly contentEvent: (input: ContentEventInput) => Promise<RequestEvent>;
 	readonly drainWaitUntil: () => Promise<void>;
 }
 
@@ -48,20 +57,34 @@ export interface EventInput {
 	body?: BodyInit | null;
 	headers?: Record<string, string>;
 	params?: Record<string, string>;
+	// Absolute URL to request instead of `path` on the dashboard origin.
+	url?: URL;
+}
+
+// Either a slug plus a path, or a full content URL (as returned by the
+// link and thumbnail routes) whose host names the slug.
+export interface ContentEventInput extends EventInput {
+	slug?: string;
 }
 
 // SvelteKit types RequestEvent per route with phantom params, which a
 // generic test event can never satisfy; the runtime shape is what matters,
 // so this is the single sanctioned cast point. The handle hook does not
-// run here, so its identity step is replayed first: locals.auth is
-// resolved from the Authorization header or the cookie jar. The import
-// is deferred because test files mock $app/server with a factory that
-// imports this module, and request-auth reaches $app/server through edge.
+// run here, so its identity step is replayed first: on the dashboard
+// origin locals.auth is resolved from the Authorization header or the
+// cookie jar (content events carry locals.content from contentEvent and
+// never see credentials). The import is deferred because test files mock
+// $app/server with a factory that imports this module, and request-auth
+// reaches $app/server through edge.
 export const call = async <E, R>(
 	handler: (event: E) => R,
 	event: RequestEvent
 ): Promise<R extends Promise<infer A> ? A : R> => {
-	if (event.locals.auth === null && event.platform?.env) {
+	if (
+		event.locals.auth === null &&
+		event.locals.content === null &&
+		event.platform?.env
+	) {
 		const { resolveEventAuth } = await import('../request-auth');
 		const resolved = await resolveEventAuth(event.platform.env, event);
 		event.locals.auth = resolved.auth;
@@ -82,7 +105,7 @@ export const createRouteContext = async (): Promise<RouteTestContext> => {
 	const env = {
 		...platformEnv,
 		DASHBOARD_ORIGIN,
-		CONTENT_ORIGIN: 'http://localhost:5174',
+		CONTENT_DOMAIN,
 		MAINTENANCE_SECRET:
 			platformEnv.MAINTENANCE_SECRET ?? 'adrive-route-test-maintenance',
 		WORKOS_API_KEY: 'fake:route-tests',
@@ -98,9 +121,9 @@ export const createRouteContext = async (): Promise<RouteTestContext> => {
 		path,
 		body,
 		headers = {},
-		params = {}
+		params = {},
+		url = new URL(path, DASHBOARD_ORIGIN)
 	}: EventInput): RequestEvent => {
-		const url = new URL(path, DASHBOARD_ORIGIN);
 		// Upload routes require Content-Length (quota checks); undici only
 		// sets it for fixed-length bodies, so supply it for strings here.
 		const withLength =
@@ -140,10 +163,39 @@ export const createRouteContext = async (): Promise<RouteTestContext> => {
 			route: { id: null },
 			setHeaders: () => {},
 			isDataRequest: false,
-			locals: { auth: null },
+			locals: { auth: null, content: null },
 			fetch: globalThis.fetch
 		} as unknown as RequestEvent;
 		setRequestEvent(event);
+		return event;
+	};
+
+	const buildContent = async (input: ContentEventInput) => {
+		const { contentSlugFromHost } = await import('../host-gate');
+		const { resolveContentHost } = await import('../content-host');
+		const url =
+			input.url ??
+			new URL(input.path, contentOrigin(input.slug ?? 'missing-slug'));
+		const slug = input.slug ?? contentSlugFromHost(url.host, CONTENT_DOMAIN);
+		if (slug === null) throw new Error(`Not a content host: ${url.host}`);
+		const resolved = await resolveContentHost(env, slug);
+		if (resolved._tag !== 'Found') {
+			// The hook answers 404 (unknown or suspended) or 301 (a released
+			// slug) before any route runs; the redirect is surfaced the same
+			// way so a test can assert on it.
+			const { error, redirect } = await import('@sveltejs/kit');
+			return resolved._tag === 'Missing'
+				? error(404, 'Not found')
+				: redirect(
+						301,
+						new URL(
+							`${url.pathname}${url.search}`,
+							contentOrigin(resolved.slug)
+						).href
+					);
+		}
+		const event = build({ ...input, url });
+		event.locals.content = resolved.host;
 		return event;
 	};
 
@@ -152,6 +204,7 @@ export const createRouteContext = async (): Promise<RouteTestContext> => {
 		cookies,
 		url: (path) => new URL(path, DASHBOARD_ORIGIN),
 		event: build,
+		contentEvent: buildContent,
 		drainWaitUntil: async () => {
 			await Promise.allSettled(waitUntilQueue.splice(0));
 		}

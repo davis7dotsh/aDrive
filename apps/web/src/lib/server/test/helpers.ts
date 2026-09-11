@@ -121,6 +121,12 @@ export const mutateFile = async (
 	return (await response.json()) as { file: { id: string } };
 };
 
+// The content origin of the org the cookie jar is signed in to.
+export const currentContentOrigin = async (ctx: RouteTestContext) => {
+	const { contentOrigin } = await import('./route-context');
+	return contentOrigin((await currentIdentity(ctx)).orgSlug);
+};
+
 // The current cookie's identity, as the hook would resolve it.
 export const currentIdentity = async (ctx: RouteTestContext) => {
 	const { resolveEventAuth } = await import('../request-auth');

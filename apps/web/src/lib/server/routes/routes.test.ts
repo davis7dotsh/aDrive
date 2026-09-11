@@ -1,7 +1,10 @@
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { Effect, Schema } from 'effect';
 import { FileListResponseSchema } from '@adrive/shared';
-import { dashboardThumbnailUrl } from '$lib/file-thumbnail';
+import {
+	dashboardRenderedThumbnailRequestPattern,
+	dashboardThumbnailUrl
+} from '$lib/file-thumbnail';
 import type { PgSql } from '$lib/server/pg';
 
 vi.mock('$app/server', async () => {
@@ -15,6 +18,8 @@ import {
 	type RouteTestContext
 } from '../test/route-context';
 import {
+	currentContentOrigin,
+	currentIdentity,
 	login,
 	uploadFile,
 	listFiles,
@@ -134,10 +139,15 @@ describe('route integration (local platform)', () => {
 		expect(link.public).toBe(true);
 		expect(link.version).toBe(file.version);
 
+		expect(link.url).toBe(`${await currentContentOrigin(ctx)}/f/${file.id}`);
 		const { GET: serveGET } = await import('../../../routes/f/[id]/+server.js');
 		const served = await call(
 			serveGET,
-			ctx.event({ path: `/f/${file.id}`, params: { id: file.id } })
+			await ctx.contentEvent({
+				url: new URL(link.url),
+				path: `/f/${file.id}`,
+				params: { id: file.id }
+			})
 		);
 		expect(served.status).toBe(200);
 		expect(await served.text()).toBe('integration body');
@@ -250,11 +260,14 @@ describe('route integration (local platform)', () => {
 		expect(commit.assetCount).toBe(2);
 		await ctx.drainWaitUntil();
 
+		const { orgSlug } = await currentIdentity(ctx);
+		const siteOrigin = await currentContentOrigin(ctx);
 		const { GET: serveSiteGET } =
 			await import('../../../routes/s/[id]/[...path]/+server.js');
 		const page = await call(
 			serveSiteGET,
-			ctx.event({
+			await ctx.contentEvent({
+				slug: orgSlug,
 				path: `/s/${session.fileId}/index.html`,
 				params: { id: session.fileId, path: 'index.html' }
 			})
@@ -273,7 +286,7 @@ describe('route integration (local platform)', () => {
 			})
 		);
 		expect(await publicLinkResponse.json()).toMatchObject({
-			url: `${ctx.env.CONTENT_ORIGIN}/s/${session.fileId}/`,
+			url: `${siteOrigin}/s/${session.fileId}/`,
 			expiresAt: null,
 			public: true,
 			version: 1
@@ -290,7 +303,7 @@ describe('route integration (local platform)', () => {
 		);
 		expect(publicContentResponse.status).toBe(307);
 		expect(publicContentResponse.headers.get('location')).toBe(
-			`${ctx.env.CONTENT_ORIGIN}/s/${session.fileId}/`
+			`${siteOrigin}/s/${session.fileId}/`
 		);
 
 		const screenshot = mockBrowserScreenshot(ctx.env, 'site-webp');
@@ -307,15 +320,15 @@ describe('route integration (local platform)', () => {
 		);
 		const { GET: thumbnailGET } =
 			await import('../../../routes/t/[id]/[version]/grid.webp/+server.js');
-		const signedEvent = ctx.event({
-			path: `${thumbnailUrl.pathname}${thumbnailUrl.search}`,
-			params: { id: session.fileId, version: '1' }
-		});
-		const generated = await call(thumbnailGET, {
-			...signedEvent,
-			url: thumbnailUrl,
-			request: new Request(thumbnailUrl)
-		});
+		expect(thumbnailUrl.origin).toBe(siteOrigin);
+		const generated = await call(
+			thumbnailGET,
+			await ctx.contentEvent({
+				url: thumbnailUrl,
+				path: `${thumbnailUrl.pathname}${thumbnailUrl.search}`,
+				params: { id: session.fileId, version: '1' }
+			})
+		);
 		expect(generated.status).toBe(307);
 		expect(screenshot).toHaveBeenCalledOnce();
 		const [action, screenshotOptions] = screenshot.mock.calls[0] ?? [];
@@ -324,7 +337,9 @@ describe('route integration (local platform)', () => {
 			viewport: { width: 1_200, height: 900 },
 			screenshotOptions: { type: 'webp', quality: 75 },
 			allowResourceTypes: ['document', 'stylesheet', 'image', 'font', 'script'],
-			allowRequestPattern: ['^http://localhost:5174(?:/|$)']
+			allowRequestPattern: [
+				dashboardRenderedThumbnailRequestPattern(siteOrigin)
+			]
 		});
 		expect(screenshotOptions && 'url' in screenshotOptions).toBe(true);
 		const sourceUrl = new URL(
@@ -342,7 +357,7 @@ describe('route integration (local platform)', () => {
 		expect(allowedScreenshotRequest.test(sourceUrl.href)).toBe(true);
 		expect(
 			allowedScreenshotRequest.test(
-				new URL(`/s/${session.fileId}/style.css`, ctx.env.CONTENT_ORIGIN).href
+				new URL(`/s/${session.fileId}/style.css`, siteOrigin).href
 			)
 		).toBe(true);
 		expect(allowedScreenshotRequest.test('https://evil.example/steal')).toBe(
@@ -361,49 +376,46 @@ describe('route integration (local platform)', () => {
 				)
 			)[0]?.download_count;
 		const countBefore = await downloadCount();
-		const sourceEvent = ctx.event({
-			path: `${sourceUrl.pathname}${sourceUrl.search}`,
-			params: {
-				id: session.fileId,
-				path: sourceUrl.pathname.slice(`/s/${session.fileId}/`.length)
-			}
-		});
-		const screenshotSource = await call(serveSiteGET, {
-			...sourceEvent,
-			url: sourceUrl,
-			request: new Request(sourceUrl)
-		});
+		const screenshotSource = await call(
+			serveSiteGET,
+			await ctx.contentEvent({
+				url: sourceUrl,
+				path: `${sourceUrl.pathname}${sourceUrl.search}`,
+				params: {
+					id: session.fileId,
+					path: sourceUrl.pathname.slice(`/s/${session.fileId}/`.length)
+				}
+			})
+		);
 		expect(screenshotSource.status).toBe(200);
 		expect(await downloadCount()).toBe(countBefore);
 
 		const forgedSource = new URL(link.url);
 		forgedSource.searchParams.set('purpose', 'thumbnail');
-		const forgedEvent = ctx.event({
-			path: `${forgedSource.pathname}${forgedSource.search}`,
-			params: {
-				id: session.fileId,
-				path: forgedSource.pathname.slice(`/s/${session.fileId}/`.length)
-			}
-		});
 		await expect(
-			call(serveSiteGET, {
-				...forgedEvent,
-				url: forgedSource,
-				request: new Request(forgedSource)
-			})
+			call(
+				serveSiteGET,
+				await ctx.contentEvent({
+					url: forgedSource,
+					path: `${forgedSource.pathname}${forgedSource.search}`,
+					params: {
+						id: session.fileId,
+						path: forgedSource.pathname.slice(`/s/${session.fileId}/`.length)
+					}
+				})
+			)
 		).rejects.toMatchObject({ status: 404 });
 		expect(await downloadCount()).toBe(countBefore);
 
 		const cachedUrl = new URL(generated.headers.get('location') ?? '');
-		const cachedEvent = ctx.event({
-			path: cachedUrl.pathname,
-			params: { id: session.fileId, version: '1' }
-		});
-		const cached = await call(thumbnailGET, {
-			...cachedEvent,
-			url: cachedUrl,
-			request: new Request(cachedUrl)
-		});
+		const cached = await call(
+			thumbnailGET,
+			await ctx.contentEvent({
+				url: cachedUrl,
+				path: cachedUrl.pathname,
+				params: { id: session.fileId, version: '1' }
+			})
+		);
 		expect(cached.status).toBe(200);
 		expect(cached.headers.get('content-type')).toBe('image/webp');
 		expect(cached.headers.get('cache-control')).toContain('immutable');
@@ -461,20 +473,19 @@ describe('route integration (local platform)', () => {
 		const thumbnailUrl = new URL(dashboardThumbnailUrl(link.url, file.id, 1));
 		const { GET: thumbnailGET } =
 			await import('../../../routes/t/[id]/[version]/grid.webp/+server.js');
-		const event = ctx.event({
-			path: `${thumbnailUrl.pathname}${thumbnailUrl.search}`,
-			params: { id: file.id, version: '1' }
-		});
-		const response = await call(thumbnailGET, {
-			...event,
-			url: thumbnailUrl,
-			request: new Request(thumbnailUrl)
-		});
+		const response = await call(
+			thumbnailGET,
+			await ctx.contentEvent({
+				url: thumbnailUrl,
+				path: `${thumbnailUrl.pathname}${thumbnailUrl.search}`,
+				params: { id: file.id, version: '1' }
+			})
+		);
 		expect(response.status).toBe(307);
 		const options = screenshot.mock.calls[0]?.[1];
 		expect(options && 'url' in options).toBe(true);
 		expect(options?.allowRequestPattern).toEqual([
-			'^http://localhost:5174(?:/|$)'
+			dashboardRenderedThumbnailRequestPattern(await currentContentOrigin(ctx))
 		]);
 		const source = new URL(
 			options && 'url' in options ? options.url : 'http://invalid.example'
@@ -482,15 +493,14 @@ describe('route integration (local platform)', () => {
 		expect(source.pathname).toBe(`/f/${file.id}`);
 		expect(source.searchParams.get('purpose')).toBe('thumbnail');
 		const { GET: serveGET } = await import('../../../routes/f/[id]/+server.js');
-		const sourceEvent = ctx.event({
-			path: `${source.pathname}${source.search}`,
-			params: { id: file.id }
-		});
-		const renderedSource = await call(serveGET, {
-			...sourceEvent,
-			url: source,
-			request: new Request(source)
-		});
+		const renderedSource = await call(
+			serveGET,
+			await ctx.contentEvent({
+				url: source,
+				path: `${source.pathname}${source.search}`,
+				params: { id: file.id }
+			})
+		);
 		expect(renderedSource.headers.get('content-disposition')).toMatch(
 			/^inline;/
 		);

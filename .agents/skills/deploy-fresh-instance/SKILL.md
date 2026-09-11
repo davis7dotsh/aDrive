@@ -54,7 +54,7 @@ into `env.production` by hand.
    degrading to keyword search. That is intended.
 
 5. In the Cloudflare dashboard, open **Images → Transformations**, select
-   the zone that owns `CONTENT_ORIGIN` (`davis7.space` for
+   the zone that owns `CONTENT_DOMAIN` (`davis7.space` for
    `files.davis7.space`), and enable transformations. Dashboard thumbnails
    require this zone-level setting.
 
@@ -119,8 +119,10 @@ Expected live checks once both origins are up:
 
 - dashboard root → **200**
 - unauth `GET <dashboard>/api/files` → **401**
-- `GET <content>/api/files` → **421** (dashboard API rejected on content origin)
+- `GET https://<slug>.<content>/api/files` → **421** (dashboard API rejected on a content host)
 - `GET <dashboard>/f/<uuid>` → **421** (content rejected on dashboard origin)
+- `GET https://<content>/f/<uuid>` → **421** (content needs an org host)
+- `GET https://no-such-org.<content>/f/<uuid>` → **404**
 - missing file → **404**
 - a known non-empty public file without a `Range` header → **200** with no
   `Content-Range`

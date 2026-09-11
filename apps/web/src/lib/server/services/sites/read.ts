@@ -1,13 +1,14 @@
 import { sitePathCandidates } from '@adrive/shared';
 import { Effect } from 'effect';
 import { InvalidRequest, NotFound } from '../../errors';
+import { tenantOrgId } from '../current-org';
 import type { SiteInternals } from './internals';
 import { SiteAssetRow, type SitesShape } from './types';
 
 export const readOps = (
 	internals: SiteInternals
 ): Pick<SitesShape, 'findAsset'> => {
-	const { all, sql } = internals;
+	const { all, sql, org } = internals;
 
 	return {
 		findAsset: Effect.fn('Sites.findAsset')(function* (
@@ -28,6 +29,9 @@ export const readOps = (
 			});
 			const includeUnavailable = options.includeUnavailable === true;
 			const pinVersion = options.version !== undefined;
+			// Content requests carry the org their host names, so a site id
+			// from another org is a 404 on this host.
+			const orgId = tenantOrgId(org);
 			const rows = yield* all(
 				sql`
 					SELECT f.org_id, a.path, a.r2_key, a.content_type, a.size_bytes
@@ -35,6 +39,7 @@ export const readOps = (
 					JOIN site_assets a
 						ON a.file_id = f.id AND a.version = f.current_version
 					WHERE f.id = ${fileId} AND f.is_site = true AND f.public = true
+						AND (${orgId}::text IS NULL OR f.org_id = ${orgId})
 						AND (
 							${includeUnavailable}::boolean
 							OR (

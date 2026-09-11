@@ -3,24 +3,32 @@ import { classifyRoute } from './host-gate';
 export interface SecurityHeaderContext {
 	readonly pathname: string;
 	readonly requestOrigin: string;
-	readonly contentOrigin: string;
+	readonly contentDomain: string;
+	readonly contentScheme: string;
 }
 
 const HSTS_VALUE = 'max-age=31536000; includeSubDomains';
 
 // The dashboard loads previews (images, media, iframes) and fetches nothing
-// cross-origin except content served from CONTENT_ORIGIN. SvelteKit emits a
-// nonce'd script-src for its hydration script (svelte.config.js); every other
-// directive is owned here so the content origin can come from runtime config.
-const dashboardCsp = (contentOrigin: string, scriptSrc: string) =>
+// cross-origin except content served from `<slug>.<CONTENT_DOMAIN>`, so the
+// policy lists the wildcard host under the dashboard's scheme. SvelteKit
+// emits a nonce'd script-src for its hydration script (svelte.config.js);
+// every other directive is owned here so the domain can come from runtime
+// config.
+export const contentHostSource = (
+	contentScheme: string,
+	contentDomain: string
+) => `${contentScheme}//*.${contentDomain}`;
+
+const dashboardCsp = (contentSource: string, scriptSrc: string) =>
 	[
 		`default-src 'self'`,
 		scriptSrc,
 		`style-src 'self' 'unsafe-inline'`,
-		`img-src 'self' data: blob: ${contentOrigin}`,
-		`media-src 'self' blob: ${contentOrigin}`,
-		`connect-src 'self' ${contentOrigin}`,
-		`frame-src ${contentOrigin}`,
+		`img-src 'self' data: blob: ${contentSource}`,
+		`media-src 'self' blob: ${contentSource}`,
+		`connect-src 'self' ${contentSource}`,
+		`frame-src ${contentSource}`,
 		`object-src 'none'`,
 		`base-uri 'self'`,
 		`form-action 'self'`,
@@ -78,7 +86,7 @@ export const applySecurityHeaders = (
 		headers.set(
 			'Content-Security-Policy',
 			dashboardCsp(
-				context.contentOrigin,
+				contentHostSource(context.contentScheme, context.contentDomain),
 				extractScriptSrc(headers.get('Content-Security-Policy'))
 			)
 		);

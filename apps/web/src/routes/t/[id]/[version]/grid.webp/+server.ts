@@ -20,10 +20,10 @@ import {
 	storeEdgeCache,
 	thumbnailCacheControl
 } from '$lib/server/content-cache';
-import { AppConfig } from '$lib/server/config';
 import { runEdge } from '$lib/server/edge';
 import { NotFound, StorageError } from '$lib/server/errors';
 import { Blobs } from '$lib/server/services/blobs';
+import { currentContentOrigin } from '$lib/server/services/current-org';
 import { Files } from '$lib/server/services/files';
 import { GrantSecrets } from '$lib/server/services/grant-secrets';
 
@@ -72,7 +72,9 @@ export const GET: RequestHandler = ({ params, platform, request, url }) =>
 			const version = parsedVersion(params.version);
 			if (version === null) return yield* new NotFound({ id: params.id });
 
-			const config = yield* AppConfig;
+			// The host names the org; sources for the renderer are fetched
+			// from the same per-org origin.
+			const contentOrigin = yield* currentContentOrigin;
 			const files = yield* Files;
 			const grantSecrets = yield* GrantSecrets;
 			const expiresAtSeconds = Number(url.searchParams.get('e'));
@@ -108,7 +110,6 @@ export const GET: RequestHandler = ({ params, platform, request, url }) =>
 				hasGrant || resolved.unavailable || !content.file.public;
 			if (!content.file.public || hasGrant) {
 				const granted = yield* grantSecrets.verify({
-					contentOrigin: config.contentOrigin,
 					orgId: content.orgId,
 					requestOrigin: url.origin,
 					fileId: params.id,
@@ -167,7 +168,6 @@ export const GET: RequestHandler = ({ params, platform, request, url }) =>
 			if (!hasGrant) return yield* new NotFound({ id: params.id });
 
 			const sourceGrant = yield* grantSecrets.mint({
-				contentOrigin: config.contentOrigin,
 				orgId: content.orgId,
 				fileId: params.id,
 				version: content.file.version,
@@ -176,7 +176,6 @@ export const GET: RequestHandler = ({ params, platform, request, url }) =>
 			const siteGrant =
 				content.file.kind === 'site'
 					? yield* grantSecrets.mint({
-							contentOrigin: config.contentOrigin,
 							orgId: content.orgId,
 							fileId: params.id,
 							version: content.file.version
@@ -184,7 +183,7 @@ export const GET: RequestHandler = ({ params, platform, request, url }) =>
 					: null;
 			const sourceUrl = siteGrant
 				? dashboardSiteThumbnailSourceUrl(
-						config.contentOrigin,
+						contentOrigin,
 						params.id,
 						content.file.version,
 						{
@@ -197,7 +196,7 @@ export const GET: RequestHandler = ({ params, platform, request, url }) =>
 						}
 					)
 				: dashboardThumbnailSourceUrl(
-						config.contentOrigin,
+						contentOrigin,
 						params.id,
 						content.file.version,
 						{
@@ -212,7 +211,7 @@ export const GET: RequestHandler = ({ params, platform, request, url }) =>
 								url: sourceUrl.href,
 								...DASHBOARD_RENDERED_THUMBNAIL,
 								allowRequestPattern: [
-									dashboardRenderedThumbnailRequestPattern(config.contentOrigin)
+									dashboardRenderedThumbnailRequestPattern(contentOrigin)
 								]
 							})
 						: await fetch(sourceUrl, {

@@ -66,7 +66,7 @@ describe('site publication competing with purge', () => {
 						const config = yield* AppConfig;
 						const blobs = yield* Blobs;
 						const internals = createInternals({
-							org: { id: TEST_ORG_ID },
+							org: { id: TEST_ORG_ID, slug: TEST_ORG_ID.replaceAll('_', '-') },
 							sql,
 							config,
 							blobs: {

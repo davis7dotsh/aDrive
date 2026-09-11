@@ -3,6 +3,7 @@ import { Effect } from 'effect';
 import { AppConfig } from '$lib/server/config';
 import { runEdge } from '$lib/server/edge';
 import { requireAuth } from '$lib/server/request-auth';
+import { currentContentOrigin } from '$lib/server/services/current-org';
 import { Search } from '$lib/server/services/search';
 import { Tags } from '$lib/server/services/tags';
 import { Indexing } from '$lib/server/services/indexing';
@@ -33,7 +34,7 @@ export const GET: RequestHandler = (event) => {
 				files: page.files,
 				nextCursor: page.nextCursor,
 				tags: tagList ?? [],
-				contentOrigin: config.contentOrigin,
+				contentOrigin: yield* currentContentOrigin,
 				maxUploadBytes: config.maxUploadBytes,
 				semantic: semantic ?? {
 					enabled: false,
