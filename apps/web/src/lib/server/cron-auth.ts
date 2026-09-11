@@ -58,3 +58,43 @@ export const verifyScheduledRequest = async (
 		scheduledMessage(scheduledTime, cron)
 	);
 };
+
+// Queue deliveries from the Worker facade are signed over the exact batch
+// JSON so a forged or altered body is rejected, not just a stale one.
+const jobsMessage = (timestamp: string, body: string) =>
+	new TextEncoder().encode(`jobs\n${timestamp}\n${body}`);
+
+export const signJobsRequest = async (
+	passcode: string,
+	timestamp: string,
+	body: string
+) => {
+	const key = await hmacKey(passcode, 'sign');
+	return bytesToHex(
+		await crypto.subtle.sign('HMAC', key, jobsMessage(timestamp, body))
+	);
+};
+
+export const verifyJobsRequest = async (
+	passcode: string,
+	timestamp: string | null,
+	body: string,
+	signature: string | null,
+	now = Date.now()
+) => {
+	if (!timestamp || !signature) return false;
+	const sentAt = Number(timestamp);
+	if (
+		!Number.isSafeInteger(sentAt) ||
+		Math.abs(now - sentAt) > SIGNATURE_WINDOW_MS
+	) {
+		return false;
+	}
+	const key = await hmacKey(passcode, 'verify');
+	return crypto.subtle.verify(
+		'HMAC',
+		key,
+		hexToBytes(signature),
+		jobsMessage(timestamp, body)
+	);
+};

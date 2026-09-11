@@ -28,22 +28,29 @@ the repository root.
    loudly if the `AI` binding is missing. Embeddings run within the
    Workers Paid plan's included neuron allocation at personal scale.
 
-5. In the Cloudflare dashboard, open **Images → Transformations**, select
+5. From `apps/web`: create the job queue and its dead-letter queue:
+
+   ```
+   wrangler queues create adrive-jobs-production
+   wrangler queues create adrive-jobs-production-dlq
+   ```
+
+6. In the Cloudflare dashboard, open **Images → Transformations**, select
    the zone that owns `CONTENT_ORIGIN` (`davis7.space` for
    `files.davis7.space`), and enable transformations. Dashboard thumbnails
    require this zone-level setting.
-6. From `apps/web`: `wrangler secret put PASSCODE --env production`
+7. From `apps/web`: `wrangler secret put PASSCODE --env production`
    (12+ characters).
-7. The `davis7.space` zone must be active in Cloudflare. Remove existing
+8. The `davis7.space` zone must be active in Cloudflare. Remove existing
    CNAME records for `drive.davis7.space`, `files.davis7.space`, and
    `adrive.davis7.space` before deployment; the custom-domain routes in
    the `wrangler.jsonc` files create the required DNS records
    automatically. `adrive.davis7.space` serves the static landing page
    (`apps/site`, an assets-only Worker with no build step).
-8. From the repo root: `bun release`
-9. From the repo root: set up backups on your backup host
-   (`scripts/backup/install-backup-host.sh`) and complete the restore drill
-   in `docs/backup-restore.md`.
+9. From the repo root: `bun release`
+10. From the repo root: set up backups on your backup host
+    (`scripts/backup/install-backup-host.sh`) and complete the restore drill
+    in `docs/backup-restore.md`.
 
 Semantic search notes for the first deploy:
 
@@ -54,6 +61,27 @@ Semantic search notes for the first deploy:
 - Embeddings live in Postgres beside the file rows, so they are restored
   with the database. Files whose embeddings are missing after a partial
   restore regenerate on reindex.
+
+## Queues
+
+The `JOBS` binding provides one Cloudflare Queue per environment for
+background indexing, purges, and site cleanup. `wrangler.jsonc` declares
+the Worker as its consumer; the queue itself is created once:
+
+```
+wrangler queues create adrive-jobs-production
+wrangler queues create adrive-jobs-production-dlq
+```
+
+- The consumer retries a failed message up to `max_retries` (5) times,
+  then moves it to `adrive-jobs-production-dlq`. Messages whose body does
+  not decode as a job are acked and logged, never retried.
+- Inspect the dead-letter queue with
+  `wrangler queues consumer` tooling or the dashboard; nothing drains it
+  automatically. Re-send a message from the DLQ only after fixing the
+  cause, since the same job will otherwise fail again.
+- Local development uses the `adrive-jobs` / `adrive-jobs-dlq` names and
+  needs no provisioning; `wrangler dev` simulates the queue.
 
 ## Releasing
 

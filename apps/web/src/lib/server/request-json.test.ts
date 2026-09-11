@@ -1,7 +1,7 @@
 import { Cause, Effect, Exit } from 'effect';
 import { describe, expect, it } from 'vitest';
 import { InvalidRequest } from './errors';
-import { readBoundedJson } from './request-json';
+import { readBoundedJson, readBoundedText } from './request-json';
 
 const options = {
 	maxBytes: 8,
@@ -9,10 +9,12 @@ const options = {
 	invalidJsonMessage: 'JSON is required'
 };
 
-const readFailure = async (request: Request) => {
-	const exit = await Effect.runPromiseExit(readBoundedJson(request, options));
+const requestFailure = async (
+	program: Effect.Effect<unknown, InvalidRequest>
+) => {
+	const exit = await Effect.runPromiseExit(program);
 	if (Exit.isSuccess(exit)) {
-		throw new Error('Expected bounded JSON decoding to fail');
+		throw new Error('Expected bounded body reading to fail');
 	}
 	for (const reason of exit.cause.reasons) {
 		if (Cause.isFailReason(reason) && reason.error instanceof InvalidRequest) {
@@ -21,6 +23,78 @@ const readFailure = async (request: Request) => {
 	}
 	throw new Error('Expected an InvalidRequest failure');
 };
+
+const readFailure = (request: Request) =>
+	requestFailure(readBoundedJson(request, options));
+
+describe('bounded text requests', () => {
+	const textOptions = {
+		maxBytes: options.maxBytes,
+		invalidLengthMessage: options.invalidLengthMessage,
+		invalidTextMessage: 'Text body is unreadable'
+	};
+
+	it('preserves raw whitespace and accepts exactly the UTF-8 byte limit', async () => {
+		for (const body of [' \n😀\t ', '😀😀']) {
+			const request = new Request(
+				'https://drive.example.com/api/internal/jobs',
+				{
+					method: 'POST',
+					body
+				}
+			);
+			await expect(
+				Effect.runPromise(readBoundedText(request, textOptions))
+			).resolves.toBe(body);
+		}
+	});
+
+	it('rejects excess UTF-8 bytes even when the character count fits', async () => {
+		const request = new Request('https://drive.example.com/api/internal/jobs', {
+			method: 'POST',
+			headers: { 'content-length': '5' },
+			body: '😀😀a'
+		});
+		expect(
+			await requestFailure(readBoundedText(request, textOptions))
+		).toMatchObject({
+			status: 413,
+			message: options.invalidLengthMessage
+		});
+	});
+
+	it('cancels an oversized stream without pulling its remaining chunks', async () => {
+		const chunks = ['1234', '56789', 'never read'].map((value) =>
+			new TextEncoder().encode(value)
+		);
+		let pulls = 0;
+		let cancelled = false;
+		const stream = new ReadableStream<Uint8Array>(
+			{
+				pull(controller) {
+					const chunk = chunks[pulls++];
+					if (chunk) controller.enqueue(chunk);
+					else controller.close();
+				},
+				cancel() {
+					cancelled = true;
+				}
+			},
+			{ highWaterMark: 0 }
+		);
+		const init = { method: 'POST', body: stream, duplex: 'half' };
+		const request = new Request(
+			'https://drive.example.com/api/internal/jobs',
+			init
+		);
+		expect(
+			await requestFailure(readBoundedText(request, textOptions))
+		).toMatchObject({ status: 413 });
+		expect(cancelled).toBe(true);
+		expect(pulls).toBe(2);
+		expect(stream.locked).toBe(false);
+	});
+});
 
 describe('bounded JSON requests', () => {
 	it('rejects actual bytes beyond the limit when Content-Length is false', async () => {

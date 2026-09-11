@@ -2,7 +2,7 @@ import { Effect, Layer } from 'effect';
 import { ConfigLive } from './config';
 import { AuthGuardLive } from './services/auth-guard';
 import { AuthLive } from './services/auth';
-import { AuthGuardStore, Bucket, Pg } from './services/bindings';
+import { AuthGuardStore, Bucket, Jobs, Pg } from './services/bindings';
 import { pgLayer } from './pg';
 import { BlobsLive } from './services/blobs';
 import { FilesLive } from './services/files';
@@ -13,6 +13,7 @@ import { SemanticBindingsLive } from './services/semantic';
 import { IndexingLive } from './services/indexing';
 import { LifecycleLive } from './services/lifecycle';
 import { GrantSecretsLive } from './services/grant-secrets';
+import { JobQueueLive } from './services/jobs';
 
 export const PgLive = Layer.unwrap(
 	Effect.map(Pg, (hyperdrive) => pgLayer(hyperdrive))
@@ -23,11 +24,13 @@ export const requestLayer = (env: Env) => {
 		Layer.succeed(Pg, env.HYPERDRIVE),
 		Layer.succeed(Bucket, env.BUCKET),
 		Layer.succeed(AuthGuardStore, env.AUTH_GUARD),
+		Layer.succeed(Jobs, env.JOBS),
 		ConfigLive(env)
 	);
 	const pg = PgLive.pipe(Layer.provide(bindings));
 	const blobs = BlobsLive.pipe(Layer.provide(bindings));
-	const infrastructure = Layer.mergeAll(bindings, pg, blobs);
+	const jobQueue = JobQueueLive.pipe(Layer.provide(bindings));
+	const infrastructure = Layer.mergeAll(bindings, pg, blobs, jobQueue);
 	// The vector index reads and writes file_chunks, so it sits on Postgres
 	// like every other service; only the embedder still binds Workers AI.
 	const semantic = SemanticBindingsLive(env).pipe(

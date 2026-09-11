@@ -76,3 +76,47 @@ describe('scheduled lifecycle authentication', () => {
 		).resolves.toBe(false);
 	});
 });
+
+describe('queue delivery authentication', () => {
+	it('binds the signature to the timestamp and the exact body', async () => {
+		const { signJobsRequest, verifyJobsRequest } = await import('./cron-auth');
+		const now = Date.parse('2026-07-27T12:00:00.000Z');
+		const timestamp = String(now);
+		const body = '{"queue":"adrive-jobs","messages":[]}';
+		const signature = await signJobsRequest(
+			'a-long-deployment-passcode',
+			timestamp,
+			body
+		);
+		await expect(
+			verifyJobsRequest(
+				'a-long-deployment-passcode',
+				timestamp,
+				body,
+				signature,
+				now
+			)
+		).resolves.toBe(true);
+		await expect(
+			verifyJobsRequest(
+				'a-long-deployment-passcode',
+				timestamp,
+				'{"queue":"adrive-jobs","messages":[{}]}',
+				signature,
+				now
+			)
+		).resolves.toBe(false);
+		await expect(
+			verifyJobsRequest(
+				'a-long-deployment-passcode',
+				timestamp,
+				body,
+				signature,
+				now + 6 * 60 * 1_000
+			)
+		).resolves.toBe(false);
+		await expect(
+			verifyJobsRequest('a-long-deployment-passcode', null, body, null, now)
+		).resolves.toBe(false);
+	});
+});
