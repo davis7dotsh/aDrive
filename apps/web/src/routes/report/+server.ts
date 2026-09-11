@@ -10,7 +10,7 @@ import {
 	ReportCreateSchema,
 	hashReporterIp
 } from '$lib/server/report-policy';
-import { readBoundedJson } from '$lib/server/request-json';
+import { readBoundedJson, readBoundedText } from '$lib/server/request-json';
 import { Admin } from '$lib/server/services/admin';
 import { RateLimits } from '$lib/server/services/rate-limits';
 
@@ -77,33 +77,20 @@ const form = (fileId: string) => {
 </form>`);
 };
 
-const FormBody = Schema.Struct({
-	fileId: Schema.String,
-	reason: Schema.String,
-	details: Schema.optionalKey(Schema.String)
-});
-
 const readForm = (request: Request) =>
-	Effect.tryPromise({
-		try: async (): Promise<unknown> => {
-			const text = await request.text();
-			if (text.length > MAX_BODY_BYTES) throw new Error('too large');
+	readBoundedText(request, {
+		maxBytes: MAX_BODY_BYTES,
+		invalidLengthMessage: 'Report is too large',
+		invalidTextMessage: 'Report form is invalid'
+	}).pipe(
+		Effect.map((text) => {
 			const params = new URLSearchParams(text);
 			return {
 				fileId: params.get('fileId') ?? '',
 				reason: params.get('reason') ?? '',
 				...(params.get('details') ? { details: params.get('details') } : {})
 			};
-		},
-		catch: () =>
-			new InvalidRequest({ status: 400, message: 'Report form is invalid' })
-	}).pipe(
-		Effect.flatMap(Schema.decodeUnknownEffect(FormBody)),
-		Effect.mapError((cause) =>
-			cause instanceof InvalidRequest
-				? cause
-				: new InvalidRequest({ status: 400, message: 'Report form is invalid' })
-		)
+		})
 	);
 
 const readReport = (request: Request) =>

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { DashboardFile } from '@adrive/shared';
 	import { formatBytes, formatDate } from '$lib/dashboard/format';
+	import Icon from '$lib/components/ui/Icon.svelte';
 	import FileMenu from './FileMenu.svelte';
 	import FileThumb from './FileThumb.svelte';
 
@@ -39,14 +40,22 @@
 
 <li class="group min-w-0">
 	<a href={detailUrl} aria-label={`Open ${file.displayName}`}>
-		<FileThumb
-			{file}
-			{token}
-			{contentOrigin}
-			unavailable={trashed ||
-				file.deletedAt !== null ||
-				file.expiresAt !== null}
-		/>
+		{#if file.quarantined}
+			<div
+				class="relative flex aspect-[4/3] items-center justify-center overflow-hidden rounded-xl bg-zinc-100 transition group-hover:bg-zinc-200/70"
+			>
+				<Icon name="file" class="size-12 text-zinc-400" />
+			</div>
+		{:else}
+			<FileThumb
+				{file}
+				{token}
+				{contentOrigin}
+				unavailable={trashed ||
+					file.deletedAt !== null ||
+					file.expiresAt !== null}
+			/>
+		{/if}
 	</a>
 	<div class="mt-3 flex items-start gap-1">
 		{#if onselect}
@@ -86,12 +95,22 @@
 	</div>
 	<div class="mt-2 flex min-w-0 items-center gap-1.5">
 		<span
-			class="size-1.5 shrink-0 rounded-full {file.public
-				? 'bg-emerald-500'
-				: 'bg-zinc-400'}"
+			class="size-1.5 shrink-0 rounded-full {file.quarantined
+				? 'bg-red-500'
+				: file.publishPending
+					? 'bg-amber-500'
+					: file.public
+						? 'bg-emerald-500'
+						: 'bg-zinc-400'}"
 		></span>
-		<span class="text-[11px] text-zinc-400">
-			{file.public ? 'Public' : 'Private'}
+		<span class="truncate text-[11px] text-zinc-400">
+			{file.quarantined
+				? 'Quarantined'
+				: file.publishPending
+					? 'Pending review'
+					: file.public
+						? 'Public'
+						: 'Private'}
 		</span>
 		{#each file.tags.slice(0, 2) as tag (tag.id)}
 			<span

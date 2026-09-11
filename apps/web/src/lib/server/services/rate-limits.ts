@@ -32,7 +32,9 @@ const MAX_KEY_LENGTH = 64;
 
 const normalizeKey = (value: string) => {
 	const trimmed = value.normalize('NFKC').trim() || 'unknown';
-	return trimmed.length <= MAX_KEY_LENGTH ? trimmed : null;
+	return new TextEncoder().encode(trimmed).byteLength <= MAX_KEY_LENGTH
+		? trimmed
+		: null;
 };
 
 const hashedKey = (value: string) =>

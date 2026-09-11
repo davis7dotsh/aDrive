@@ -4,9 +4,9 @@ import { AppConfig } from '../config';
 import { StorageError } from '../errors';
 import { extractLinks } from '../html-links';
 import { SNIFF_LENGTH, sniffMismatch } from '../mime-sniff';
+import { inspectScanObject, isHtml, type ScanObject } from '../scan-inspection';
 import { PgSql } from '../pg';
 import {
-	SCAN_HASH_MAX_BYTES,
 	SCAN_HTML_MAX_BYTES,
 	SCAN_LINK_LIMIT,
 	SCAN_SITE_ASSET_LIMIT,
@@ -64,7 +64,8 @@ const VersionRow = Schema.Struct({
 	current_version: Schema.Int,
 	r2_key: Schema.String,
 	size_bytes: Schema.Int,
-	content_type: Schema.String
+	content_type: Schema.String,
+	scan_next_run_at: Schema.NullOr(Schema.String)
 });
 
 const AssetRow = Schema.Struct({
@@ -78,21 +79,6 @@ const decodeRows = <A, I>(schema: Schema.Codec<A, I, never>, rows: unknown) => {
 	const decoded = Schema.decodeUnknownOption(Schema.Array(schema))(rows);
 	return decoded._tag === 'Some' ? decoded.value : [];
 };
-
-interface ScanObject {
-	readonly path: string;
-	readonly r2Key: string;
-	readonly contentType: string;
-	readonly sizeBytes: number;
-}
-
-const isHtml = (contentType: string) =>
-	contentType.split(';', 1)[0]?.trim().toLowerCase() === 'text/html';
-
-const toHex = (digest: ArrayBuffer) =>
-	Array.from(new Uint8Array(digest), (byte) =>
-		byte.toString(16).padStart(2, '0')
-	).join('');
 
 const log = (entry: Record<string, unknown>) =>
 	Effect.sync(() => {
@@ -113,16 +99,21 @@ const makeScanner = Effect.gen(function* () {
 
 	const findVersion = Effect.fn('Scanner.findVersion')(function* (
 		fileId: string,
-		version: number
+		version: number,
+		lock = false
 	) {
 		const rows = yield* sql`
 			SELECT f.id, f.display_name, f.is_site, f.public, f.publish_pending,
 				f.quarantined, f.current_version, v.r2_key, v.size_bytes,
-				v.content_type
+				v.content_type, v.scan_next_run_at::text AS scan_next_run_at
 			FROM files f
 			JOIN file_versions v ON v.file_id = f.id AND v.version = ${version}
 			WHERE f.id = ${fileId} AND f.org_id = ${org.id}
+				AND f.deleted_at IS NULL
+				AND (f.expires_at IS NULL OR f.expires_at > now())
+				AND (NOT f.is_site OR f.current_version = ${version})
 			LIMIT 1
+			${lock ? sql`FOR UPDATE OF f` : sql``}
 		`.pipe(storageError('find version to scan'));
 		return decodeRows(VersionRow, rows)[0] ?? null;
 	});
@@ -161,30 +152,7 @@ const makeScanner = Effect.gen(function* () {
 		return verdict;
 	});
 
-	// Reads what the checks need from one object: the whole body for the
-	// hash when it is small enough, otherwise just the sniff window.
-	const inspect = Effect.fn('Scanner.inspect')(function* (object: ScanObject) {
-		const whole = object.sizeBytes <= SCAN_HASH_MAX_BYTES;
-		const loaded = yield* blobs
-			.get(object.r2Key, whole ? null : `bytes=0-${SNIFF_LENGTH - 1}`)
-			.pipe(Effect.catchTag('NotFound', () => Effect.succeed(null)));
-		if (loaded === null) {
-			return { object, missing: true as const, sha256: null, bytes: null };
-		}
-		const bytes = new Uint8Array(
-			yield* Effect.tryPromise({
-				try: () => loaded.arrayBuffer(),
-				catch: (cause) =>
-					new StorageError({ operation: 'read object to scan', cause })
-			})
-		);
-		const sha256 = whole
-			? toHex(
-					yield* Effect.promise(() => crypto.subtle.digest('SHA-256', bytes))
-				)
-			: null;
-		return { object, missing: false as const, sha256, bytes };
-	});
+	const inspect = (object: ScanObject) => inspectScanObject(blobs, object);
 
 	const blockedHashes = Effect.fn('Scanner.blockedHashes')(function* (
 		hashes: ReadonlyArray<string>
@@ -250,66 +218,105 @@ const makeScanner = Effect.gen(function* () {
 		`.pipe(storageError('record notification'));
 	});
 
-	// The worst of everything recorded for this version, then the row
-	// change it calls for. Only the current version can be published; an
-	// older one being cleared changes nothing.
+	// Serialize the decision with visibility mutations and operator review.
+	// A version-specific admin verdict takes precedence over automated
+	// checks, including checks that were already running when it was set.
 	const finalize = Effect.fn('Scanner.finalize')(function* (
 		row: typeof VersionRow.Type,
 		version: number
 	) {
-		const rows = yield* sql<{ verdict: string }>`
-			SELECT verdict FROM scan_verdicts
-			WHERE file_id = ${row.id} AND version = ${version}
-		`.pipe(storageError('read scan verdicts'));
-		const verdict = worstVerdict(
-			rows.map((entry) => entry.verdict).filter(isScanVerdict)
-		);
-		const current = version === row.current_version;
-		const outcome = scanOutcome(verdict, row.publish_pending && current);
+		const result = yield* sql
+			.withTransaction(
+				Effect.gen(function* () {
+					const live = yield* findVersion(row.id, version, true);
+					const rows = yield* sql<{ source: string; verdict: string }>`
+				SELECT source, verdict FROM scan_verdicts
+				WHERE file_id = ${row.id} AND org_id = ${org.id} AND version = ${version}
+			`;
+					const admin = rows.find((entry) => entry.source === 'admin');
+					const verdict =
+						admin && isScanVerdict(admin.verdict)
+							? admin.verdict
+							: worstVerdict(
+									rows.map((entry) => entry.verdict).filter(isScanVerdict)
+								);
+					// A newer request (or a reconciliation resend) owns a different
+					// marker. This scan must not clear it or apply stale URL results.
+					if (!live || live.scan_next_run_at !== row.scan_next_run_at) {
+						return { verdict, changed: false };
+					}
+					const current = version === live.current_version;
+					const outcome = scanOutcome(verdict, live.publish_pending && current);
+					let changed = false;
+					switch (outcome._tag) {
+						case 'Publish': {
+							const updated = yield* sql<{ id: string }>`
+						UPDATE files SET public = true, publish_pending = false
+						WHERE id = ${row.id} AND org_id = ${org.id}
+							AND current_version = ${version} AND quarantined = false
+							AND publish_pending = true AND deleted_at IS NULL
+							AND (expires_at IS NULL OR expires_at > now())
+						RETURNING id
+					`;
+							changed = updated.length > 0;
+							if (changed)
+								yield* notify(
+									row.id,
+									'published',
+									`${live.display_name} is now public`
+								);
+							break;
+						}
+						case 'Quarantine': {
+							// Older ordinary file versions remain accessible through ?v=,
+							// so a malicious retained version also takes the file offline.
+							const updated = yield* sql<{ id: string }>`
+						UPDATE files SET public = false, quarantined = true, publish_pending = false
+						WHERE id = ${row.id} AND org_id = ${org.id}
+							AND (NOT quarantined OR public OR publish_pending)
+						RETURNING id
+					`;
+							changed = updated.length > 0;
+							if (changed)
+								yield* notify(
+									row.id,
+									'quarantined',
+									`${live.display_name} was flagged as malicious and taken offline`
+								);
+							break;
+						}
+						case 'Hold': {
+							if (
+								live.publish_pending &&
+								current &&
+								live.scan_next_run_at !== null
+							) {
+								yield* notify(
+									row.id,
+									'held',
+									`${live.display_name} is waiting for review before it goes public`
+								);
+							}
+						}
+					}
+					yield* sql`
+				UPDATE file_versions SET scan_next_run_at = NULL
+				WHERE file_id = ${row.id} AND org_id = ${org.id} AND version = ${version}
+					AND scan_next_run_at = ${row.scan_next_run_at}::timestamptz
+			`;
+					return { verdict, changed };
+				})
+			)
+			.pipe(storageError('finalize content scan'));
+		if (result.changed) yield* purgeEdge(row.id, version);
 		yield* log({
 			message: 'scan finished',
 			orgId: org.id,
 			fileId: row.id,
 			version,
-			verdict,
-			outcome: outcome._tag
+			verdict: result.verdict
 		});
-		switch (outcome._tag) {
-			case 'Publish': {
-				yield* sql`
-					UPDATE files SET public = true, publish_pending = false
-					WHERE id = ${row.id} AND org_id = ${org.id}
-						AND current_version = ${version} AND quarantined = false
-				`.pipe(storageError('publish scanned file'));
-				yield* purgeEdge(row.id, version);
-				yield* notify(row.id, 'published', `${row.display_name} is now public`);
-				return verdict;
-			}
-			case 'Quarantine': {
-				yield* sql`
-					UPDATE files
-					SET public = false, quarantined = true, publish_pending = false
-					WHERE id = ${row.id} AND org_id = ${org.id}
-				`.pipe(storageError('quarantine file'));
-				yield* purgeEdge(row.id, version);
-				yield* notify(
-					row.id,
-					'quarantined',
-					`${row.display_name} was flagged as malicious and taken offline`
-				);
-				return verdict;
-			}
-			case 'Hold': {
-				if (row.publish_pending && current) {
-					yield* notify(
-						row.id,
-						'held',
-						`${row.display_name} is waiting for review before it goes public`
-					);
-				}
-				return verdict;
-			}
-		}
+		return result.verdict;
 	});
 
 	// Collects URL Scanner results the job submitted earlier. A report
@@ -334,12 +341,20 @@ const makeScanner = Effect.gen(function* () {
 		const settled = results.flatMap((result) =>
 			result._tag === 'Settled' ? [result] : []
 		);
-		if (settled.length < results.length) {
+		const settledVerdict = worstVerdict(
+			settled.map((result) => result.verdict)
+		);
+		if (settledVerdict === 'malicious') {
+			yield* record(row.id, job.version, 'urlscan', 'malicious', {
+				links: settled.map((result) => result.details),
+				pending: results.length - settled.length
+			});
+		} else if (settled.length < results.length) {
 			if (shouldPollAgain(urlScan.attempt)) {
-				yield* jobs.trySend(
+				yield* jobs.send(
 					{
 						...job,
-						urlScan: { ids: urlScan.ids, attempt: urlScan.attempt + 1 }
+						urlScan: { ...urlScan, attempt: urlScan.attempt + 1 }
 					},
 					{ delaySeconds: URL_SCAN_POLL_DELAY_SECONDS }
 				);
@@ -351,13 +366,9 @@ const makeScanner = Effect.gen(function* () {
 				attempts: urlScan.attempt
 			});
 		} else {
-			yield* record(
-				row.id,
-				job.version,
-				'urlscan',
-				worstVerdict(settled.map((result) => result.verdict)),
-				{ links: settled.map((result) => result.details) }
-			);
+			yield* record(row.id, job.version, 'urlscan', settledVerdict, {
+				links: settled.map((result) => result.details)
+			});
 		}
 		return {
 			_tag: 'Settled' as const,
@@ -375,7 +386,11 @@ const makeScanner = Effect.gen(function* () {
 			});
 			return { _tag: 'Skipped' as const, reason: 'missing' };
 		}
-		if (job.urlScan !== undefined) {
+		if (
+			job.urlScan !== undefined &&
+			(job.urlScan.requestedAt === undefined ||
+				job.urlScan.requestedAt === row.scan_next_run_at)
+		) {
 			return yield* pollUrlScans(job, row, job.urlScan);
 		}
 
@@ -398,7 +413,7 @@ const makeScanner = Effect.gen(function* () {
 					}
 				];
 		const inspected = yield* Effect.forEach(objects, inspect, {
-			concurrency: 4
+			concurrency: 1
 		});
 
 		// 1. Known-bad hashes.
@@ -445,12 +460,15 @@ const makeScanner = Effect.gen(function* () {
 						}
 					];
 		});
+		const missing = inspected.filter((entry) => entry.missing).length;
 		yield* record(
 			row.id,
 			job.version,
 			'sniff',
-			mismatches.length > 0 ? 'suspicious' : 'clean',
-			{ mismatches, missing: inspected.filter((entry) => entry.missing).length }
+			mismatches.length > 0 || missing > 0 || objects.length === 0
+				? 'suspicious'
+				: 'clean',
+			{ mismatches, missing, empty: objects.length === 0 }
 		);
 		if (blocked.length > 0) {
 			return {
@@ -508,8 +526,17 @@ const makeScanner = Effect.gen(function* () {
 				verdict: yield* finalize(row, job.version)
 			};
 		}
-		yield* jobs.trySend(
-			{ ...job, urlScan: { ids: submitted, attempt: 1 } },
+		yield* jobs.send(
+			{
+				...job,
+				urlScan: {
+					ids: submitted,
+					attempt: 1,
+					...(row.scan_next_run_at === null
+						? {}
+						: { requestedAt: row.scan_next_run_at })
+				}
+			},
 			{ delaySeconds: URL_SCAN_POLL_DELAY_SECONDS }
 		);
 		return { _tag: 'Polling' as const, ids: submitted };

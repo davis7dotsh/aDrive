@@ -96,6 +96,8 @@ export const DashboardFileSchema = Schema.Struct({
 	version: Schema.Int,
 	sizeBytes: Schema.Int,
 	public: Schema.Boolean,
+	quarantined: Schema.Boolean,
+	publishPending: Schema.Boolean,
 	htmlForcedPublic: Schema.Boolean,
 	createdAt: Schema.String,
 	updatedAt: Schema.String,
@@ -411,7 +413,9 @@ export const JobSchema = Schema.Union([
 		urlScan: Schema.optionalKey(
 			Schema.Struct({
 				ids: Schema.Array(Schema.String),
-				attempt: Schema.Int
+				attempt: Schema.Int,
+				// Binds delayed results to the persisted scan request.
+				requestedAt: Schema.optionalKey(Schema.String)
 			})
 		)
 	}),

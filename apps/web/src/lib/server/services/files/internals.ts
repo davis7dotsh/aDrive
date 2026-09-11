@@ -14,6 +14,7 @@ import {
 import { visibilityForFile } from '../../file-policy';
 import { delaySecondsUntil } from '../../job-policy';
 import { refreshSearchDocument } from '../../search-index';
+import { markScanPending } from '../../scan-jobs';
 import { ensureStorageHeadroom, reserveWithinPlan } from '../../storage-quota';
 import { requirePublishAllowed } from '../../trust';
 import { scanBeforePublish } from '../../trust-policy';
@@ -114,8 +115,21 @@ export const createInternals = (deps: CoreDeps) => {
 		jobs.trySend({ kind: 'scan', orgId: org.id, fileId, version });
 
 	const findDashboardFile = Effect.fn('Files.findDashboardFile')(function* (
-		id: string
+		id: string,
+		lock = false
 	) {
+		if (lock) {
+			// Keep the lock separate from the read so correlated version/tag
+			// queries also see what a concurrent writer committed while waiting.
+			yield* sql`
+				SELECT id FROM files WHERE id = ${id} AND org_id = ${org.id}
+				FOR UPDATE`.pipe(
+				Effect.mapError(
+					(cause) =>
+						new StorageError({ operation: 'lock dashboard file', cause })
+				)
+			);
+		}
 		const rows = yield* sql`
 			SELECT ${sql.literal(dashboardFileColumns)}
 			FROM files f
@@ -142,22 +156,28 @@ export const createInternals = (deps: CoreDeps) => {
 	) {
 		yield* refuseQuarantined(current);
 		const version = current.version + 1;
-		const updatedAt = new Date().toISOString();
-		const visibility = visibilityForFile(
-			current.displayName,
-			current.htmlForcedPublic ? 'text/html' : contentType,
-			current.public
-		);
-		yield* ensurePublishAllowed(visibility.public && !current.public);
-		// Optimistic concurrency on current_version: a concurrent upload
-		// that committed first makes this update match nothing.
-		yield* sql
+		const committed = yield* sql
 			.withTransaction(
 				Effect.gen(function* () {
+					// Re-read after locking: visibility, a pending publication,
+					// or quarantine may have changed while the body streamed.
+					const latest = yield* findDashboardFile(current.id, true);
+					yield* refuseQuarantined(latest);
+					const updatedAt = new Date().toISOString();
+					const visibility = visibilityForFile(
+						latest.displayName,
+						latest.htmlForcedPublic ? 'text/html' : contentType,
+						latest.public || latest.publishPending
+					);
+					// Every new public version needs its own scan, including a
+					// replacement while the previous publication is still held.
+					const hold = yield* ensurePublishAllowed(visibility.public);
+					const isPublicNow = visibility.public && !hold;
 					const updated = yield* sql<{ id: string }>`
 						UPDATE files
 						SET current_version = ${version}, size_bytes = ${size},
-							content_type = ${contentType}, public = ${visibility.public},
+							content_type = ${contentType}, public = ${isPublicNow},
+							publish_pending = ${hold},
 							updated_at = ${updatedAt}, index_state = 'pending',
 							index_cursor = 0, index_attempts = 0, index_error = NULL,
 							index_next_run_at = NULL, index_lease_token = NULL
@@ -181,6 +201,29 @@ export const createInternals = (deps: CoreDeps) => {
 							)`;
 					yield* refreshSearchDocument(sql, current.id, org.id);
 					yield* reserveBytes(org.id, size);
+					if (visibility.public) {
+						yield* markScanPending(sql, org.id, current.id, version);
+					}
+					return {
+						scan: visibility.public,
+						result: {
+							file: {
+								...latest,
+								contentType,
+								version,
+								sizeBytes: size,
+								public: isPublicNow,
+								publishPending: hold,
+								htmlForcedPublic:
+									latest.htmlForcedPublic || contentType === 'text/html',
+								updatedAt,
+								indexState: 'pending',
+								indexAttempts: 0,
+								indexError: null
+							},
+							forcedPublic: visibility.forcedPublic
+						} satisfies MutationResult
+					};
 				})
 			)
 			.pipe(
@@ -191,23 +234,8 @@ export const createInternals = (deps: CoreDeps) => {
 				)
 			);
 		yield* sendIndexJob(current.id, version);
-		if (visibility.public) yield* sendScanJob(current.id, version);
-		return {
-			file: {
-				...current,
-				contentType,
-				version,
-				sizeBytes: size,
-				public: visibility.public,
-				htmlForcedPublic:
-					current.htmlForcedPublic || contentType === 'text/html',
-				updatedAt,
-				indexState: 'pending',
-				indexAttempts: 0,
-				indexError: null
-			},
-			forcedPublic: visibility.forcedPublic
-		} satisfies MutationResult;
+		if (committed.scan) yield* sendScanJob(current.id, version);
+		return committed.result;
 	});
 
 	return {

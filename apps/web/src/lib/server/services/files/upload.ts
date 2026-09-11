@@ -5,6 +5,7 @@ import {
 } from '../../file-policy';
 import { InvalidRequest, NotFound, StorageError } from '../../errors';
 import { refreshSearchDocument } from '../../search-index';
+import { markScanPending } from '../../scan-jobs';
 import { validateUploadLength } from '../../upload-stream';
 import { forgetTagListCache } from '../tags';
 import { Effect } from 'effect';
@@ -66,14 +67,18 @@ export const uploadOps = (
 			const commit = sql
 				.withTransaction(
 					Effect.gen(function* () {
+						// The earlier gate is a preflight; trust may change while
+						// the body streams. Persist the actual hold with the version.
+						const hold = yield* ensurePublishAllowed(visibility.public);
+						const isPublicNow = visibility.public && !hold;
 						yield* sql`
 								INSERT INTO files (
 									id, org_id, display_name, content_type, kind, current_version,
-									size_bytes, public, is_site, created_at, updated_at, expires_at,
+									size_bytes, public, publish_pending, is_site, created_at, updated_at, expires_at,
 									index_state
 								) VALUES (
 									${id}, ${org.id}, ${displayName}, ${contentType}, 'file', 1,
-									${stored.size}, ${visibility.public}, false, ${createdAt},
+									${stored.size}, ${isPublicNow}, ${hold}, false, ${createdAt},
 									${createdAt}, ${input.expiresAt}, 'pending'
 								)`;
 						yield* sql`
@@ -92,6 +97,8 @@ export const uploadOps = (
 						}
 						yield* refreshSearchDocument(sql, id, org.id);
 						yield* reserveBytes(org.id, stored.size);
+						if (visibility.public) yield* markScanPending(sql, org.id, id, 1);
+						return isPublicNow;
 					})
 				)
 				.pipe(
@@ -101,7 +108,7 @@ export const uploadOps = (
 						)
 					)
 				);
-			yield* commit.pipe(
+			const isPublicNow = yield* commit.pipe(
 				Effect.catch((failure) =>
 					compensateStoredBlob(failure, id, 1, r2Key, 'upload')
 				)
@@ -119,7 +126,7 @@ export const uploadOps = (
 					kind: 'file',
 					version: 1,
 					sizeBytes: stored.size,
-					public: visibility.public,
+					public: isPublicNow,
 					createdAt,
 					expiresAt: input.expiresAt,
 					downloadCount: 0,

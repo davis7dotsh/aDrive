@@ -22,7 +22,7 @@
 	} = $props();
 
 	const itemClass =
-		'block w-full rounded-md px-3 py-2 text-left text-sm text-zinc-700 hover:bg-zinc-50 focus:bg-zinc-50 focus:outline-none';
+		'block w-full rounded-md px-3 py-2 text-left text-sm text-zinc-700 hover:bg-zinc-50 focus:bg-zinc-50 focus:outline-none disabled:pointer-events-none disabled:opacity-40';
 </script>
 
 <Menu label={`Actions for ${file.displayName}`}>
@@ -39,7 +39,13 @@
 			>
 		{/if}
 	{:else}
-		<button role="menuitem" type="button" class={itemClass} onclick={onopen}>
+		<button
+			role="menuitem"
+			type="button"
+			class={itemClass}
+			disabled={file.quarantined}
+			onclick={onopen}
+		>
 			{file.public ? 'Open' : 'Download'}
 		</button>
 		<CopyButton
@@ -48,6 +54,7 @@
 			data-keep-open
 			label={file.public ? 'Copy link' : 'Copy temporary link'}
 			resolve={oncopy}
+			disabled={file.quarantined}
 		/>
 		<button
 			role="menuitem"

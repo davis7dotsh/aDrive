@@ -130,6 +130,8 @@ const parseDashboardFile = (value: unknown, path = 'file'): DashboardFile => {
 	const record = requireRecord(value, path);
 	return {
 		...parseFileSummary(value, path),
+		quarantined: flag(record.quarantined, `${path}.quarantined`),
+		publishPending: flag(record.publishPending, `${path}.publishPending`),
 		deletedAt: maybeString(record.deletedAt, `${path}.deletedAt`),
 		updatedAt: text(record.updatedAt, `${path}.updatedAt`),
 		htmlForcedPublic: flag(record.htmlForcedPublic, `${path}.htmlForcedPublic`),
