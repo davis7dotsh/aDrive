@@ -134,13 +134,16 @@ const adminUserIdsFromEnv = (env: Env) =>
 	);
 const autumnFromEnv = (env: Env): AutumnConfig => {
 	const secretKey = optionalString(env.AUTUMN_SECRET_KEY).trim() || null;
+	const webhookSecret = optionalString(env.AUTUMN_WEBHOOK_SECRET).trim();
 	if (secretKey?.startsWith('fake:') && !dev) {
 		throw new Error('Fake Autumn billing is only available in development');
 	}
-	return {
-		secretKey,
-		webhookSecret: optionalString(env.AUTUMN_WEBHOOK_SECRET)
-	};
+	if (secretKey && !secretKey.startsWith('fake:') && !webhookSecret) {
+		throw new Error(
+			'AUTUMN_WEBHOOK_SECRET is required alongside AUTUMN_SECRET_KEY'
+		);
+	}
+	return { secretKey, webhookSecret };
 };
 
 export const configFromEnv = (env: Env) => {

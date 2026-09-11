@@ -141,6 +141,24 @@ describe('Autumn configuration', () => {
 		).toBe('fake:test');
 	});
 
+	it.each([undefined, '', '   '])(
+		'rejects live billing without a usable webhook secret (%s)',
+		(webhookSecret) => {
+			for (const dev of [false, true]) {
+				environment.dev = dev;
+				expect(() =>
+					configFromEnv({
+						...env,
+						AUTUMN_SECRET_KEY: 'sk_live_test',
+						AUTUMN_WEBHOOK_SECRET: webhookSecret
+					})
+				).toThrow(
+					'AUTUMN_WEBHOOK_SECRET is required alongside AUTUMN_SECRET_KEY'
+				);
+			}
+		}
+	);
+
 	it('keeps unset billing disabled and uses real keys in both environments', () => {
 		for (const dev of [false, true]) {
 			environment.dev = dev;
@@ -148,9 +166,12 @@ describe('Autumn configuration', () => {
 				configFromEnv({ ...env, AUTUMN_SECRET_KEY: ' ' }).autumn.secretKey
 			).toBeNull();
 			expect(
-				configFromEnv({ ...env, AUTUMN_SECRET_KEY: ' sk_live_test ' }).autumn
-					.secretKey
-			).toBe('sk_live_test');
+				configFromEnv({
+					...env,
+					AUTUMN_SECRET_KEY: ' sk_live_test ',
+					AUTUMN_WEBHOOK_SECRET: ' whsec_test '
+				}).autumn
+			).toEqual({ secretKey: 'sk_live_test', webhookSecret: 'whsec_test' });
 		}
 	});
 });
