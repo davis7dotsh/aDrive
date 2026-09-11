@@ -28,7 +28,7 @@ export interface CloudflareZoneConfig {
 
 // Autumn billing. secretKey is null when AUTUMN_SECRET_KEY is unset, in
 // which case every gate fails open; a `fake:` key picks the in-memory
-// fake. See services/autumn.ts.
+// fake only in development. See services/autumn.ts.
 export interface AutumnConfig {
 	readonly secretKey: string | null;
 	readonly webhookSecret: string;
@@ -132,10 +132,16 @@ const adminUserIdsFromEnv = (env: Env) =>
 			.map((id) => id.trim())
 			.filter((id) => id.length > 0)
 	);
-const autumnFromEnv = (env: Env): AutumnConfig => ({
-	secretKey: optionalString(env.AUTUMN_SECRET_KEY) || null,
-	webhookSecret: optionalString(env.AUTUMN_WEBHOOK_SECRET)
-});
+const autumnFromEnv = (env: Env): AutumnConfig => {
+	const secretKey = optionalString(env.AUTUMN_SECRET_KEY).trim() || null;
+	if (secretKey?.startsWith('fake:') && !dev) {
+		throw new Error('Fake Autumn billing is only available in development');
+	}
+	return {
+		secretKey,
+		webhookSecret: optionalString(env.AUTUMN_WEBHOOK_SECRET)
+	};
+};
 
 export const configFromEnv = (env: Env) => {
 	const origins = normalizeOrigins({

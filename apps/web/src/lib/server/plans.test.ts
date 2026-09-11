@@ -42,16 +42,23 @@ describe('plan limits', () => {
 		expect(consumable(aiOps)).toBe(true);
 	});
 
-	it('gates public sharing on the paid plan only', () => {
+	it('includes public sharing on both plans; trust gates control eligibility', () => {
 		expect(publicSharing.type).toBe('boolean');
-		expect(itemFor(free, publicSharing.id)).toBeUndefined();
+		expect(itemFor(free, publicSharing.id)).toBeDefined();
 		expect(itemFor(pro, publicSharing.id)).toBeDefined();
 		expect(free.autoEnable).toBe(true);
 		expect(pro.price).toEqual({ amount: 8, interval: 'month' });
 	});
 
 	it('treats an unknown plan as free', () => {
-		expect(planLimits('enterprise')).toEqual(PLAN_LIMITS.free);
+		for (const value of [
+			'enterprise',
+			'constructor',
+			'toString',
+			'__proto__'
+		]) {
+			expect(planLimits(value)).toEqual(PLAN_LIMITS.free);
+		}
 		expect(planLimits('pro')).toEqual(PLAN_LIMITS.pro);
 	});
 });

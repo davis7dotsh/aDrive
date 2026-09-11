@@ -70,10 +70,11 @@ describe('billing gates and usage sync (local platform)', () => {
 	const setup = async () => {
 		shared ??= await createRouteContext();
 		shared.jobs.splice(0);
-		const { autumnFakeCalls, autumnFakeAllowed } =
+		const { autumnFakeCalls, autumnFakeAllowed, autumnFakePlans } =
 			await import('$lib/server/services/autumn');
 		autumnFakeCalls.splice(0);
 		autumnFakeAllowed.clear();
+		autumnFakePlans.clear();
 		return shared;
 	};
 
@@ -117,14 +118,14 @@ describe('billing gates and usage sync (local platform)', () => {
 		);
 		expect(stored[0]?.ai_ops_month).toBe(1);
 		expect((await fileDetail(ctx, file.id)).indexState).toBe('ready');
-		// The index job runs first in the batch (its check, then the
-		// embeddings it meters), so the upload's sync already carries the
-		// chunk; the sync the index job sent has only the balance to report.
+		// Both deliveries send the same absolute counters, so retrying a
+		// successful provider write cannot count the embedding twice.
 		const calls = await autumnCalls(identity.orgId);
 		expect(calls.map((entry) => entry.method)).toEqual([
 			'check',
 			'updateBalance',
-			'track',
+			'updateBalance',
+			'updateBalance',
 			'updateBalance'
 		]);
 		expect(calls[1]?.input).toEqual({
@@ -135,7 +136,9 @@ describe('billing gates and usage sync (local platform)', () => {
 		expect(calls[2]?.input).toEqual({
 			customerId: identity.orgId,
 			featureId: 'ai_ops',
-			value: 1
+			usage: 1,
+			interval: 'month',
+			nextResetAt: expect.any(Number)
 		});
 
 		const { autumnFakeCalls } = await import('$lib/server/services/autumn');
@@ -148,7 +151,11 @@ describe('billing gates and usage sync (local platform)', () => {
 			(sql) => sql<{ stored_bytes: number }>`
 				SELECT stored_bytes FROM org_usage WHERE org_id = ${identity.orgId}`
 		);
-		expect((await autumnCalls(identity.orgId)).at(-1)).toEqual({
+		expect(
+			(await autumnCalls(identity.orgId))
+				.filter((entry) => entry.input.featureId === 'storage_bytes')
+				.at(-1)
+		).toEqual({
 			method: 'updateBalance',
 			input: {
 				customerId: identity.orgId,
@@ -249,7 +256,7 @@ describe('billing gates and usage sync (local platform)', () => {
 		).rejects.toMatchObject({ status: 403 });
 	});
 
-	it('moves the org between plans from a signed Autumn webhook', async () => {
+	it('reconciles current subscriptions on signed webhook delivery and redelivery', async () => {
 		const ctx = await setup();
 		await login(ctx);
 		const identity = await currentIdentity(ctx);
@@ -323,6 +330,8 @@ describe('billing gates and usage sync (local platform)', () => {
 		).rejects.toMatchObject({ status: 401 });
 		expect(await planOf()).toBe('free');
 
+		const { autumnFakePlans } = await import('$lib/server/services/autumn');
+		autumnFakePlans.set(identity.orgId, 'pro');
 		expect((await deliver(upgrade)).status).toBe(200);
 		expect(await planOf()).toBe('pro');
 		// The storage limit follows the plan.
@@ -349,7 +358,14 @@ describe('billing gates and usage sync (local platform)', () => {
 				tags: []
 			}
 		};
+		// The expired delta does not downgrade a currently active Pro customer.
 		expect((await deliver(downgrade)).status).toBe(200);
+		expect(await planOf()).toBe('pro');
+		autumnFakePlans.set(identity.orgId, 'free');
+		expect((await deliver(downgrade)).status).toBe(200);
+		expect(await planOf()).toBe('free');
+		// A delayed old upgrade cannot restore a subscription that has ended.
+		expect((await deliver(upgrade)).status).toBe(200);
 		expect(await planOf()).toBe('free');
 
 		// Other events and unknown customers are acknowledged.
@@ -424,5 +440,36 @@ describe('billing gates and usage sync (local platform)', () => {
 		await ctx.drainJobs();
 		expect(embed.mock.calls.length).toBe(embedCallsBeforeSweep + 1);
 		expect((await fileDetail(ctx, file.id)).indexState).toBe('ready');
+	});
+
+	it('preserves keyword search when the local quota is full even if Autumn allows', async () => {
+		const ctx = await setup();
+		const { loginAs } = await import('../test/helpers');
+		await loginAs(ctx, { userId: `user_local_ai_${crypto.randomUUID()}` });
+		const identity = await currentIdentity(ctx);
+		const embed = mockEmbeddings(ctx.env);
+		await queryPg(
+			ctx.env,
+			(sql) => sql`UPDATE org_usage
+			SET ai_ops_month = 500,
+				ai_ops_month_reset_at = (date_trunc('month', now() AT TIME ZONE 'UTC') + interval '1 month') AT TIME ZONE 'UTC'
+			WHERE org_id = ${identity.orgId}`
+		);
+		const file = await uploadFile(ctx, {
+			name: 'local-quota.txt',
+			content: 'keyword search remains available'
+		});
+		await ctx.drainJobs();
+		expect(embed).not.toHaveBeenCalled();
+		expect(await fileDetail(ctx, file.id)).toMatchObject({
+			indexState: 'disabled',
+			indexError: 'AI quota exhausted'
+		});
+		expect(
+			(await autumnCalls(identity.orgId)).some(
+				(entry) =>
+					entry.method === 'check' && entry.input.featureId === 'ai_ops'
+			)
+		).toBe(true);
 	});
 });

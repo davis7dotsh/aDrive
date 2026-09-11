@@ -1,3 +1,4 @@
+import { AutumnNull } from './autumn';
 import { Effect, Layer } from 'effect';
 import { expect, it } from 'vitest';
 import { PgSql } from '../pg';
@@ -12,6 +13,7 @@ const authLayer = (client: WorkOSClientShape, orgId: string, userId: string) =>
 	AuthLive.pipe(
 		Layer.provideMerge(
 			Layer.mergeAll(
+				AutumnNull,
 				testPgLayer(),
 				Layer.succeed(WorkOSClient, client),
 				Layer.succeed(CurrentOrg, {

@@ -8,9 +8,15 @@ export const GET: RequestHandler = (event) =>
 	runEdge(
 		Effect.gen(function* () {
 			const billing = yield* Billing;
-			yield* requireAuth(event);
-			return Response.json(yield* billing.summary, {
-				headers: { 'Cache-Control': 'private, no-store' }
-			});
+			const auth = yield* requireAuth(event);
+			return Response.json(
+				{
+					...(yield* billing.summary),
+					canManageBilling: auth.role === 'owner' && auth.scope === 'read-write'
+				},
+				{
+					headers: { 'Cache-Control': 'private, no-store' }
+				}
+			);
 		})
 	);

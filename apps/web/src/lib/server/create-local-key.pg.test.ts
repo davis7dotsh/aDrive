@@ -1,3 +1,4 @@
+import { AutumnNull } from './services/autumn';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { Effect, Layer } from 'effect';
@@ -39,6 +40,7 @@ const createContext = async () => {
 		const authLayer = AuthLive.pipe(
 			Layer.provide(
 				Layer.mergeAll(
+					AutumnNull,
 					pgLayer({ connectionString: url.href }),
 					WorkOSFake,
 					Layer.succeed(CurrentOrg, anonymousOrg),

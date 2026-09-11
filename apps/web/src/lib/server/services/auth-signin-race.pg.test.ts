@@ -1,3 +1,4 @@
+import { AutumnNull } from './autumn';
 import { Cause, Effect, Exit, Layer } from 'effect';
 import Pg from 'pg';
 import { expect, it, vi } from 'vitest';
@@ -76,6 +77,7 @@ it('serializes concurrent first sign-ins and pins both sessions to one personal 
 		const layer = AuthLive.pipe(
 			Layer.provide(
 				Layer.mergeAll(
+					AutumnNull,
 					pgLayer({ connectionString: url.href }),
 					Layer.succeed(CurrentOrg, anonymousOrg),
 					Layer.succeed(CurrentUser, anonymousUser),

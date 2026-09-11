@@ -1,3 +1,5 @@
+import { AutumnNull } from './services/autumn';
+import { BillingGatesLive } from './services/billing-gates';
 import type { Job } from '@adrive/shared';
 import { Cause, Effect, Exit, Layer } from 'effect';
 import Pg from 'pg';
@@ -23,6 +25,7 @@ const reconciliationLayer = (orgId: string, jobs: Job[]) => {
 	return IndexingLive.pipe(
 		Layer.provide(
 			Layer.mergeAll(
+				BillingGatesLive.pipe(Layer.provide(AutumnNull)),
 				testPgLayer(),
 				Layer.succeed(CurrentOrg, { id: orgId, slug: 'index-reconcile' }),
 				Layer.succeed(JobQueue, { send, trySend: send }),

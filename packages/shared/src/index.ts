@@ -358,6 +358,8 @@ export const BillingSummarySchema = Schema.Struct({
 	planName: Schema.String,
 	// Whether checkout and the portal are reachable (Autumn configured).
 	billingEnabled: Schema.Boolean,
+	// Whether the authenticated caller can open checkout or the billing portal.
+	canManageBilling: Schema.Boolean,
 	storage: Schema.Struct({ used: Schema.Int, limit: Schema.Int }),
 	aiOps: Schema.Struct({ used: Schema.Int, limit: Schema.Int })
 });

@@ -34,6 +34,7 @@ const config: AppConfigShape = {
 	maxUploadBytes: 100 * 1024 * 1024,
 	maintenanceSecret: 'scanner-test',
 	workos: { apiKey: null, clientId: '', cookiePassword: '', webhookSecret: '' },
+	autumn: { secretKey: null, webhookSecret: '' },
 	urlScanner: null,
 	cloudflareZone: null,
 	adminUserIds: new Set(),

@@ -122,3 +122,35 @@ describe('URL Scanner configuration', () => {
 		).toBeNull();
 	});
 });
+
+describe('Autumn configuration', () => {
+	beforeEach(() => {
+		environment.dev = false;
+	});
+
+	it('rejects a fake provider in production after trimming the key', () => {
+		expect(() =>
+			configFromEnv({ ...env, AUTUMN_SECRET_KEY: ' fake:test ' })
+		).toThrow('Fake Autumn billing is only available in development');
+	});
+
+	it('allows an explicit fake key in development', () => {
+		environment.dev = true;
+		expect(
+			configFromEnv({ ...env, AUTUMN_SECRET_KEY: 'fake:test' }).autumn.secretKey
+		).toBe('fake:test');
+	});
+
+	it('keeps unset billing disabled and uses real keys in both environments', () => {
+		for (const dev of [false, true]) {
+			environment.dev = dev;
+			expect(
+				configFromEnv({ ...env, AUTUMN_SECRET_KEY: ' ' }).autumn.secretKey
+			).toBeNull();
+			expect(
+				configFromEnv({ ...env, AUTUMN_SECRET_KEY: ' sk_live_test ' }).autumn
+					.secretKey
+			).toBe('sk_live_test');
+		}
+	});
+});

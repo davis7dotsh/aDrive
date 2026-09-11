@@ -66,6 +66,7 @@ const live = WorkOSLive.pipe(
 				cookiePassword,
 				webhookSecret: 'workos-adapter-webhook'
 			},
+			autumn: { secretKey: null, webhookSecret: '' },
 			urlScanner: null,
 			cloudflareZone: null,
 			adminUserIds: new Set<string>(),

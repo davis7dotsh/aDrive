@@ -36,7 +36,8 @@ export const free = plan({
 			featureId: aiOps.id,
 			included: 500,
 			reset: { interval: 'month' }
-		})
+		}),
+		item({ featureId: publicSharing.id })
 	]
 });
 

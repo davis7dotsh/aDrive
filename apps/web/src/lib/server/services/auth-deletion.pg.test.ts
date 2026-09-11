@@ -1,3 +1,4 @@
+import { AutumnNull } from './autumn';
 import { Effect, Layer } from 'effect';
 import { expect, it } from 'vitest';
 import { PgSql } from '../pg';
@@ -39,6 +40,7 @@ it('removes an account with approved and consumed device codes without affecting
 	];
 	// Webhooks run without a current tenant and may remove any account.
 	const infrastructure = Layer.mergeAll(
+		AutumnNull,
 		testPgLayer(),
 		WorkOSFake,
 		Layer.succeed(CurrentOrg, anonymousOrg),
