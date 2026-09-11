@@ -96,6 +96,8 @@ export const DashboardFileSchema = Schema.Struct({
 	version: Schema.Int,
 	sizeBytes: Schema.Int,
 	public: Schema.Boolean,
+	quarantined: Schema.Boolean,
+	publishPending: Schema.Boolean,
 	htmlForcedPublic: Schema.Boolean,
 	createdAt: Schema.String,
 	updatedAt: Schema.String,
@@ -405,7 +407,17 @@ export const JobSchema = Schema.Union([
 		kind: Schema.Literal('scan'),
 		orgId: Schema.String,
 		fileId: Schema.String,
-		version: Schema.Int
+		version: Schema.Int,
+		// Set when the scan re-sends itself to collect URL Scanner verdicts
+		// for the links it submitted on an earlier run.
+		urlScan: Schema.optionalKey(
+			Schema.Struct({
+				ids: Schema.Array(Schema.String),
+				attempt: Schema.Int,
+				// Binds delayed results to the persisted scan request.
+				requestedAt: Schema.optionalKey(Schema.String)
+			})
+		)
 	}),
 	Schema.Struct({
 		kind: Schema.Literal('site-cleanup'),

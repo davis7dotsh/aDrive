@@ -415,33 +415,33 @@ Goal: one bad tenant cannot take the domain down, and you can stop them in under
 "ratelimits": [
 	{ "name": "RL_UPLOAD",  "namespace_id": "1001", "simple": { "limit": 60,  "period": 60 } },
 	{ "name": "RL_PUBLISH", "namespace_id": "1002", "simple": { "limit": 10,  "period": 60 } },
-	{ "name": "RL_AUTH",    "namespace_id": "1003", "simple": { "limit": 10,  "period": 60 } },
+	{ "name": "RL_AUTH",    "namespace_id": "1003", "simple": { "limit": 30,  "period": 60 } },
 	{ "name": "RL_ANON",    "namespace_id": "1004", "simple": { "limit": 300, "period": 60 } }
 ]
 ```
 
-- Keyed by `orgId` for upload and publish, by `userId` for auth, by client IP for anonymous content fetches.
+- Keyed by `orgId` for upload and publish, by client IP for device auth and anonymous content fetches. Device creation and five-second token polling share the 30/min auth budget; refused polls return `slow_down` with `Retry-After: 60`.
 - Replaces the KV-based `auth-guard.ts` counters. Passcode lockout goes away with the passcode.
 - Bindings are per-colo and approximate. That is fine for abuse, not for billing.
 
 ### E2 Trust levels
 
-- `orgs.trust`: `new` at signup, `verified` after email verification, `established` after 14 days plus a paid plan or an admin bump, `suspended`.
-- Gates: `new` cannot make anything public or publish sites. `verified` can, with lower publish limits and every publish scanned before it goes live. `established` publishes immediately and scans after.
-- The free plan is private-only by default. Public sharing is a feature flag on paid plans in stack F, or an admin grant.
+- `orgs.trust`: `new` at signup, `verified` after email verification, `established` when the org is over 14 days old and currently on a paid plan, or after an admin bump, `suspended`.
+- Gates: `new` cannot make anything public or publish sites. `verified` can, with every publish scanned before it goes live (`RL_PUBLISH` is reserved in this layer). `established` publishes immediately and scans after.
+- The free plan starts private and can share publicly after email verification; verified orgs wait for scan approval.
 
 ### E3 Scan pipeline
 
-- On visibility change to public, and on site commit, send a `scan` job. Content stays private until the verdict arrives for `new` and `verified` orgs.
+- On visibility change to public, and on site commit, send a `scan` job. `new` orgs cannot publish; content from `verified` orgs stays private until the verdict arrives.
 - Scanner does, in order: sha256 against a known-bad hash list mirrored to R2 nightly, MIME sniff versus declared type, and for HTML and sites a Cloudflare URL Scanner submission with the verdict polled by a delayed re-enqueue.
-- `scan_verdicts (file_id, version, verdict, source, details, created_at)`. `malicious` flips visibility back to private, sets `files.quarantined`, and notifies the owner. Never silently drop.
+- `scan_verdicts (file_id, version, verdict, source, details, created_at)`. `malicious` flips visibility back to private, sets `files.quarantined`, and writes a durable notification record. Owners see the status after refreshing their dashboard; inbox/email delivery is not implemented in this layer.
 - Web Risk lookup for outbound links inside published HTML is optional. First 100k calls a month are free, then $0.50 per thousand.
 - ClamAV in a Cloudflare Container is a later PR on this stack. The pattern is a Container running clamd fed by a presigned R2 URL, standard-1 instance, signatures baked into the image.
 
 ### E4 Report and kill switch
 
 - Report button on every public file page and site 404 page posts to `/report` on the content origin, rate limited by IP, stored in `reports`.
-- Kill switch: `UPDATE orgs SET trust = 'suspended'`. The host gate returns 404 for every path on that slug, the KV org cache is purged, API keys stop resolving, and the edge cache for that host is purged via the Cloudflare API.
+- Kill switch: `UPDATE orgs SET trust = 'suspended'`. The host gate checks current trust in Postgres and returns 404 for requests reaching the Worker, the KV org cache is invalidated on a best-effort basis, API keys stop resolving, and the edge cache for that host is purged via the Cloudflare API. CDN/browser bytes already cached require successful purge or expiry and are not instantly revoked.
 - Reversible from the same admin page.
 
 ### E5 Admin surface

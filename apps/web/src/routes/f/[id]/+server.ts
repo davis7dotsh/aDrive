@@ -17,11 +17,13 @@ import {
 import { AppConfig } from '$lib/server/config';
 import { shouldRecordFileDownload } from '$lib/server/auth-policy';
 import { decodeRangeHeader, rangeHeaders } from '$lib/server/download-response';
+import { rateLimitResponse } from '$lib/server/auth-rate-limit-response';
 import { runEdge } from '$lib/server/edge';
 import { NotFound, StorageError } from '$lib/server/errors';
 import { Blobs } from '$lib/server/services/blobs';
 import { Files } from '$lib/server/services/files';
 import { GrantSecrets } from '$lib/server/services/grant-secrets';
+import { RateLimits } from '$lib/server/services/rate-limits';
 
 const requestedVersion = (url: URL) => {
 	const value = url.searchParams.get('v');
@@ -30,7 +32,13 @@ const requestedVersion = (url: URL) => {
 	return Number.isSafeInteger(version) && version > 0 ? version : null;
 };
 
-const serveFile: RequestHandler = ({ params, platform, request, url }) =>
+const serveFile: RequestHandler = ({
+	getClientAddress,
+	params,
+	platform,
+	request,
+	url
+}) =>
 	runEdge(
 		Effect.gen(function* () {
 			const config = yield* AppConfig;
@@ -43,6 +51,11 @@ const serveFile: RequestHandler = ({ params, platform, request, url }) =>
 			if (thumbnailSource && !hasGrant) {
 				return yield* new NotFound({ id: params.id });
 			}
+			// Invalid ids and denied grants cost database work too.
+			const rateLimits = yield* RateLimits;
+			const rateLimit = yield* rateLimits.anonymous(getClientAddress());
+			if (!rateLimit.allowed) return rateLimitResponse();
+
 			const content = yield* files.findContent(params.id, version, hasGrant);
 			const privateResponse = hasGrant || !content.file.public;
 			const dashboardPreview =

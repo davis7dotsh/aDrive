@@ -39,13 +39,15 @@
 				{#if file.kind !== 'site' || version.version === file.version}
 					<CopyButton
 						variant="inline"
+						disabled={file.quarantined}
 						resolve={() => oncopy(version.version)}
 					/>
 				{/if}
 				{#if file.kind !== 'site' && version.version !== file.version && !file.deletedAt}
 					<button
 						type="button"
-						class="rounded px-2 py-1 text-xs text-zinc-700 hover:bg-zinc-100"
+						class="rounded px-2 py-1 text-xs text-zinc-700 hover:bg-zinc-100 disabled:pointer-events-none disabled:opacity-40"
+						disabled={file.quarantined}
 						onclick={() => onrestore(version.version)}
 					>
 						Restore
@@ -54,10 +56,11 @@
 				{#if file.kind !== 'site' || version.version === file.version}
 					<button
 						type="button"
-						class="rounded px-2 py-1 text-xs text-zinc-700 hover:bg-zinc-100"
+						class="rounded px-2 py-1 text-xs text-zinc-700 hover:bg-zinc-100 disabled:pointer-events-none disabled:opacity-40"
+						disabled={file.quarantined}
 						onclick={() => onopen(version.version)}
 					>
-						{file.public ? 'Open' : 'Download'}
+						{file.public || file.kind === 'site' ? 'Open' : 'Download'}
 					</button>
 				{/if}
 			</div>

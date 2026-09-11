@@ -19,6 +19,8 @@ const file = {
 	version: 3,
 	sizeBytes: 1024,
 	public: true,
+	quarantined: false,
+	publishPending: false,
 	htmlForcedPublic: false,
 	createdAt: '2026-07-30T12:00:00.000Z',
 	updatedAt: '2026-07-30T12:00:00.000Z',

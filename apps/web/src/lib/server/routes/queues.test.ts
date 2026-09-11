@@ -88,10 +88,20 @@ describe('queue-driven indexing (local platform)', () => {
 			content: 'indexed through the queue'
 		});
 		const identity = await currentIdentity(ctx);
+		// A public upload is indexed and scanned.
 		expect(ctx.jobs).toEqual([
 			{
 				body: {
 					kind: 'index',
+					orgId: identity.orgId,
+					fileId: file.id,
+					version: 1
+				},
+				delaySeconds: 0
+			},
+			{
+				body: {
+					kind: 'scan',
 					orgId: identity.orgId,
 					fileId: file.id,
 					version: 1
@@ -102,7 +112,10 @@ describe('queue-driven indexing (local platform)', () => {
 		expect((await fileDetail(ctx, file.id)).indexState).toBe('pending');
 
 		const decisions = await ctx.drainJobs();
-		expect(decisions).toEqual([{ id: 'test-1', ack: true }]);
+		expect(decisions).toEqual([
+			{ id: 'test-1', ack: true },
+			{ id: 'test-2', ack: true }
+		]);
 		expect(embed).toHaveBeenCalledOnce();
 		const indexed = await fileDetail(ctx, file.id);
 		expect(indexed.indexState).toBe('ready');
@@ -121,7 +134,8 @@ describe('queue-driven indexing (local platform)', () => {
 		const decisions = await ctx.drainJobs();
 		expect(decisions).toEqual([
 			{ id: 'test-1', retry: true, delaySeconds: 60 },
-			{ id: 'test-2', ack: true }
+			{ id: 'test-2', ack: true },
+			{ id: 'test-3', ack: true }
 		]);
 		const indexed = await fileDetail(ctx, file.id);
 		expect(indexed.indexState).toBe('ready');
@@ -149,7 +163,9 @@ describe('queue-driven indexing (local platform)', () => {
 			})
 		);
 		expect(response.status).toBe(201);
-		expect(ctx.jobs.map((job) => job.body)).toMatchObject([
+		expect(
+			ctx.jobs.map((job) => job.body).filter((job) => job.kind === 'index')
+		).toMatchObject([
 			{ kind: 'index', fileId: file.id, version: 1 },
 			{ kind: 'index', fileId: file.id, version: 2 }
 		]);

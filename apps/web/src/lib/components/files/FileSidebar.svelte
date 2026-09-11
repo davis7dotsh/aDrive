@@ -56,19 +56,36 @@
 
 <aside class="space-y-6">
 	<section class="rounded-xl border border-zinc-200 p-4">
-		<h2 class="text-sm font-semibold text-zinc-900">Share</h2>
+		<div class="flex items-center justify-between gap-2">
+			<h2 class="text-sm font-semibold text-zinc-900">Share</h2>
+			{#if file.quarantined || file.publishPending}
+				<span
+					class="truncate text-xs text-zinc-500"
+					title={file.quarantined
+						? 'Preview and sharing are unavailable'
+						: 'Pending review before public sharing'}
+				>
+					{file.quarantined ? 'Quarantined' : 'Pending review'}
+				</span>
+			{/if}
+		</div>
 		<div class="mt-3 flex gap-2">
-			<CopyButton resolve={oncopy} />
-			<Button variant="secondary" onclick={ondownload}>
-				{file.public ? 'Open' : 'Download'}
+			<CopyButton resolve={oncopy} disabled={file.quarantined} />
+			<Button
+				variant="secondary"
+				onclick={ondownload}
+				disabled={file.quarantined}
+			>
+				{file.public || file.kind === 'site' ? 'Open' : 'Download'}
 			</Button>
 		</div>
 		<div class="mt-4 grid grid-cols-2 gap-2">
 			<button
 				type="button"
-				disabled={busy}
-				aria-pressed={file.public}
-				class="rounded-lg border p-2 text-left text-xs {file.public
+				disabled={busy || file.quarantined || file.publishPending}
+				aria-pressed={file.public && !file.quarantined}
+				class="rounded-lg border p-2 text-left text-xs disabled:opacity-40 {file.public &&
+				!file.quarantined
 					? 'border-accent-500 bg-accent-50 text-accent-800'
 					: 'border-zinc-200 text-zinc-500'}"
 				onclick={() => onvisibility(true)}
@@ -76,9 +93,14 @@
 			>
 			<button
 				type="button"
-				disabled={busy || file.htmlForcedPublic || file.kind === 'site'}
-				aria-pressed={!file.public}
-				class="rounded-lg border p-2 text-left text-xs disabled:opacity-40 {!file.public
+				disabled={busy ||
+					file.quarantined ||
+					file.htmlForcedPublic ||
+					file.kind === 'site'}
+				aria-pressed={!file.public && !file.quarantined && !file.publishPending}
+				class="rounded-lg border p-2 text-left text-xs disabled:opacity-40 {!file.public &&
+				!file.quarantined &&
+				!file.publishPending
 					? 'border-accent-500 bg-accent-50 text-accent-800'
 					: 'border-zinc-200 text-zinc-500'}"
 				onclick={() => onvisibility(false)}
@@ -131,13 +153,13 @@
 			<h2 class="text-sm font-semibold text-zinc-900">Versions</h2>
 			{#if file.kind === 'file'}
 				<label
-					class="cursor-pointer rounded-md border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+					class="cursor-pointer rounded-md border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 has-disabled:cursor-default has-disabled:opacity-40"
 				>
 					New version
 					<input
 						type="file"
 						class="sr-only"
-						disabled={busy}
+						disabled={busy || file.quarantined}
 						onchange={(event) => {
 							const next = event.currentTarget.files?.[0];
 							if (next) onversion(next);

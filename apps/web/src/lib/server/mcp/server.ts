@@ -8,11 +8,11 @@ import { InvalidRequest, validate } from '../errors';
 import { maxPreviewBytes, previewKind } from '../file-preview';
 import { resolveFileContentLink } from '../file-content-link';
 import type { AuthContext } from '../identity';
-import { AuthGuard } from '../services/auth-guard';
 import { Blobs } from '../services/blobs';
 import { currentContentOrigin } from '../services/current-org';
 import { Files } from '../services/files';
 import { Indexing } from '../services/indexing';
+import { RateLimits } from '../services/rate-limits';
 import { Search } from '../services/search';
 import { Sites } from '../services/sites';
 import { Tags } from '../services/tags';
@@ -328,12 +328,9 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 				env,
 				credential,
 				Effect.gen(function* () {
-					const authGuard = yield* AuthGuard;
+					const rateLimits = yield* RateLimits;
 					const files = yield* Files;
-					const rate = yield* authGuard.consume(
-						'upload',
-						credential.credentialId
-					);
+					const rate = yield* rateLimits.upload(credential.orgId);
 					if (!rate.allowed) {
 						return {
 							kind: 'rate-limit' as const,
@@ -524,12 +521,9 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 				env,
 				credential,
 				Effect.gen(function* () {
-					const authGuard = yield* AuthGuard;
+					const rateLimits = yield* RateLimits;
 					const sites = yield* Sites;
-					const rate = yield* authGuard.consume(
-						'upload',
-						credential.credentialId
-					);
+					const rate = yield* rateLimits.upload(credential.orgId);
 					if (!rate.allowed) {
 						return {
 							kind: 'rate-limit' as const,

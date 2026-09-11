@@ -44,6 +44,9 @@ it('mints only one API key when approved device polls overlap', async () => {
 						cookiePassword: '',
 						webhookSecret: ''
 					},
+					urlScanner: null,
+					cloudflareZone: null,
+					adminUserIds: new Set<string>(),
 					semanticSearch: 'off',
 					embeddingModel: '@cf/baai/bge-small-en-v1.5',
 					embeddingPooling: 'cls',

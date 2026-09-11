@@ -47,6 +47,7 @@ describe('tenancy (local platform)', () => {
 			tags: ['shared-name']
 		});
 		await indexFile(ctx, fileA.id);
+		await ctx.drainJobs();
 		const listedA = await listFiles(ctx);
 		expect(listedA.files.map((file) => file.id)).toContain(fileA.id);
 		const tagA = listedA.tags.find((tag) => tag.name === 'shared-name');
@@ -190,6 +191,7 @@ describe('tenancy (local platform)', () => {
 			name: 'hosted.txt',
 			content: 'hosted'
 		});
+		await ctx.drainJobs();
 		const { resolveContentHost } = await import('$lib/server/content-host');
 
 		// An unknown slug is refused by the hook before any route runs, and
@@ -212,7 +214,7 @@ describe('tenancy (local platform)', () => {
 			host: { orgId: a.orgId, slug: a.orgSlug }
 		});
 		expect(await ctx.env.AUTH_GUARD.get(`org-slug:${a.orgSlug}`)).toBe(
-			JSON.stringify({ orgId: a.orgId, trust: 'new' })
+			JSON.stringify({ orgId: a.orgId, trust: 'verified' })
 		);
 
 		// Suspending the org takes its host offline once the cache entry is
@@ -227,7 +229,7 @@ describe('tenancy (local platform)', () => {
 		).rejects.toMatchObject({ status: 404 });
 		await queryPg(
 			ctx.env,
-			(sql) => sql`UPDATE orgs SET trust = 'new' WHERE id = ${a.orgId}`
+			(sql) => sql`UPDATE orgs SET trust = 'verified' WHERE id = ${a.orgId}`
 		);
 		await ctx.env.AUTH_GUARD.delete(`org-slug:${a.orgSlug}`);
 		const { GET: serveGET } = await import('../../../routes/f/[id]/+server.js');
@@ -467,6 +469,7 @@ describe('org slugs (local platform)', () => {
 			name: 'moving.txt',
 			content: 'moved'
 		});
+		await ctx.drainJobs();
 		const { resolveContentHost } = await import('$lib/server/content-host');
 		// Warm the cache for the old slug so the change has to purge it.
 		expect((await resolveContentHost(ctx.env, before.orgSlug))._tag).toBe(

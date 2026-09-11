@@ -9,6 +9,13 @@ declare global {
 		WORKOS_CLIENT_ID?: string;
 		WORKOS_COOKIE_PASSWORD?: string;
 		WORKOS_WEBHOOK_SECRET?: string;
+		// Abuse controls (docs/abuse.md). All optional: the Null services
+		// stand in when unset.
+		ADMIN_USER_IDS?: string;
+		URLSCAN_API_KEY?: string;
+		CF_ACCOUNT_ID?: string;
+		CF_API_TOKEN?: string;
+		CF_ZONE_ID?: string;
 	}
 
 	namespace Cloudflare {
@@ -19,6 +26,11 @@ declare global {
 			WORKOS_CLIENT_ID?: string;
 			WORKOS_COOKIE_PASSWORD?: string;
 			WORKOS_WEBHOOK_SECRET?: string;
+			ADMIN_USER_IDS?: string;
+			URLSCAN_API_KEY?: string;
+			CF_ACCOUNT_ID?: string;
+			CF_API_TOKEN?: string;
+			CF_ZONE_ID?: string;
 		}
 	}
 }

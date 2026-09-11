@@ -87,3 +87,38 @@ describe('WorkOS configuration', () => {
 		}
 	);
 });
+
+describe('URL Scanner configuration', () => {
+	beforeEach(() => {
+		environment.dev = false;
+	});
+
+	it('rejects production fake keys even when an account is configured', () => {
+		expect(() =>
+			configFromEnv({
+				...env,
+				URLSCAN_API_KEY: ' fake:clean ',
+				CF_ACCOUNT_ID: 'account'
+			})
+		).toThrow('Fake URL scanning is only available in development');
+	});
+
+	it('allows an explicit fake key only in development', () => {
+		environment.dev = true;
+		expect(
+			configFromEnv({ ...env, URLSCAN_API_KEY: 'fake:clean' }).urlScanner
+		).toEqual({
+			apiKey: 'fake:clean',
+			accountId: ''
+		});
+	});
+
+	it('requires an account for a live key and leaves an unset scanner disabled', () => {
+		expect(() =>
+			configFromEnv({ ...env, URLSCAN_API_KEY: 'test-key' })
+		).toThrow('CF_ACCOUNT_ID');
+		expect(
+			configFromEnv({ ...env, URLSCAN_API_KEY: ' ' }).urlScanner
+		).toBeNull();
+	});
+});

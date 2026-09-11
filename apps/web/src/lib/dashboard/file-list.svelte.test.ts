@@ -18,6 +18,8 @@ const file = (id: string, deletedAt: string | null = null): DashboardFile => ({
 	version: 1,
 	sizeBytes: 6,
 	public: true,
+	quarantined: false,
+	publishPending: false,
 	htmlForcedPublic: false,
 	createdAt: '2026-08-24T12:00:00.000Z',
 	updatedAt: '2026-08-24T12:00:00.000Z',

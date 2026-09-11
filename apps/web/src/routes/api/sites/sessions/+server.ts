@@ -4,10 +4,12 @@ import {
 } from '@adrive/shared';
 import type { RequestHandler } from './$types';
 import { Effect, Schema } from 'effect';
+import { rateLimitResponse } from '$lib/server/auth-rate-limit-response';
 import { runEdge } from '$lib/server/edge';
 import { requireWrite } from '$lib/server/request-auth';
 import { InvalidRequest } from '$lib/server/errors';
 import { readBoundedJson } from '$lib/server/request-json';
+import { RateLimits } from '$lib/server/services/rate-limits';
 import { Sites } from '$lib/server/services/sites';
 
 const MAX_MANIFEST_BYTES = 1024 * 1024;
@@ -37,7 +39,12 @@ export const POST: RequestHandler = (event) => {
 	return runEdge(
 		Effect.gen(function* () {
 			const sites = yield* Sites;
-			yield* requireWrite(event);
+			const rateLimits = yield* RateLimits;
+			const credential = yield* requireWrite(event);
+			const rateLimit = yield* rateLimits.upload(credential.orgId);
+			if (!rateLimit.allowed) {
+				return rateLimitResponse('Too many uploads. Try again later.');
+			}
 			const input: SiteSessionCreate = yield* readManifest(request);
 			return Response.json(yield* sites.createSession(input), { status: 201 });
 		})

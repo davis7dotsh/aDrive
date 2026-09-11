@@ -3,7 +3,10 @@ import { Effect } from 'effect';
 import { InvalidRequest, NotFound, StorageError } from '../../errors';
 import { delaySecondsUntil } from '../../job-policy';
 import { refreshSearchDocument } from '../../search-index';
+import { markScanPending } from '../../scan-jobs';
 import { ensureStorageHeadroom, reserveWithinPlan } from '../../storage-quota';
+import { requirePublishAllowed } from '../../trust';
+import { scanBeforePublish } from '../../trust-policy';
 import {
 	assertOpenSiteSession,
 	prepareSiteManifest,
@@ -43,6 +46,11 @@ export const sessionOps = (
 								message: 'Site manifest is invalid'
 							})
 			});
+			// Sites are always public, so an org that may not publish is
+			// refused before any asset bytes are accepted.
+			yield* requirePublishAllowed(sql, org.id);
+			// Declared manifest sizes gate the whole publish before any asset
+			// bytes are accepted; per-asset uploads re-verify actual lengths.
 			const declaredBytes = prepared.assets.reduce(
 				(total, asset) => total + asset.sizeBytes,
 				0
@@ -237,6 +245,9 @@ export const sessionOps = (
 								message: 'Site upload session is unavailable'
 							})
 			});
+			// A verified org's site goes live once the scanner clears it; an
+			// established org's is live now and scanned after.
+			yield* requirePublishAllowed(sql, org.id);
 			const assets = yield* stagedAssets(session.id);
 			const totalSize = yield* Effect.try({
 				try: () => validateCommittedAssets(assets),
@@ -269,6 +280,7 @@ export const sessionOps = (
 									WHERE id = ${session.fileId} AND org_id = ${org.id}
 										AND is_site = true
 										AND deleted_at IS NULL
+										AND quarantined = false
 										AND current_version = ${session.version - 1}
 								)
 							RETURNING id`;
@@ -294,6 +306,9 @@ export const sessionOps = (
 								});
 							}
 						}
+						const hold = scanBeforePublish(
+							yield* requirePublishAllowed(sql, org.id)
+						);
 						const guarded = yield* guard;
 						if (guarded.length !== 1) {
 							return yield* new StorageError({
@@ -313,17 +328,20 @@ export const sessionOps = (
 						yield* sql`
 								INSERT INTO files (
 									id, org_id, display_name, content_type, kind, current_version,
-									size_bytes, public, is_site, created_at, updated_at, index_state
+									size_bytes, public, publish_pending, is_site, created_at,
+									updated_at, index_state
 								)
 								SELECT file_id, org_id, display_name, 'text/html', 'site', 1,
-									${totalSize}, true, true, ${publishedAt}, ${publishedAt}, 'pending'
+									${totalSize}, ${!hold}, ${hold}, true, ${publishedAt},
+									${publishedAt}, 'pending'
 								FROM site_upload_sessions
 								WHERE id = ${session.id} AND status = 'committing' AND version = 1
 								ON CONFLICT (id) DO NOTHING`;
 						yield* sql`
 							UPDATE files
 							SET current_version = ${session.version}, size_bytes = ${totalSize},
-								content_type = 'text/html', public = true,
+								content_type = 'text/html', public = ${!hold},
+								publish_pending = ${hold},
 								updated_at = ${publishedAt}, index_state = 'pending',
 								index_cursor = 0, index_attempts = 0, index_error = NULL,
 								index_next_run_at = NULL, index_lease_token = NULL
@@ -377,6 +395,12 @@ export const sessionOps = (
 							WHERE s.id = ${session.id} AND s.status = 'committing'
 								AND a.r2_key IS NOT NULL AND a.stored_size_bytes IS NOT NULL`;
 						yield* refreshSearchDocument(sql, session.fileId, org.id);
+						yield* markScanPending(
+							sql,
+							org.id,
+							session.fileId,
+							session.version
+						);
 						yield* sql`
 							UPDATE site_upload_sessions SET status = 'complete'
 							WHERE id = ${session.id} AND status = 'committing'
@@ -395,6 +419,7 @@ export const sessionOps = (
 								WHERE id = ${session.id} AND status = 'complete'
 							)`;
 						yield* reserveWithinPlan(sql, org.id, totalSize - previousBytes);
+						return hold;
 					})
 				)
 				.pipe(
@@ -404,7 +429,7 @@ export const sessionOps = (
 						)
 					)
 				);
-			yield* commit.pipe(
+			const hold = yield* commit.pipe(
 				Effect.catch((failure) =>
 					cleanupStaged(session, 'aborted').pipe(
 						Effect.catchCause((cleanupCause) =>
@@ -425,6 +450,12 @@ export const sessionOps = (
 
 			yield* jobs.trySend({
 				kind: 'index',
+				orgId: org.id,
+				fileId: session.fileId,
+				version: session.version
+			});
+			yield* jobs.trySend({
+				kind: 'scan',
 				orgId: org.id,
 				fileId: session.fileId,
 				version: session.version
@@ -469,7 +500,7 @@ export const sessionOps = (
 					kind: 'site',
 					version: file.current_version,
 					sizeBytes: file.size_bytes,
-					public: true,
+					public: !hold,
 					createdAt: file.created_at,
 					expiresAt: file.expires_at,
 					downloadCount: file.download_count,

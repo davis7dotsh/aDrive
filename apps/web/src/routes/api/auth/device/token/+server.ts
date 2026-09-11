@@ -1,22 +1,30 @@
 import { DeviceTokenRequestSchema } from '@adrive/shared';
 import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
-import { authRateLimitResponse } from '$lib/server/auth-rate-limit-response';
+import { RATE_LIMIT_PERIOD_SECONDS } from '$lib/server/auth-rate-limit-response';
 import { runEdge } from '$lib/server/edge';
 import { decodeJson } from '$lib/server/request-json';
 import { Auth } from '$lib/server/services/auth';
-import { AuthGuard } from '$lib/server/services/auth-guard';
+import { RateLimits } from '$lib/server/services/rate-limits';
 
 export const POST: RequestHandler = ({ request, getClientAddress }) =>
 	runEdge(
 		Effect.gen(function* () {
 			const auth = yield* Auth;
-			const authGuard = yield* AuthGuard;
-			const rateLimit = yield* authGuard.consume(
-				'devicePoll',
-				getClientAddress()
-			);
-			if (!rateLimit.allowed) return authRateLimitResponse(rateLimit);
+			const rateLimits = yield* RateLimits;
+			const rateLimit = yield* rateLimits.auth(getClientAddress());
+			if (!rateLimit.allowed) {
+				return Response.json(
+					{ status: 'slow_down' },
+					{
+						status: 429,
+						headers: {
+							'Cache-Control': 'private, no-store',
+							'Retry-After': String(RATE_LIMIT_PERIOD_SECONDS)
+						}
+					}
+				);
+			}
 			const input = yield* decodeJson(
 				request,
 				DeviceTokenRequestSchema,

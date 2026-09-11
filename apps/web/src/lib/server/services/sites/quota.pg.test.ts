@@ -32,6 +32,7 @@ describe('site replacement storage quota', () => {
 				Effect.gen(function* () {
 					const sql = yield* PgSql;
 					yield* ensureTenant(sql, tenant);
+					yield* sql`UPDATE orgs SET trust = 'established' WHERE id = ${tenant.orgId}`;
 					const sites = yield* Sites;
 					const publish = (sizeBytes: number, fileId?: string) =>
 						Effect.gen(function* () {

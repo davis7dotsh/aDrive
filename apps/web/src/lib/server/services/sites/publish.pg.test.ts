@@ -12,14 +12,19 @@ import { ensureTestOrg, TEST_ORG_ID, TEST_USER_ID } from '../../test/org';
 import { createInternals } from './internals';
 import { sessionOps } from './sessions';
 
-describe('site publication competing with purge', () => {
-	it.each([true, false])(
-		'rechecks a blocked purge claim that commits=%s',
-		async (commits) => {
+describe('site publication competing with metadata changes', () => {
+	it.each(['purge-commit', 'purge-rollback', 'suspended', 'verified'] as const)(
+		'rechecks publication after a blocked %s change',
+		async (change) => {
+			const succeeds = change === 'purge-rollback' || change === 'verified';
 			const ctx = await createRouteContext();
 			await runWorkerProgram(ctx.env, Effect.flatMap(PgSql, ensureTestOrg));
 			const control = new Client({ connectionString: TEST_DATABASE_URL });
 			await control.connect();
+			await control.query(
+				"UPDATE orgs SET trust = 'established' WHERE id = $1",
+				[TEST_ORG_ID]
+			);
 			const fileId = crypto.randomUUID();
 			const sessionId = crypto.randomUUID();
 			const oldKey = `site/${fileId}/old.html`;
@@ -57,7 +62,9 @@ describe('site publication competing with purge', () => {
 				);
 				await control.query('BEGIN');
 				await control.query(
-					"UPDATE files SET purge_state = 'pending', deleted_at = now() WHERE id = $1",
+					change.startsWith('purge-')
+						? "UPDATE files SET purge_state = 'pending', deleted_at = now() WHERE id = $1"
+						: 'SELECT id FROM files WHERE id = $1 FOR UPDATE',
 					[fileId]
 				);
 				publish = runWorkerProgram(
@@ -86,7 +93,8 @@ describe('site publication competing with purge', () => {
 							.commit(sessionId)
 							.pipe(
 								Effect.as(true),
-								Effect.catchTag('StorageError', () => Effect.succeed(false))
+								Effect.catchTag('StorageError', () => Effect.succeed(false)),
+								Effect.catchTag('InvalidRequest', () => Effect.succeed(false))
 							);
 					}),
 					{ orgId: TEST_ORG_ID, userId: TEST_USER_ID }
@@ -102,21 +110,37 @@ describe('site publication competing with purge', () => {
 					},
 					{ timeout: 5_000, interval: 10 }
 				);
-				await control.query(commits ? 'COMMIT' : 'ROLLBACK');
-				expect(await publish).toBe(!commits);
-				const file = await control.query<{ current_version: number }>(
-					'SELECT current_version FROM files WHERE id = $1',
+				if (change === 'suspended' || change === 'verified') {
+					await control.query('UPDATE orgs SET trust = $1 WHERE id = $2', [
+						change,
+						TEST_ORG_ID
+					]);
+				}
+				await control.query(
+					change === 'purge-rollback' ? 'ROLLBACK' : 'COMMIT'
+				);
+				expect(await publish).toBe(succeeds);
+				const file = await control.query<{
+					current_version: number;
+					public: boolean;
+					publish_pending: boolean;
+				}>(
+					'SELECT current_version, public, publish_pending FROM files WHERE id = $1',
 					[fileId]
 				);
-				expect(file.rows[0]?.current_version).toBe(commits ? 1 : 2);
+				expect(file.rows[0]?.current_version).toBe(succeeds ? 2 : 1);
+				if (change === 'verified') {
+					expect(file.rows[0]?.public).toBe(false);
+					expect(file.rows[0]?.publish_pending).toBe(true);
+				}
 				const assets = await control.query<{ r2_key: string }>(
 					'SELECT r2_key FROM site_assets WHERE file_id = $1',
 					[fileId]
 				);
 				expect(assets.rows.map((row) => row.r2_key)).toEqual([
-					commits ? oldKey : newKey
+					succeeds ? newKey : oldKey
 				]);
-				expect(deleted).toEqual([commits ? newKey : oldKey]);
+				expect(deleted).toEqual([succeeds ? oldKey : newKey]);
 			} finally {
 				await control.query('ROLLBACK');
 				await publish?.catch(() => {});

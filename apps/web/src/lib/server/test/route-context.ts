@@ -10,6 +10,7 @@ export const contentOrigin = (slug: string) =>
 	`http://${slug}.${CONTENT_DOMAIN}`;
 
 import type { JobDecision } from '../jobs/consumer';
+import { rateLimitBinding, type RateLimitName } from '../services/rate-limits';
 
 // Route handlers read the event through two paths: runEdgeWithEvent takes
 // the event directly, and runEdge calls SvelteKit's getRequestEvent() —
@@ -67,6 +68,9 @@ export interface RouteTestContext {
 	// `jobs` for a later drain, since the clock has not moved. Returns
 	// every decision.
 	readonly drainJobs: () => Promise<ReadonlyArray<JobDecision>>;
+	// The rate limit bindings are swapped for fakes that allow everything;
+	// add a name here to have that limit refuse until it is removed.
+	readonly deniedRateLimits: Set<RateLimitName>;
 }
 
 // The JOBS binding from getPlatformProxy is a real local queue nothing
@@ -143,9 +147,16 @@ export const createRouteContext = async (): Promise<RouteTestContext> => {
 	// The WorkOS fake is forced so a developer's real credentials in
 	// .dev.vars never leak into the suite.
 	const jobs: Array<SentJob> = [];
+	const deniedRateLimits = new Set<RateLimitName>();
+	const limiter = (name: RateLimitName) =>
+		rateLimitBinding(() => deniedRateLimits.has(name));
 	const env = {
 		...platformEnv,
 		JOBS: collectingQueue(jobs),
+		RL_UPLOAD: limiter('upload'),
+		RL_PUBLISH: limiter('publish'),
+		RL_AUTH: limiter('auth'),
+		RL_ANON: limiter('anonymous'),
 		DASHBOARD_ORIGIN,
 		CONTENT_DOMAIN,
 		MAINTENANCE_SECRET:
@@ -154,7 +165,14 @@ export const createRouteContext = async (): Promise<RouteTestContext> => {
 		WORKOS_DEV_FAKE: 'true',
 		WORKOS_CLIENT_ID: 'client_test',
 		WORKOS_COOKIE_PASSWORD: 'route-test-cookie-password-of-32-characters!',
-		WORKOS_WEBHOOK_SECRET: 'route-test-webhook'
+		WORKOS_WEBHOOK_SECRET: 'route-test-webhook',
+		// Abuse controls default to their Null services; a test sets
+		// URLSCAN_API_KEY to `fake:<verdict>` or ADMIN_USER_IDS on ctx.env.
+		URLSCAN_API_KEY: '',
+		CF_ACCOUNT_ID: '',
+		CF_API_TOKEN: '',
+		CF_ZONE_ID: '',
+		ADMIN_USER_IDS: ''
 	} as Env;
 	const cookies = new TestCookieStore();
 
@@ -251,6 +269,7 @@ export const createRouteContext = async (): Promise<RouteTestContext> => {
 			await Promise.allSettled(waitUntilQueue.splice(0));
 		},
 		jobs,
+		deniedRateLimits,
 		drainJobs: async () => {
 			const { handleJobBatch } = await import('../jobs/consumer');
 			const decisions: Array<JobDecision> = [];

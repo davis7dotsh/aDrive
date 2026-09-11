@@ -16,6 +16,8 @@ let linkAuthorization: string | undefined;
 let contentAuthorization: string | undefined;
 let contentRequestUrl = '';
 let devicePolls = 0;
+let devicePollTimes: Array<number> = [];
+let deviceRetryAfter: string | undefined;
 let deviceAuthorizations = 0;
 let authChecks = 0;
 let uploadedContentLength: string | undefined;
@@ -31,6 +33,8 @@ const file = {
 	version: 1,
 	sizeBytes: downloaded.length,
 	public: true,
+	quarantined: false,
+	publishPending: false,
 	createdAt: '2026-07-27T00:00:00.000Z',
 	expiresAt: null,
 	downloadCount: 0,
@@ -79,6 +83,7 @@ beforeAll(async () => {
 		if (request.method === 'POST' && request.url === '/api/auth/device') {
 			deviceAuthorizations += 1;
 			devicePolls = 0;
+			devicePollTimes = [];
 			response.statusCode = 201;
 			response.setHeader('Content-Type', 'application/json');
 			response.end(
@@ -95,6 +100,7 @@ beforeAll(async () => {
 		}
 		if (request.method === 'POST' && request.url === '/api/auth/device/token') {
 			devicePolls += 1;
+			devicePollTimes.push(performance.now());
 			response.setHeader('Content-Type', 'application/json');
 			if (devicePolls === 1) {
 				response.statusCode = 202;
@@ -103,6 +109,9 @@ beforeAll(async () => {
 			}
 			if (devicePolls === 2) {
 				response.statusCode = 429;
+				if (deviceRetryAfter !== undefined) {
+					response.setHeader('Retry-After', deviceRetryAfter);
+				}
 				response.end(JSON.stringify({ status: 'slow_down' }));
 				return;
 			}
@@ -467,8 +476,14 @@ describe('CLI stream and JSON contracts', () => {
 		});
 	});
 
-	it('continues headless login through pending and slow-down responses', async () => {
-		const result = await run(['login', endpoint, '--headless']);
+	it('continues headless login after waiting for a rate-limit retry delay', async () => {
+		deviceRetryAfter = '1';
+		let result: Awaited<ReturnType<typeof run>>;
+		try {
+			result = await run(['login', endpoint, '--headless']);
+		} finally {
+			deviceRetryAfter = undefined;
+		}
 
 		expect(result.status).toBe(0);
 		expect(result.stderr.toString()).toBe('');
@@ -478,6 +493,11 @@ describe('CLI stream and JSON contracts', () => {
 			`Logged in to ${endpoint}`
 		]);
 		expect(devicePolls).toBe(3);
+		// The authorization fixture advertises zero delay; only the limiter
+		// asks for a one-second pause. Allow a small timer scheduling margin.
+		expect(devicePollTimes[2]! - devicePollTimes[1]!).toBeGreaterThanOrEqual(
+			950
+		);
 		const saved = JSON.parse(
 			await readFile(join(configHome, 'adrive', 'config.json'), 'utf8')
 		);

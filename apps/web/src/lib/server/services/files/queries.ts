@@ -1,4 +1,5 @@
 import { Effect } from 'effect';
+import { contentVersionAccess } from '../../content-version-access';
 import { InvalidRequest, NotFound, StorageError } from '../../errors';
 import {
 	dashboardFileColumns,
@@ -145,19 +146,23 @@ export const queryOps = (
 					AND (f.expires_at IS NULL OR f.expires_at > ${now})
 				)
 			)`;
-			const siteFilter = sql`(${includeSites}::boolean OR f.is_site = false)`;
+			// A quarantined file is gone from every content route, grant or not.
+			const siteFilter = sql`(${includeSites}::boolean OR f.is_site = false)
+					AND f.quarantined = false`;
+			const versionAccess = contentVersionAccess(sql);
 			const rows =
 				version === undefined
 					? yield* sql`
 							SELECT
 								f.id, f.org_id, f.display_name, v.content_type, v.version,
-								v.size_bytes, f.public AS is_public, f.is_site, v.r2_key,
+									v.size_bytes, ${versionAccess.isPublic} AS is_public, f.is_site, v.r2_key,
 								v.thumbnail_r2_key, v.created_at
 							FROM files f
 							JOIN file_versions v
-								ON v.file_id = f.id AND v.version = f.current_version
+									ON v.file_id = f.id AND v.version = f.current_version
+								${versionAccess.review}
 							WHERE f.id = ${id} AND ${orgFilter} AND ${available}
-								AND ${siteFilter}
+									AND ${siteFilter} AND ${versionAccess.allowed}
 							LIMIT 1
 						`.pipe(
 							Effect.mapError(
@@ -167,12 +172,13 @@ export const queryOps = (
 					: yield* sql`
 							SELECT
 								f.id, f.org_id, f.display_name, v.content_type, v.version,
-								v.size_bytes, f.public AS is_public, f.is_site, v.r2_key,
+									v.size_bytes, ${versionAccess.isPublic} AS is_public, f.is_site, v.r2_key,
 								v.thumbnail_r2_key, v.created_at
 							FROM files f
-							JOIN file_versions v ON v.file_id = f.id
+								JOIN file_versions v ON v.file_id = f.id
+								${versionAccess.review}
 							WHERE f.id = ${id} AND v.version = ${version} AND ${orgFilter}
-								AND ${available} AND ${siteFilter}
+									AND ${available} AND ${siteFilter} AND ${versionAccess.allowed}
 								AND (f.is_site = false OR v.version = f.current_version)
 							LIMIT 1
 						`.pipe(
