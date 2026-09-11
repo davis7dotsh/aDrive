@@ -34,12 +34,24 @@ export const SNIFF_LENGTH = 512;
 const startsWith = (bytes: Uint8Array, signature: ReadonlyArray<number>) =>
 	signature.every((byte, index) => bytes[index] === byte);
 
-const asciiPrefix = (bytes: Uint8Array) => {
-	let text = '';
-	for (const byte of bytes.subarray(0, SNIFF_LENGTH)) {
-		text += byte < 0x80 ? String.fromCharCode(byte) : '�';
-	}
-	return text;
+// TextDecoder consumes the UTF-8 BOM before checking markup signatures.
+const asciiPrefix = (bytes: Uint8Array) =>
+	new TextDecoder().decode(bytes.subarray(0, SNIFF_LENGTH));
+
+const isPe = (bytes: Uint8Array, sizeBytes: number) => {
+	if (!startsWith(bytes, [0x4d, 0x5a]) || bytes.length < 64) return false;
+	const offset = new DataView(
+		bytes.buffer,
+		bytes.byteOffset,
+		bytes.byteLength
+	).getUint32(0x3c, true);
+	if (offset < 64 || offset + 4 > sizeBytes) return false;
+	// A plausible DOS header can point past the retained prefix. Keep it
+	// suspicious when the signature exists outside the inspected window.
+	return (
+		offset + 4 > bytes.byteLength ||
+		startsWith(bytes.subarray(offset), [0x50, 0x45, 0, 0])
+	);
 };
 
 const HTML_TAGS = [
@@ -74,9 +86,12 @@ const looksLikeSvg = (text: string) => {
 	);
 };
 
-export const sniffKind = (bytes: Uint8Array): SniffedKind => {
+export const sniffKind = (
+	bytes: Uint8Array,
+	sizeBytes = bytes.byteLength
+): SniffedKind => {
 	if (bytes.length === 0) return 'unknown';
-	if (startsWith(bytes, [0x4d, 0x5a])) return 'pe';
+	if (isPe(bytes, sizeBytes)) return 'pe';
 	if (startsWith(bytes, [0x7f, 0x45, 0x4c, 0x46])) return 'elf';
 	if (
 		startsWith(bytes, [0xfe, 0xed, 0xfa, 0xce]) ||
@@ -169,9 +184,10 @@ export interface SniffResult {
 // harmless and the hash check covers known-bad payloads.
 export const sniffMismatch = (
 	bytes: Uint8Array,
-	declaredContentType: string
+	declaredContentType: string,
+	sizeBytes = bytes.byteLength
 ): SniffResult => {
-	const kind = sniffKind(bytes);
+	const kind = sniffKind(bytes, sizeBytes);
 	const declared = baseType(declaredContentType);
 	if (kind === 'unknown' || !ACTIVE_KINDS.has(kind)) {
 		return { kind, declared, verdict: 'clean' };

@@ -13,10 +13,11 @@ const storageError = (operation: string) =>
 	Effect.mapError((cause: unknown) => new StorageError({ operation, cause }));
 
 // The org's trust level, read fresh on every publish decision so an admin
-// suspension or bump lands on the next request.
+// suspension or bump lands on the next request. Within a publication
+// transaction the shared row lock keeps that decision stable until commit.
 export const orgTrust = (sql: PgClient.PgClient, orgId: string) =>
 	sql<{ trust: string }>`
-		SELECT trust FROM orgs WHERE id = ${orgId} LIMIT 1
+		SELECT trust FROM orgs WHERE id = ${orgId} LIMIT 1 FOR SHARE
 	`.pipe(
 		Effect.map((rows): TrustLevel => parseTrust(rows[0]?.trust ?? 'new')),
 		storageError('read org trust')
@@ -44,8 +45,8 @@ export const promoteVerified = (sql: PgClient.PgClient, orgId: string) =>
 		WHERE id = ${orgId} AND trust = 'new'
 	`.pipe(Effect.asVoid, storageError('promote org to verified'));
 
-// Maintenance sweep: verified orgs on a paid plan for 14 days become
-// established. Returns how many were promoted.
+// Maintenance sweep: verified orgs over 14 days old and currently on a
+// paid plan become established. Returns how many were promoted.
 export const promoteEstablished = (
 	sql: PgClient.PgClient,
 	now: Date,

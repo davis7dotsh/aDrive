@@ -100,8 +100,8 @@ describe('rate limits (local platform)', () => {
 		).toBe(429);
 		ctx.deniedRateLimits.delete('auth');
 
-		// Anonymous fetches are counted only past the edge cache; a small
-		// public file is served from R2 here, so the miss is refused.
+		// File requests are limited before their metadata lookup, including
+		// invalid ids that would otherwise still cost a database query.
 		const { orgSlug } = await currentIdentity(ctx);
 		const { GET: serveGET } = await import('../../../routes/f/[id]/+server.js');
 		ctx.deniedRateLimits.add('anonymous');
@@ -114,6 +114,16 @@ describe('rate limits (local platform)', () => {
 			})
 		);
 		expect(denied.status).toBe(429);
+		const missingId = crypto.randomUUID();
+		const deniedMissing = await call(
+			serveGET,
+			await ctx.contentEvent({
+				slug: orgSlug,
+				path: `/f/${missingId}`,
+				params: { id: missingId }
+			})
+		);
+		expect(deniedMissing.status).toBe(429);
 		ctx.deniedRateLimits.delete('anonymous');
 		const served = await call(
 			serveGET,
@@ -314,6 +324,7 @@ describe('scan pipeline (local platform)', () => {
 		});
 		expect(await verdicts(ctx, file.id)).toEqual([
 			{ source: 'hash', verdict: 'clean' },
+			{ source: 'inspection-limits', verdict: 'clean' },
 			{ source: 'sniff', verdict: 'clean' },
 			{ source: 'urlscan', verdict: 'clean' }
 		]);
@@ -370,6 +381,7 @@ describe('scan pipeline (local platform)', () => {
 		});
 		expect(await verdicts(ctx, file.id)).toEqual([
 			{ source: 'hash', verdict: 'clean' },
+			{ source: 'inspection-limits', verdict: 'clean' },
 			{ source: 'sniff', verdict: 'clean' },
 			{ source: 'urlscan', verdict: 'malicious' }
 		]);

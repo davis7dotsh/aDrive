@@ -476,15 +476,14 @@ const makeScanner = Effect.gen(function* () {
 		}
 
 		// What to look at: the file's object, or a site's assets.
+		const assets = row.is_site ? yield* siteAssets(row.id, job.version) : [];
 		const objects: ReadonlyArray<ScanObject> = row.is_site
-			? (yield* siteAssets(row.id, job.version))
-					.slice(0, SCAN_SITE_ASSET_LIMIT)
-					.map((asset) => ({
-						path: asset.path,
-						r2Key: asset.r2_key,
-						contentType: asset.content_type,
-						sizeBytes: asset.size_bytes
-					}))
+			? assets.slice(0, SCAN_SITE_ASSET_LIMIT).map((asset) => ({
+					path: asset.path,
+					r2Key: asset.r2_key,
+					contentType: asset.content_type,
+					sizeBytes: asset.size_bytes
+				}))
 			: [
 					{
 						path: row.display_name,
@@ -533,7 +532,8 @@ const makeScanner = Effect.gen(function* () {
 			if (entry.missing) return [];
 			const sniff = sniffMismatch(
 				entry.bytes.subarray(0, SNIFF_LENGTH),
-				entry.object.contentType
+				entry.object.contentType,
+				entry.object.sizeBytes
 			);
 			return sniff.verdict === 'clean'
 				? []
@@ -563,20 +563,52 @@ const makeScanner = Effect.gen(function* () {
 		}
 
 		// 3. Where published HTML sends people.
-		const ownHost = new URL(config.contentOriginFor(org.slug)).host;
+		const origin = config.contentOriginFor(org.slug);
+		const ownHost = new URL(origin).host;
+		const truncatedHtml = objects
+			.filter(
+				(object) =>
+					isHtml(object.contentType) && object.sizeBytes > SCAN_HTML_MAX_BYTES
+			)
+			.map((object) => object.path);
 		const links = new Set<string>();
 		for (const entry of inspected) {
 			const html = yield* htmlText(entry);
 			if (html === null) continue;
 			for (const link of extractLinks(html, {
-				limit: SCAN_LINK_LIMIT,
-				ignoreHost: ownHost
+				limit: SCAN_LINK_LIMIT + 1,
+				ignoreHost: ownHost,
+				documentUrl: row.is_site
+					? `${origin}/s/${row.id}/${entry.object.path.split('/').map(encodeURIComponent).join('/')}`
+					: `${origin}/f/${row.id}`
 			})) {
 				links.add(link);
-				if (links.size >= SCAN_LINK_LIMIT) break;
+				if (links.size > SCAN_LINK_LIMIT) break;
 			}
-			if (links.size >= SCAN_LINK_LIMIT) break;
+			if (links.size > SCAN_LINK_LIMIT) break;
 		}
+		const assetOverflow = assets.length > SCAN_SITE_ASSET_LIMIT;
+		const linkOverflow = links.size > SCAN_LINK_LIMIT;
+		// A bounded inspection cannot certify the uninspected remainder.
+		// Keep its floor separate so clean provider polls cannot clear it.
+		// record also fences rescans against a newer durable request marker.
+		yield* record(
+			row,
+			job.version,
+			'inspection-limits',
+			assetOverflow || truncatedHtml.length > 0 || linkOverflow
+				? 'suspicious'
+				: 'clean',
+			{
+				assetOverflow,
+				assetLimit: SCAN_SITE_ASSET_LIMIT,
+				truncatedHtml,
+				htmlByteLimit: SCAN_HTML_MAX_BYTES,
+				linkOverflow,
+				linkLimit: SCAN_LINK_LIMIT
+			}
+		);
+		const submittedLinks = [...links].slice(0, SCAN_LINK_LIMIT);
 		if (links.size === 0 || !reputation.enabled) {
 			yield* record(row, job.version, 'urlscan', 'clean', {
 				links: [...links],
@@ -587,7 +619,7 @@ const makeScanner = Effect.gen(function* () {
 				verdict: yield* finalize(row, job.version)
 			};
 		}
-		const ids = yield* Effect.forEach([...links], (link) =>
+		const ids = yield* Effect.forEach(submittedLinks, (link) =>
 			reputation.submit(link).pipe(
 				Effect.catchTag('StorageError', (failure) =>
 					log({
@@ -604,7 +636,7 @@ const makeScanner = Effect.gen(function* () {
 			// submissions can still reveal malicious links, while clean results
 			// cannot clear the links the provider never accepted.
 			yield* record(row, job.version, 'urlscan-submit', 'suspicious', {
-				links: [...links],
+				links: submittedLinks,
 				submitted: submitted.length,
 				failed: ids.length - submitted.length
 			});

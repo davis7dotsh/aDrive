@@ -247,7 +247,7 @@ export const sessionOps = (
 			});
 			// A verified org's site goes live once the scanner clears it; an
 			// established org's is live now and scanned after.
-			const hold = scanBeforePublish(yield* requirePublishAllowed(sql, org.id));
+			yield* requirePublishAllowed(sql, org.id);
 			const assets = yield* stagedAssets(session.id);
 			const totalSize = yield* Effect.try({
 				try: () => validateCommittedAssets(assets),
@@ -306,6 +306,9 @@ export const sessionOps = (
 								});
 							}
 						}
+						const hold = scanBeforePublish(
+							yield* requirePublishAllowed(sql, org.id)
+						);
 						const guarded = yield* guard;
 						if (guarded.length !== 1) {
 							return yield* new StorageError({
@@ -416,6 +419,7 @@ export const sessionOps = (
 								WHERE id = ${session.id} AND status = 'complete'
 							)`;
 						yield* reserveWithinPlan(sql, org.id, totalSize - previousBytes);
+						return hold;
 					})
 				)
 				.pipe(
@@ -425,7 +429,7 @@ export const sessionOps = (
 						)
 					)
 				);
-			yield* commit.pipe(
+			const hold = yield* commit.pipe(
 				Effect.catch((failure) =>
 					cleanupStaged(session, 'aborted').pipe(
 						Effect.catchCause((cleanupCause) =>

@@ -7,6 +7,11 @@ import { contentVersionAccess } from '../content-version-access';
 import { StorageError } from '../errors';
 import { PgSql } from '../pg';
 import { markScanPending, recoverScanJobs } from '../scan-jobs';
+import {
+	SCAN_HTML_MAX_BYTES,
+	SCAN_LINK_LIMIT,
+	SCAN_SITE_ASSET_LIMIT
+} from '../scan-policy';
 import { TEST_DATABASE_URL } from '../test/database';
 import { testPgLayer } from '../test/pg';
 import { scanBlobs } from '../test/scan';
@@ -175,6 +180,222 @@ const setup = async (
 		close
 	};
 };
+
+const seedSite = async (
+	fixture: Awaited<ReturnType<typeof setup>>,
+	count: number,
+	indexHtml: string
+) => {
+	await fixture.control.query('UPDATE files SET is_site = true WHERE id = $1', [
+		fixture.fileId
+	]);
+	for (let index = 0; index < count; index++) {
+		const path = index === 0 ? 'index.html' : `asset-${index}.txt`;
+		const key = `scan/${fixture.fileId}/${path}`;
+		const bytes = new TextEncoder().encode(
+			index === 0 ? indexHtml : 'safe text'
+		);
+		fixture.objects.set(key, bytes);
+		await fixture.control.query(
+			`INSERT INTO site_assets (file_id, version, path, r2_key, content_type, size_bytes)
+			VALUES ($1, 1, $2, $3, $4, $5)`,
+			[
+				fixture.fileId,
+				path,
+				key,
+				index === 0 ? 'text/html' : 'text/plain',
+				bytes.length
+			]
+		);
+	}
+};
+
+describe('scanner bounded inspection', () => {
+	const linkedHtml =
+		'<html><a href="//links.example.test/first">link</a></html>';
+	const manyLinks = (count: number) =>
+		`<html>${Array.from(
+			{ length: count },
+			(_, index) => `<a href="https://links.example.test/${index}">link</a>`
+		).join('')}</html>`;
+
+	it.each([
+		{ limit: 'assets', verdict: 'clean' },
+		{ limit: 'assets', verdict: 'malicious' },
+		{ limit: 'html', verdict: 'clean' },
+		{ limit: 'html', verdict: 'malicious' },
+		{ limit: 'links', verdict: 'clean' },
+		{ limit: 'links', verdict: 'malicious' }
+	] as const)(
+		'keeps the $limit inspection floor after $verdict URL results',
+		async ({ limit, verdict }) => {
+			const submissions: string[] = [];
+			const fixture = await setup({
+				contentType: 'text/html',
+				content:
+					limit === 'html'
+						? linkedHtml.padEnd(SCAN_HTML_MAX_BYTES + 1, ' ')
+						: limit === 'links'
+							? manyLinks(SCAN_LINK_LIMIT + 1)
+							: linkedHtml,
+				reputation: {
+					enabled: true,
+					submit: (url) =>
+						Effect.sync(() => {
+							submissions.push(url);
+							return url;
+						}),
+					result: (id) =>
+						Effect.succeed({ _tag: 'Settled', verdict, details: { id } })
+				}
+			});
+			try {
+				if (limit === 'assets')
+					await seedSite(fixture, SCAN_SITE_ASSET_LIMIT + 1, linkedHtml);
+				expect(await fixture.run()).toMatchObject({ _tag: 'Polling' });
+				expect(submissions).toHaveLength(
+					limit === 'links' ? SCAN_LINK_LIMIT : 1
+				);
+				const poll = fixture.sent[0];
+				if (!poll || poll.kind !== 'scan')
+					throw new Error('Expected scan continuation');
+				expect(await fixture.run(poll)).toEqual({
+					_tag: 'Settled',
+					verdict: verdict === 'clean' ? 'suspicious' : 'malicious'
+				});
+				expect(await fixture.state()).toMatchObject({
+					public: false,
+					publish_pending: verdict === 'clean',
+					quarantined: verdict === 'malicious',
+					scan_next_run_at: null
+				});
+				const floor = await fixture.control.query(
+					"SELECT verdict, details FROM scan_verdicts WHERE file_id = $1 AND source = 'inspection-limits'",
+					[fixture.fileId]
+				);
+				expect(floor.rows).toEqual([
+					{
+						verdict: 'suspicious',
+						details: {
+							assetOverflow: limit === 'assets',
+							assetLimit: SCAN_SITE_ASSET_LIMIT,
+							truncatedHtml: limit === 'html' ? ['scan.txt'] : [],
+							htmlByteLimit: SCAN_HTML_MAX_BYTES,
+							linkOverflow: limit === 'links',
+							linkLimit: SCAN_LINK_LIMIT
+						}
+					}
+				]);
+			} finally {
+				await fixture.close();
+			}
+		}
+	);
+
+	it.each(['assets', 'html', 'links'] as const)(
+		'publishes a complete inspection exactly at the %s cap',
+		async (limit) => {
+			const fixture = await setup({
+				contentType: 'text/html',
+				content:
+					limit === 'html'
+						? '<html>safe</html>'.padEnd(SCAN_HTML_MAX_BYTES, ' ')
+						: limit === 'links'
+							? manyLinks(SCAN_LINK_LIMIT)
+							: '<html>safe</html>',
+				reputation: {
+					enabled: true,
+					submit: (url) => Effect.succeed(url),
+					result: (id) =>
+						Effect.succeed({
+							_tag: 'Settled',
+							verdict: 'clean',
+							details: { id }
+						})
+				}
+			});
+			try {
+				if (limit === 'assets')
+					await seedSite(fixture, SCAN_SITE_ASSET_LIMIT, '<html>safe</html>');
+				const result = await fixture.run();
+				if (result._tag === 'Polling') {
+					const poll = fixture.sent[0];
+					if (!poll || poll.kind !== 'scan')
+						throw new Error('Expected scan continuation');
+					expect(await fixture.run(poll)).toEqual({
+						_tag: 'Settled',
+						verdict: 'clean'
+					});
+				} else {
+					expect(result).toEqual({ _tag: 'Settled', verdict: 'clean' });
+				}
+				expect(await fixture.state()).toMatchObject({
+					public: true,
+					publish_pending: false
+				});
+			} finally {
+				await fixture.close();
+			}
+		}
+	);
+
+	it('counts distinct outbound links across site documents and lets admin review clear the hold', async () => {
+		const submissions: string[] = [];
+		const fixture = await setup({
+			reputation: {
+				enabled: true,
+				submit: (url) =>
+					Effect.sync(() => {
+						submissions.push(url);
+						return url;
+					}),
+				result: (id) =>
+					Effect.succeed({ _tag: 'Settled', verdict: 'clean', details: { id } })
+			}
+		});
+		try {
+			await seedSite(fixture, 2, manyLinks(SCAN_LINK_LIMIT));
+			const key = `scan/${fixture.fileId}/asset-1.txt`;
+			const second = new TextEncoder().encode(
+				'<html><base href="https://links.example.test/"><a href="0">duplicate</a><a href="last">extra</a></html>'
+			);
+			fixture.objects.set(key, second);
+			await fixture.control.query(
+				"UPDATE site_assets SET content_type = 'text/html', size_bytes = $2 WHERE r2_key = $1",
+				[key, second.length]
+			);
+			await fixture.run();
+			expect(submissions).toHaveLength(SCAN_LINK_LIMIT);
+			const poll = fixture.sent[0];
+			if (!poll || poll.kind !== 'scan')
+				throw new Error('Expected scan continuation');
+			expect(await fixture.run(poll)).toEqual({
+				_tag: 'Settled',
+				verdict: 'suspicious'
+			});
+			await fixture.control.query(
+				`INSERT INTO scan_verdicts (file_id, org_id, version, source, verdict)
+				VALUES ($1, $2, 1, 'admin', 'clean')`,
+				[fixture.fileId, fixture.orgId]
+			);
+			fixture.sent.splice(0);
+			await fixture.run();
+			const retried = fixture.sent[0];
+			if (!retried || retried.kind !== 'scan')
+				throw new Error('Expected scan continuation');
+			expect(await fixture.run(retried)).toEqual({
+				_tag: 'Settled',
+				verdict: 'clean'
+			});
+			expect(await fixture.state()).toMatchObject({
+				public: true,
+				publish_pending: false
+			});
+		} finally {
+			await fixture.close();
+		}
+	});
+});
 
 describe('scanner publication and delivery recovery', () => {
 	it.each(['clean', 'malicious'] as const)(

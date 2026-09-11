@@ -1,6 +1,6 @@
 // Org trust levels (orgs.trust). An org starts `new` at sign-up, becomes
 // `verified` once a member signs in with a verified email, and
-// `established` after 14 days on a paid plan or an admin bump. `suspended`
+// `established` when over 14 days old and currently paid, or by admin bump. `suspended`
 // is the kill switch: the content host answers 404 and credentials stop
 // resolving.
 
