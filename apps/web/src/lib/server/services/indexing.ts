@@ -309,6 +309,27 @@ const makeIndexing = Effect.gen(function* () {
 		const now = new Date();
 		const cutoff = stuckBefore(now.getTime());
 		const includeDisabled = embedder.enabled && vectors.enabled;
+		// A worker can disappear during its final attempt, before recording
+		// success or failure. It cannot claim again at the attempt limit, so
+		// close the expired lease instead of leaving it running forever.
+		yield* sql`
+			UPDATE files
+			SET index_state = 'failed',
+				index_error = 'Indexing lease expired after the final attempt',
+				index_next_run_at = NULL, index_lease_token = NULL
+			WHERE id IN (
+				SELECT id FROM files
+				WHERE org_id = ${org.id}
+					AND deleted_at IS NULL
+					AND (expires_at IS NULL OR expires_at > ${now.toISOString()})
+					AND index_state = 'running'
+					AND index_attempts >= ${MAX_INDEX_ATTEMPTS}
+					AND index_next_run_at <= ${cutoff}
+				ORDER BY index_next_run_at, id
+				LIMIT ${bounded}
+				FOR UPDATE SKIP LOCKED
+			) AND org_id = ${org.id}
+		`.pipe(Effect.mapError(storage('close exhausted indexing leases')));
 		const rows = yield* sql<{ id: string; current_version: number }>`
 			UPDATE files
 			SET index_next_run_at = ${now.toISOString()}
