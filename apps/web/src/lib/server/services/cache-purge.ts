@@ -40,9 +40,11 @@ const purgeRequest = (
 					Authorization: `Bearer ${zone.apiToken}`,
 					'Content-Type': 'application/json'
 				},
-				body: JSON.stringify(body)
+				body: JSON.stringify(body),
+				signal: AbortSignal.timeout(5_000)
 			}
 		);
+		await response.body?.cancel();
 		if (!response.ok) {
 			throw new Error(`purge_cache returned ${response.status}`);
 		}

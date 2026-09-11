@@ -1,15 +1,19 @@
 import { Context, Effect, Layer } from 'effect';
 import { PgSql } from '../pg';
+import { recoverScanJobs } from '../scan-jobs';
 import { promoteEstablished } from '../trust';
 import { Auth } from './auth';
 import { Files } from './files';
 import { Indexing } from './indexing';
 import { Sites } from './sites';
+import { CurrentOrg } from './current-org';
+import { JobQueue } from './jobs';
 
 export interface LifecycleSummary {
 	readonly authentication: number;
 	readonly sites: number;
 	readonly indexing: number;
+	readonly scans: number;
 	readonly files: number;
 }
 
@@ -36,6 +40,7 @@ export interface LifecycleTasks {
 	readonly authentication: Effect.Effect<number, unknown>;
 	readonly sites: Effect.Effect<number, unknown>;
 	readonly indexing: Effect.Effect<number, unknown>;
+	readonly scans: Effect.Effect<number, unknown>;
 	readonly files: Effect.Effect<number, unknown>;
 }
 
@@ -68,8 +73,9 @@ export const runLifecycleTasks = (tasks: LifecycleTasks) =>
 		);
 		const sites = yield* recover('sites', tasks.sites, 0);
 		const indexing = yield* recover('indexing', tasks.indexing, 0);
+		const scans = yield* recover('scans', tasks.scans, 0);
 		const files = yield* recover('files', tasks.files, 0);
-		return { authentication, sites, indexing, files };
+		return { authentication, sites, indexing, scans, files };
 	});
 
 export const summarize = (
@@ -81,9 +87,10 @@ export const summarize = (
 			authentication: total.authentication,
 			sites: total.sites + summary.sites,
 			indexing: total.indexing + summary.indexing,
+			scans: total.scans + summary.scans,
 			files: total.files + summary.files
 		}),
-		{ authentication, sites: 0, indexing: 0, files: 0 }
+		{ authentication, sites: 0, indexing: 0, scans: 0, files: 0 }
 	);
 
 const makeLifecycle = Effect.gen(function* () {
@@ -92,6 +99,8 @@ const makeLifecycle = Effect.gen(function* () {
 	const files = yield* Files;
 	const indexing = yield* Indexing;
 	const sites = yield* Sites;
+	const jobs = yield* JobQueue;
+	const currentOrg = yield* CurrentOrg;
 
 	const global = recover('authentication', auth.sweepExpired(100), 0).pipe(
 		Effect.withSpan('Lifecycle.global')
@@ -106,6 +115,9 @@ const makeLifecycle = Effect.gen(function* () {
 		authentication: Effect.succeed(0),
 		sites: sites.sweepLifecycle(ORG_SWEEP_LIMIT),
 		indexing: indexing.runDue(ORG_SWEEP_LIMIT),
+		scans: Effect.suspend(() =>
+			recoverScanJobs(sql, jobs, currentOrg.id, ORG_SWEEP_LIMIT)
+		),
 		files: files.sweepPurges(ORG_SWEEP_LIMIT)
 	}).pipe(Effect.withSpan('Lifecycle.org'));
 

@@ -25,6 +25,8 @@ export type ContentHostResolution =
 // of requests for a random host does not fan out to Postgres. Suspending
 // an org or changing its slug purges the key (forgetContentSlug) to speed
 // propagation; the TTL bounds recovery when a purge cannot be delivered.
+// Cached identities are checked against current Postgres trust before use: KV
+// invalidation alone cannot revoke access consistently across locations.
 export const contentSlugCacheKey = (slug: string) => `org-slug:${slug}`;
 const CACHE_TTL_SECONDS = 300;
 const NEGATIVE_CACHE_TTL_SECONDS = 60;
@@ -69,7 +71,23 @@ export const resolveContentSlug = Effect.fn('resolveContentSlug')(function* (
 				new StorageError({ operation: 'read slug cache', cause })
 		})
 	);
-	if (cached) return resolution(slug, cached);
+	if (cached && !('orgId' in cached)) return resolution(slug, cached);
+	if (cached && 'orgId' in cached) {
+		const current = yield* sql<{ trust: string }>`
+			SELECT trust FROM orgs WHERE id = ${cached.orgId} AND slug = ${slug}
+		`.pipe(
+			Effect.mapError(
+				(cause) =>
+					new StorageError({
+						operation: 'check content org trust',
+						cause
+					})
+			)
+		);
+		if (current[0])
+			return resolution(slug, { orgId: cached.orgId, trust: current[0].trust });
+		// A stale mapping after rename/deletion falls through to live resolution.
+	}
 	// The live slug wins; otherwise a slug the org released within the
 	// redirect window points at its current one (a suspended org's old
 	// slug still redirects, to a host that then answers 404).

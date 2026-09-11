@@ -66,6 +66,9 @@ const live = WorkOSLive.pipe(
 				cookiePassword,
 				webhookSecret: 'workos-adapter-webhook'
 			},
+			urlScanner: null,
+			cloudflareZone: null,
+			adminUserIds: new Set<string>(),
 			semanticSearch: 'off',
 			embeddingModel: '@cf/baai/bge-small-en-v1.5',
 			embeddingPooling: 'cls',

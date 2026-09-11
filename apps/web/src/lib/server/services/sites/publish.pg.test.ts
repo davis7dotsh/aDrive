@@ -20,6 +20,10 @@ describe('site publication competing with purge', () => {
 			await runWorkerProgram(ctx.env, Effect.flatMap(PgSql, ensureTestOrg));
 			const control = new Client({ connectionString: TEST_DATABASE_URL });
 			await control.connect();
+			await control.query(
+				"UPDATE orgs SET trust = 'established' WHERE id = $1",
+				[TEST_ORG_ID]
+			);
 			const fileId = crypto.randomUUID();
 			const sessionId = crypto.randomUUID();
 			const oldKey = `site/${fileId}/old.html`;

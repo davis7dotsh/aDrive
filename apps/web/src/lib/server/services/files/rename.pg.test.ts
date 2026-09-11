@@ -1,19 +1,13 @@
 import { Effect } from 'effect';
 import { Client } from 'pg';
 import { describe, expect, it, vi } from 'vitest';
-import { AppConfig } from '../../config';
 import { runWorkerProgram } from '../../edge';
 import { PgSql } from '../../pg';
 import { ensureTenant } from '../../tenants';
 import { TEST_DATABASE_URL } from '../../test/database';
 import { testTenant } from '../../test/org';
 import { createRouteContext } from '../../test/route-context';
-import { Blobs } from '../blobs';
-import { CurrentOrg } from '../current-org';
-import { JobQueue } from '../jobs';
-import { Tags } from '../tags';
-import { createInternals } from './internals';
-import { mutationOps } from './mutations';
+import { Files } from '../files';
 
 describe('rename indexing delivery after a concurrent write', () => {
 	it.each(['version', 'deletion'] as const)(
@@ -32,40 +26,12 @@ describe('rename indexing delivery after a concurrent write', () => {
 			);
 			const control = new Client({ connectionString: TEST_DATABASE_URL });
 			await control.connect();
-			const resume = Promise.withResolvers<void>();
-			let snapshotVersion: number | undefined;
 			const rename = () =>
 				runWorkerProgram(
 					ctx.env,
-					Effect.gen(function* () {
-						const sql = yield* PgSql;
-						const config = yield* AppConfig;
-						const blobs = yield* Blobs;
-						const tags = yield* Tags;
-						const org = yield* CurrentOrg;
-						const jobs = yield* JobQueue;
-						const internals = createInternals({
-							sql,
-							config,
-							blobs,
-							tags,
-							org,
-							jobs
-						});
-						const files = mutationOps({
-							...internals,
-							findDashboardFile: (id) =>
-								internals.findDashboardFile(id).pipe(
-									Effect.tap((file) =>
-										Effect.promise(() => {
-											snapshotVersion = file.version;
-											return resume.promise;
-										})
-									)
-								)
-						});
-						return yield* Effect.result(files.rename(fileId, 'renamed.txt'));
-					}),
+					Effect.flatMap(Files, (files) =>
+						Effect.result(files.rename(fileId, 'renamed.txt'))
+					),
 					{ orgId: tenant.orgId, userId: tenant.userId }
 				);
 			let renaming: ReturnType<typeof rename> | undefined;
@@ -82,34 +48,43 @@ describe('rename indexing delivery after a concurrent write', () => {
 					 VALUES ($1, $2, 1, $3, 1, 'text/plain', now(), 'old text')`,
 					[fileId, tenant.orgId, `rename-test/${fileId}/1`]
 				);
-				renaming = rename();
-				await vi.waitFor(() => expect(snapshotVersion).toBe(1), {
-					timeout: 5_000,
-					interval: 10
-				});
+				await control.query('BEGIN');
 				if (change === 'version') {
-					// A version upload and its consumer finish while rename retains
-					// the old dashboard snapshot. Its own delivery is already spent.
-					await control.query('BEGIN');
+					// The concurrent publisher owns the file row while promoting an
+					// already-indexed version. Rename must reread after that commit.
+					await control.query(
+						`UPDATE files SET current_version = 2, index_state = 'ready', indexed_version = 2
+						 WHERE id = $1`,
+						[fileId]
+					);
 					await control.query(
 						`INSERT INTO file_versions
 							(file_id, org_id, version, r2_key, size_bytes, content_type, created_at, text_content)
 						 VALUES ($1, $2, 2, $3, 1, 'text/plain', now(), 'new text')`,
 						[fileId, tenant.orgId, `rename-test/${fileId}/2`]
 					);
-					await control.query(
-						`UPDATE files SET current_version = 2, index_state = 'ready', indexed_version = 2
-						 WHERE id = $1`,
-						[fileId]
-					);
-					await control.query('COMMIT');
 				} else {
 					await control.query('DELETE FROM files WHERE id = $1', [fileId]);
 				}
-				resume.resolve();
+				renaming = rename();
+				await vi.waitFor(
+					async () => {
+						await control.query('SELECT pg_stat_clear_snapshot()');
+						const waiting = await control.query<{ count: number }>(
+							`SELECT count(*)::int AS count FROM pg_stat_activity
+							 WHERE pg_backend_pid() = ANY(pg_blocking_pids(pid))`
+						);
+						expect(waiting.rows[0]?.count).toBeGreaterThan(0);
+					},
+					{ timeout: 5_000, interval: 10 }
+				);
+				await control.query('COMMIT');
 				const result = await renaming;
 				if (change === 'version') {
-					expect(result._tag).toBe('Success');
+					expect(result).toMatchObject({
+						_tag: 'Success',
+						success: { file: { version: 2, displayName: 'renamed.txt' } }
+					});
 					expect(ctx.jobs.map((job) => job.body)).toEqual([
 						{ kind: 'index', orgId: tenant.orgId, fileId, version: 2 }
 					]);
@@ -136,7 +111,6 @@ describe('rename indexing delivery after a concurrent write', () => {
 				}
 			} finally {
 				await control.query('ROLLBACK');
-				resume.resolve();
 				await renaming?.catch(() => {});
 				try {
 					await control.query('DELETE FROM files WHERE org_id = $1', [

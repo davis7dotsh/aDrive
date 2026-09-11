@@ -6,9 +6,10 @@ import {
 	visibilityForFile
 } from '../../file-policy';
 import { refreshSearchDocument } from '../../search-index';
+import { markScanPending } from '../../scan-jobs';
 import { tenantOrgId } from '../current-org';
 import type { FileInternals } from './internals';
-import type { FilesShape } from './types';
+import type { FilesShape, MutationResult } from './types';
 
 const EPOCH = '1970-01-01T00:00:00.000Z';
 
@@ -36,47 +37,59 @@ export const mutationOps = (
 	} = internals;
 	return {
 		setVisibility: Effect.fn('Files.setVisibility')(function* (id, isPublic) {
-			const current = yield* findDashboardFile(id);
-			if (current.kind === 'site' && !isPublic) {
-				return yield* new InvalidRequest({
-					status: 400,
-					message: 'Sites are always public'
-				});
-			}
-			const visibility = visibilityForFile(
-				current.displayName,
-				current.htmlForcedPublic ? 'text/html' : current.contentType,
-				isPublic
-			);
-			const publishing = visibility.public && !current.public;
-			if (publishing) yield* refuseQuarantined(current);
-			// A verified org's publish waits for the scanner: the row stays
-			// private with publish_pending set and the scan job flips it.
-			// Going private cancels any hold.
-			const hold = yield* ensurePublishAllowed(publishing);
-			const isPublicNow = visibility.public && !hold;
-			const updatedAt = new Date().toISOString();
-			yield* sql`
-				UPDATE files
-				SET public = ${isPublicNow}, publish_pending = ${hold},
-					updated_at = ${updatedAt}
-				WHERE id = ${id} AND org_id = ${org.id}
-			`.pipe(
-				Effect.mapError(
-					(cause) =>
-						new StorageError({ operation: 'update file visibility', cause })
+			const changed = yield* sql
+				.withTransaction(
+					Effect.gen(function* () {
+						// Serialize with version publication and scanner decisions before
+						// deriving visibility from the current row.
+						const current = yield* findDashboardFile(id, true);
+						if (current.kind === 'site' && !isPublic) {
+							return yield* new InvalidRequest({
+								status: 400,
+								message: 'Sites are always public'
+							});
+						}
+						const visibility = visibilityForFile(
+							current.displayName,
+							current.htmlForcedPublic ? 'text/html' : current.contentType,
+							isPublic
+						);
+						const publishing = visibility.public && !current.public;
+						if (publishing) yield* refuseQuarantined(current);
+						const hold = yield* ensurePublishAllowed(publishing);
+						const isPublicNow = visibility.public && !hold;
+						const updatedAt = new Date().toISOString();
+						yield* sql`
+						UPDATE files
+						SET public = ${isPublicNow}, publish_pending = ${hold},
+							updated_at = ${updatedAt}
+						WHERE id = ${id} AND org_id = ${org.id}`;
+						if (visibility.public) {
+							yield* markScanPending(sql, org.id, id, current.version);
+						}
+						return {
+							scan: visibility.public,
+							result: {
+								file: {
+									...current,
+									public: isPublicNow,
+									publishPending: hold,
+									updatedAt
+								},
+								forcedPublic: visibility.forcedPublic
+							} satisfies MutationResult
+						};
+					})
 				)
-			);
-			if (visibility.public) yield* sendScanJob(id, current.version);
-			return {
-				file: {
-					...current,
-					public: isPublicNow,
-					publishPending: hold,
-					updatedAt
-				},
-				forcedPublic: visibility.forcedPublic
-			};
+				.pipe(
+					Effect.catchTag('SqlError', (cause) =>
+						Effect.fail(
+							new StorageError({ operation: 'update file visibility', cause })
+						)
+					)
+				);
+			if (changed.scan) yield* sendScanJob(id, changed.result.file.version);
+			return changed.result;
 		}),
 		trash: Effect.fn('Files.trash')(function* (id) {
 			const current = yield* findDashboardFile(id);
@@ -152,7 +165,6 @@ export const mutationOps = (
 			};
 		}),
 		rename: Effect.fn('Files.rename')(function* (id, value) {
-			const current = yield* findDashboardFile(id);
 			const displayName = yield* Effect.try({
 				try: () => cleanFileName(value),
 				catch: (cause) =>
@@ -163,56 +175,59 @@ export const mutationOps = (
 								message: 'File name is invalid'
 							})
 			});
-			const visibility = visibilityForFile(
-				displayName,
-				current.contentType,
-				current.public
-			);
-			const publishing = visibility.public && !current.public;
-			if (publishing) yield* refuseQuarantined(current);
-			const hold = yield* ensurePublishAllowed(publishing);
-			const isPublicNow = visibility.public && !hold;
-			const stillHeld = hold || (current.publishPending && !publishing);
-			const updatedAt = new Date().toISOString();
-			const rows = yield* sql
+			const changed = yield* sql
 				.withTransaction(
-					sql<{ current_version: number }>`
+					Effect.gen(function* () {
+						const current = yield* findDashboardFile(id, true);
+						const visibility = visibilityForFile(
+							displayName,
+							current.contentType,
+							current.public || current.publishPending
+						);
+						const publishing = visibility.public && !current.public;
+						if (publishing) yield* refuseQuarantined(current);
+						const hold = yield* ensurePublishAllowed(publishing);
+						const isPublicNow = visibility.public && !hold;
+						const updatedAt = new Date().toISOString();
+						yield* sql`
 						UPDATE files
 						SET display_name = ${displayName}, public = ${isPublicNow},
-							publish_pending = ${stillHeld},
+							publish_pending = ${hold},
 							updated_at = ${updatedAt}, index_state = 'pending',
 							index_cursor = 0, index_attempts = 0, index_error = NULL,
 							index_next_run_at = NULL, index_lease_token = NULL
-						WHERE id = ${id} AND org_id = ${org.id}
-						RETURNING current_version
-					`.pipe(Effect.tap(() => refreshSearchDocument(sql, id, org.id)))
+						WHERE id = ${id} AND org_id = ${org.id}`;
+						yield* refreshSearchDocument(sql, id, org.id);
+						if (publishing)
+							yield* markScanPending(sql, org.id, id, current.version);
+						return {
+							scan: publishing,
+							result: {
+								file: {
+									...current,
+									displayName,
+									public: isPublicNow,
+									publishPending: hold,
+									htmlForcedPublic:
+										current.htmlForcedPublic || /\.html?$/i.test(displayName),
+									updatedAt,
+									indexState: 'pending',
+									indexAttempts: 0,
+									indexError: null
+								},
+								forcedPublic: visibility.forcedPublic
+							} satisfies MutationResult
+						};
+					})
 				)
 				.pipe(
-					Effect.mapError(
-						(cause) => new StorageError({ operation: 'rename file', cause })
+					Effect.catchTag('SqlError', (cause) =>
+						Effect.fail(new StorageError({ operation: 'rename file', cause }))
 					)
 				);
-			const renamed = rows[0];
-			if (!renamed) return yield* new NotFound({ id });
-			// A version upload may have committed after the initial dashboard
-			// read. Index the version whose state this rename actually reset.
-			yield* sendIndexJob(id, renamed.current_version);
-			if (publishing) yield* sendScanJob(id, renamed.current_version);
-			return {
-				file: {
-					...current,
-					displayName,
-					public: isPublicNow,
-					publishPending: stillHeld,
-					htmlForcedPublic:
-						current.htmlForcedPublic || /\.html?$/i.test(displayName),
-					updatedAt,
-					indexState: 'pending',
-					indexAttempts: 0,
-					indexError: null
-				},
-				forcedPublic: visibility.forcedPublic
-			};
+			yield* sendIndexJob(id, changed.result.file.version);
+			if (changed.scan) yield* sendScanJob(id, changed.result.file.version);
+			return changed.result;
 		}),
 		schedulePurgeNow: Effect.fn('Files.schedulePurgeNow')(function* (id) {
 			const current = yield* findDashboardFile(id);

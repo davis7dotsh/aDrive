@@ -3,6 +3,7 @@
 	import { formatBytes, formatDate } from '$lib/dashboard/format';
 	import { getToasts } from '$lib/dashboard/toast.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
+	import type { Resolution } from '$lib/server/report-policy';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -10,7 +11,7 @@
 	let busy = $state('');
 
 	const act = async (key: string, path: string, body: unknown) => {
-		if (busy) return;
+		if (busy) return false;
 		busy = key;
 		try {
 			const response = await fetch(path, {
@@ -30,29 +31,44 @@
 						: `Request failed (${response.status})`;
 				throw new Error(message);
 			}
-			await invalidateAll();
+			try {
+				await invalidateAll();
+			} catch {
+				toasts.info('Action saved. Reload to refresh the admin overview.');
+			}
+			return true;
 		} catch (cause) {
 			toasts.error(cause, 'Action failed');
+			return false;
 		} finally {
 			busy = '';
 		}
 	};
 
-	const resolveReport = (id: string, resolution: string) =>
+	const resolutions = [
+		'dismissed',
+		'quarantined',
+		'suspended',
+		'removed'
+	] as const satisfies ReadonlyArray<Resolution>;
+	const resolveReport = (id: string, resolution: Resolution) =>
 		act(`report:${id}`, `/api/admin/reports/${id}`, { resolution });
 	const orgAction = (id: string, body: Record<string, string>) =>
 		act(`org:${id}`, `/api/admin/orgs/${id}`, body);
-	const markFile = (id: string, verdict: 'clean' | 'malicious') =>
-		act(`file:${id}`, `/api/admin/files/${id}`, { verdict });
+	const markFile = (
+		id: string,
+		version: number,
+		verdict: 'clean' | 'malicious'
+	) => act(`file:${id}`, `/api/admin/files/${id}`, { verdict, version });
 
 	let hash = $state('');
 	let hashReason = $state('');
 	const blockHash = async () => {
-		await act('hash', '/api/admin/hashes', {
+		const saved = await act('hash', '/api/admin/hashes', {
 			sha256: hash.trim(),
 			reason: hashReason.trim()
 		});
-		if (!busy) {
+		if (saved) {
 			hash = '';
 			hashReason = '';
 		}
@@ -104,7 +120,7 @@
 								{#if report.file}
 									{report.file.name}
 									<div class="text-xs text-zinc-500">
-										{report.file.quarantined
+										v{report.file.version} · {report.file.quarantined
 											? 'quarantined'
 											: report.file.publishPending
 												? 'held'
@@ -127,9 +143,17 @@
 								<div class="flex flex-wrap gap-1">
 									<Button
 										variant="ghost"
-										disabled={busy !== ''}
-										onclick={() => markFile(report.fileId, 'malicious')}
-										>Quarantine</Button
+										disabled={busy !== '' ||
+											!report.file ||
+											report.file.quarantined}
+										onclick={() => {
+											if (report.file)
+												void markFile(
+													report.fileId,
+													report.file.version,
+													'malicious'
+												);
+										}}>Quarantine</Button
 									>
 									<Button
 										variant="ghost"
@@ -138,18 +162,40 @@
 											orgAction(report.orgId, { action: 'suspend' })}
 										>Suspend org</Button
 									>
-									<Button
-										variant="ghost"
-										disabled={busy !== ''}
-										onclick={() => resolveReport(report.id, 'dismissed')}
-										>Dismiss</Button
+									<form
+										class="flex items-center gap-1"
+										onsubmit={(event) => {
+											event.preventDefault();
+											const value = new FormData(event.currentTarget).get(
+												'resolution'
+											);
+											const resolution = resolutions.find(
+												(item) => item === value
+											);
+											if (resolution) void resolveReport(report.id, resolution);
+										}}
 									>
-									<Button
-										variant="ghost"
-										disabled={busy !== ''}
-										onclick={() => resolveReport(report.id, 'quarantined')}
-										>Resolve</Button
-									>
+										<select
+											name="resolution"
+											required
+											aria-label="Report resolution"
+											disabled={busy !== ''}
+											class="max-w-44 rounded-md border border-zinc-300 px-2 py-2 text-xs"
+										>
+											<option value="">Record outcome…</option>
+											<option value="dismissed">Dismissed</option>
+											<option value="quarantined">File quarantined</option>
+											<option value="suspended">Org suspended</option>
+											<option value="removed">Content removed</option>
+										</select>
+										<Button
+											type="submit"
+											variant="ghost"
+											disabled={busy !== ''}
+										>
+											Close report
+										</Button>
+									</form>
 								</div>
 							</td>
 						</tr>
@@ -200,10 +246,18 @@
 							</td>
 							<td class="{cell} text-xs">
 								{#each file.verdicts as verdict (verdict.source)}
-									<div>
-										<span class="text-zinc-500">{verdict.source}</span>
-										{verdict.verdict}
-									</div>
+									<details class="w-56 max-w-full">
+										<summary class="cursor-pointer py-0.5">
+											<span class="text-zinc-500">{verdict.source}</span>
+											{verdict.verdict}
+										</summary>
+										<pre
+											class="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-zinc-50 p-2 text-zinc-600">{JSON.stringify(
+												verdict.details,
+												null,
+												2
+											)}</pre>
+									</details>
 								{/each}
 							</td>
 							<td class="{cell} whitespace-nowrap">
@@ -211,12 +265,13 @@
 									<Button
 										variant="ghost"
 										disabled={busy !== ''}
-										onclick={() => markFile(file.id, 'clean')}>Clean</Button
+										onclick={() => markFile(file.id, file.version, 'clean')}
+										>Clean</Button
 									>
 									<Button
 										variant="danger"
 										disabled={busy !== '' || file.quarantined}
-										onclick={() => markFile(file.id, 'malicious')}
+										onclick={() => markFile(file.id, file.version, 'malicious')}
 										>Malicious</Button
 									>
 								</div>
@@ -356,6 +411,7 @@
 				<span class="font-medium text-zinc-700">SHA-256</span>
 				<input
 					bind:value={hash}
+					disabled={busy !== ''}
 					spellcheck="false"
 					autocapitalize="off"
 					class="mt-2 w-full rounded-md border border-zinc-300 px-3 py-2 font-mono text-sm"
@@ -365,6 +421,7 @@
 				<span class="font-medium text-zinc-700">Reason</span>
 				<input
 					bind:value={hashReason}
+					disabled={busy !== ''}
 					class="mt-2 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
 				/>
 			</label>

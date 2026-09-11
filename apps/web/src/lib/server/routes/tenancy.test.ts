@@ -47,6 +47,7 @@ describe('tenancy (local platform)', () => {
 			tags: ['shared-name']
 		});
 		await indexFile(ctx, fileA.id);
+		await ctx.drainJobs();
 		const listedA = await listFiles(ctx);
 		expect(listedA.files.map((file) => file.id)).toContain(fileA.id);
 		const tagA = listedA.tags.find((tag) => tag.name === 'shared-name');
@@ -190,6 +191,7 @@ describe('tenancy (local platform)', () => {
 			name: 'hosted.txt',
 			content: 'hosted'
 		});
+		await ctx.drainJobs();
 		const { resolveContentHost } = await import('$lib/server/content-host');
 
 		// An unknown slug is refused by the hook before any route runs, and
@@ -467,6 +469,7 @@ describe('org slugs (local platform)', () => {
 			name: 'moving.txt',
 			content: 'moved'
 		});
+		await ctx.drainJobs();
 		const { resolveContentHost } = await import('$lib/server/content-host');
 		// Warm the cache for the old slug so the change has to purge it.
 		expect((await resolveContentHost(ctx.env, before.orgSlug))._tag).toBe(

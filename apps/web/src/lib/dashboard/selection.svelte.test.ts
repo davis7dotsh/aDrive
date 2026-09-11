@@ -13,6 +13,8 @@ const file = (id: string): DashboardFile => ({
 	version: 1,
 	sizeBytes: 6,
 	public: true,
+	quarantined: false,
+	publishPending: false,
 	htmlForcedPublic: false,
 	createdAt: '2026-07-30T12:00:00.000Z',
 	updatedAt: '2026-07-30T12:00:00.000Z',

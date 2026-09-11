@@ -91,6 +91,8 @@ export const toDashboardFile = (
 	version: row.current_version,
 	sizeBytes: row.size_bytes,
 	public: row.is_public,
+	quarantined: row.quarantined,
+	publishPending: row.publish_pending,
 	htmlForcedPublic: row.has_html,
 	createdAt: row.created_at,
 	updatedAt: row.updated_at,

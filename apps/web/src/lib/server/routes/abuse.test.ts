@@ -46,6 +46,7 @@ describe('rate limits (local platform)', () => {
 		const ctx = await setup();
 		await loginAs(ctx, { userId: 'user_rate_limited' });
 		const file = await uploadFile(ctx, { name: 'limited.txt' });
+		await ctx.drainJobs();
 
 		ctx.deniedRateLimits.add('upload');
 		const { PUT } = await import('../../../routes/api/files/+server.js');
@@ -570,11 +571,67 @@ describe('reports and the kill switch (local platform)', () => {
 		ctx.deniedRateLimits.delete('anonymous');
 	});
 
+	it('bounds streamed report forms in UTF-8 bytes', async () => {
+		const ctx = await setup();
+		await loginAs(ctx, { userId: 'user_large_report' });
+		const { orgSlug, orgId } = await currentIdentity(ctx);
+		const file = await uploadFile(ctx, {
+			name: 'report-size.txt',
+			isPublic: false
+		});
+		const { POST } = await import('../../../routes/report/+server.js');
+		let canceled = false;
+		const stream = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(
+					new TextEncoder().encode(`fileId=${file.id}&reason=spam&details=`)
+				);
+				controller.enqueue(new TextEncoder().encode('😀'.repeat(2200)));
+			},
+			cancel() {
+				canceled = true;
+			}
+		});
+		const event = await ctx.contentEvent({
+			slug: orgSlug,
+			method: 'POST',
+			path: '/report',
+			headers: { 'content-type': 'application/x-www-form-urlencoded' }
+		});
+		const requestInit = {
+			method: 'POST',
+			headers: event.request.headers,
+			body: stream,
+			duplex: 'half'
+		};
+		event.request = new Request(event.url, requestInit);
+		await expect(call(POST, event)).rejects.toMatchObject({ status: 413 });
+		expect(canceled).toBe(true);
+		const rows = await queryPg(
+			ctx.env,
+			(sql) => sql`
+			SELECT id FROM reports WHERE org_id = ${orgId}
+		`
+		);
+		expect(rows).toHaveLength(0);
+	});
+
+	it('counts stored files from actual rows instead of the unused usage counter', async () => {
+		const ctx = await setup();
+		await loginAs(ctx, { userId: 'user_admin_count' });
+		const { orgId } = await currentIdentity(ctx);
+		await uploadFile(ctx, { name: 'count-one.txt', isPublic: false });
+		await uploadFile(ctx, { name: 'count-two.txt', isPublic: false });
+		const overview = await runAdmin(ctx, (admin) => admin.overview);
+		expect(overview.orgs.find((org) => org.id === orgId)?.fileCount).toBe(2);
+	});
+
 	it('suspends an org: 404 on its host, 401 for its credentials, and back again', async () => {
 		const ctx = await setup();
 		await loginAs(ctx, { userId: 'user_killed' });
 		const { orgSlug, orgId } = await currentIdentity(ctx);
 		const file = await uploadFile(ctx, { name: 'live.txt', content: 'live' });
+		await ctx.drainJobs();
 		const { POST: keysPOST } =
 			await import('../../../routes/api/auth/keys/+server.js');
 		const created = await call(
@@ -603,7 +660,15 @@ describe('reports and the kill switch (local platform)', () => {
 
 		const suspended = await runAdmin(ctx, (admin) => admin.suspendOrg(orgId));
 		expect(suspended.trust).toBe('suspended');
-		// The slug cache was dropped, so the host is gone at once.
+		// Simulate a different location still serving the pre-suspension KV
+		// value. Postgres trust must win even when cache invalidation lags.
+		await ctx.env.AUTH_GUARD.put(
+			`org-slug:${orgSlug}`,
+			JSON.stringify({
+				orgId,
+				trust: 'verified'
+			})
+		);
 		await expect(
 			ctx.contentEvent({ slug: orgSlug, path: `/f/${file.id}` })
 		).rejects.toMatchObject({ status: 404 });
@@ -622,6 +687,13 @@ describe('reports and the kill switch (local platform)', () => {
 
 		const restored = await runAdmin(ctx, (admin) => admin.restoreOrg(orgId));
 		expect(restored.trust).toBe('verified');
+		await ctx.env.AUTH_GUARD.put(
+			`org-slug:${orgSlug}`,
+			JSON.stringify({
+				orgId,
+				trust: 'suspended'
+			})
+		);
 		expect((await asKey()).status).toBe(200);
 		const { GET: serveGET } = await import('../../../routes/f/[id]/+server.js');
 		const served = await call(
@@ -767,7 +839,7 @@ describe('admin surface (local platform)', () => {
 					{
 						id: file.id
 					},
-					{ verdict: 'malicious' }
+					{ verdict: 'malicious', version: 1 }
 				)
 			).status
 		).toBe(200);
@@ -825,7 +897,7 @@ describe('admin surface (local platform)', () => {
 			{
 				id: file.id
 			},
-			{ verdict: 'clean' }
+			{ verdict: 'clean', version: 1 }
 		);
 		expect(
 			(
@@ -873,7 +945,7 @@ describe('admin surface (local platform)', () => {
 			'PATCH',
 			`/api/admin/files/${flagged.id}`,
 			{ id: flagged.id },
-			{ verdict: 'clean' }
+			{ verdict: 'clean', version: 1 }
 		);
 		const afterClear = (await (
 			await adminCall(ctx, 'GET', '/api/admin/overview')

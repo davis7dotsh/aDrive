@@ -39,7 +39,7 @@
 				<th class="pb-2 font-medium">Tags</th>
 				<th class="pb-2 font-medium">Size</th>
 				<th class="pb-2 font-medium">Modified</th>
-				<th class="pb-2 font-medium">Access</th>
+				<th class="w-36 pb-2 font-medium">Access</th>
 				<th class="pb-2"><span class="sr-only">Actions</span></th>
 			</tr>
 		</thead>
@@ -72,8 +72,14 @@
 					<td class="py-3 pr-4 text-zinc-500">
 						{formatDate(file.updatedAt)}
 					</td>
-					<td class="py-3 pr-4 text-zinc-500">
-						{file.public ? 'Public' : 'Private'}
+					<td class="w-36 whitespace-nowrap py-3 pr-4 text-zinc-500">
+						{file.quarantined
+							? 'Quarantined'
+							: file.publishPending
+								? 'Pending review'
+								: file.public
+									? 'Public'
+									: 'Private'}
 					</td>
 					<td class="py-3 text-right">
 						<FileMenu

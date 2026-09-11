@@ -117,6 +117,7 @@ describe('route integration (local platform)', () => {
 			content: 'integration body',
 			isPublic: true
 		});
+		await ctx.drainJobs();
 
 		const listed = await listFiles(ctx);
 		expect(listed.files.map((entry) => entry.id)).toContain(file.id);
@@ -454,6 +455,7 @@ describe('route integration (local platform)', () => {
 			contentType: 'text/html',
 			isPublic: false
 		});
+		await ctx.drainJobs();
 		expect(
 			await queryPg(
 				ctx.env,

@@ -42,12 +42,12 @@ the content domain moves. Tenant content is only ever served from
 
 `orgs.trust` (`apps/web/src/lib/server/trust-policy.ts`):
 
-| Level         | Reached by                                                   | May publish     | Scan             |
-| ------------- | ------------------------------------------------------------ | --------------- | ---------------- |
-| `new`         | Sign-up                                                      | No (403)        | n/a              |
-| `verified`    | A sign-in with a verified email                              | Yes             | Before it's live |
-| `established` | 14 days on a paid plan (maintenance sweep), or an admin bump | Yes             | After it's live  |
-| `suspended`   | The kill switch                                              | No; host is 404 | n/a              |
+| Level         | Reached by                                                                    | May publish     | Scan             |
+| ------------- | ----------------------------------------------------------------------------- | --------------- | ---------------- |
+| `new`         | Sign-up                                                                       | No (403)        | n/a              |
+| `verified`    | A sign-in with a verified email                                               | Yes             | Before it's live |
+| `established` | Org over 14 days old and currently paid (maintenance sweep), or an admin bump | Yes             | After it's live  |
+| `suspended`   | The kill switch                                                               | No; host is 404 | n/a              |
 
 "Publish" is anything that makes content public: an upload that lands
 public (including HTML, which is always public), a visibility change, a
@@ -85,18 +85,23 @@ The worst verdict decides:
 
 - `clean`: a held row is published (`public = true`,
   `publish_pending = false`), the edge cache for its URLs is purged, and
-  the org gets a `published` notification.
-- `suspicious`: a held row stays held and the org gets a `held`
-  notification; a scan-after file stays as it was. Either way the file
+  a `published` record is written to `notifications`.
+- `suspicious`: a held row stays held and a `held` notification record is
+  written; a scan-after file stays as it was. Either way the file
   appears under "Held and quarantined files" on `/admin` for a person to
   mark clean or malicious.
 - `malicious`: `public = false`, `quarantined = true`, the edge is purged,
-  and the org gets a `quarantined` notification. Every content route
-  answers 404 for a quarantined file, the owner cannot republish it, and
+  and a `quarantined` notification record is written. Every content route
+  reaching the Worker answers 404 for a quarantined file, the owner cannot republish it, and
   it stays visible in their dashboard so they can delete it.
 
-Nothing is dropped silently: a verdict row exists for every check that
-ran, and every hold or quarantine has a notification row.
+Verdicts and notification rows are durable database records. Owners see
+"Pending review" or "Quarantined" in their dashboard after refreshing;
+there is no notification inbox, email delivery, or automatic status polling
+in this layer. Quarantined files retain their metadata and deletion controls,
+while preview, sharing, rename, and new-version actions are unavailable.
+Notify owners through the operator's support process when direct outreach
+is needed.
 
 Secrets: `URLSCAN_API_KEY` (an API token with the URL Scanner scope) and
 `CF_ACCOUNT_ID` (the account that owns it). Locally, `URLSCAN_API_KEY=fake:malicious`
@@ -117,9 +122,10 @@ Suspending an org (`/admin` → Suspend, or `PATCH /api/admin/orgs/<id>`
 with `{ "action": "suspend" }`) does, in one request:
 
 1. `orgs.trust = 'suspended'`.
-2. Drops the org's slug from the KV host cache, so `<slug>.<CONTENT_DOMAIN>`
-   answers 404 on every path from the next request (the cache otherwise
-   holds for up to five minutes).
+2. Attempts to drop the org's slug from the KV host cache. Host requests
+   reaching the Worker check current trust in Postgres, even when the slug
+   mapping is cached, and return 404 for a suspended org. A failed KV delete
+   is logged and does not undo suspension.
 3. Refuses every API key and browser session for the org with 401 on
    their next request. Nothing is revoked; restoring the org brings them
    back.
@@ -130,8 +136,12 @@ with `{ "action": "suspend" }`) does, in one request:
    Cache → Hostname) or wait for the entries to expire (up to a year for
    pinned file versions, minutes for sites).
 
+Bytes already cached by a browser cannot be revoked. CDN responses that
+bypass the Worker remain available until the purge succeeds or they expire;
+suspension is not instant global revocation.
+
 Restore (`{ "action": "restore" }`) sets the org back to `verified` and
-drops the cache entry again. Suspending is reversible and touches no
+attempts to drop the cache entry again. Suspending is reversible and touches no
 files, so it is the right first move when in doubt.
 
 ## Rate limits
@@ -153,14 +163,16 @@ errors lets the request through and logs.
   files with their verdicts, dead-lettered jobs, recent orgs with trust,
   plan, and usage, and a form to add a hash to `blocked_hashes`.
 - A report about live content: open the file on its host, decide. Mark
-  the file malicious (quarantine, notify the owner) and resolve the
-  report as `quarantined`; or dismiss. Suspend the org when the account
-  is the problem rather than one file.
+  the file malicious to quarantine it, then close the report with the
+  `quarantined` outcome; or choose `dismissed`. Suspend the org when the
+  account is the problem and choose `suspended`. Closing a report records
+  the selected outcome; it does not perform the quarantine or suspension.
 - A held file (`suspicious`): read the verdict details on `/admin`. Mark
   clean to publish it, malicious to quarantine it.
 - A takedown notice: quarantine the file, resolve any report as `removed`,
-  keep the notice with the file id and the `scan_verdicts` row. The
-  owner's notification tells them it was taken offline after review.
+  keep the notice with the file id and the `scan_verdicts` row. The owner
+  sees "Quarantined" after refreshing the dashboard; contact them separately
+  with the reason and dispute instructions.
 - A quarantined file the owner disputes: mark clean. The file goes back
   to private and the owner decides again; the `admin` verdict row records
   who cleared it.

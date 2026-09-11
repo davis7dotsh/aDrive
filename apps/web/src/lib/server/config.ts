@@ -12,7 +12,8 @@ export interface WorkOSConfig {
 }
 
 // Cloudflare URL Scanner (services/url-reputation.ts). Null when
-// URLSCAN_API_KEY is unset; a `fake:<verdict>` key selects the fake.
+// URLSCAN_API_KEY is unset; a `fake:<verdict>` key selects the fake only
+// in development. Production rejects fake keys.
 export interface UrlScannerConfig {
 	readonly apiKey: string;
 	readonly accountId: string;
@@ -97,8 +98,11 @@ const workosFromEnv = (env: Env): WorkOSConfig => {
 };
 
 const urlScannerFromEnv = (env: Env): UrlScannerConfig | null => {
-	const apiKey = optionalString(env.URLSCAN_API_KEY);
+	const apiKey = optionalString(env.URLSCAN_API_KEY).trim();
 	if (apiKey === '') return null;
+	if (apiKey.startsWith('fake:') && !dev) {
+		throw new Error('Fake URL scanning is only available in development');
+	}
 	const accountId = optionalString(env.CF_ACCOUNT_ID);
 	if (!accountId && !apiKey.startsWith('fake:')) {
 		throw new Error('CF_ACCOUNT_ID is required alongside URLSCAN_API_KEY');

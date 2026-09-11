@@ -3,6 +3,7 @@ import { Effect } from 'effect';
 import { InvalidRequest, NotFound, StorageError } from '../../errors';
 import { delaySecondsUntil } from '../../job-policy';
 import { refreshSearchDocument } from '../../search-index';
+import { markScanPending } from '../../scan-jobs';
 import { ensureStorageHeadroom, reserveWithinPlan } from '../../storage-quota';
 import { requirePublishAllowed } from '../../trust';
 import { scanBeforePublish } from '../../trust-policy';
@@ -391,6 +392,12 @@ export const sessionOps = (
 							WHERE s.id = ${session.id} AND s.status = 'committing'
 								AND a.r2_key IS NOT NULL AND a.stored_size_bytes IS NOT NULL`;
 						yield* refreshSearchDocument(sql, session.fileId, org.id);
+						yield* markScanPending(
+							sql,
+							org.id,
+							session.fileId,
+							session.version
+						);
 						yield* sql`
 							UPDATE site_upload_sessions SET status = 'complete'
 							WHERE id = ${session.id} AND status = 'committing'

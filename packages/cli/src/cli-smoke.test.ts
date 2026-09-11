@@ -31,6 +31,8 @@ const file = {
 	version: 1,
 	sizeBytes: downloaded.length,
 	public: true,
+	quarantined: false,
+	publishPending: false,
 	createdAt: '2026-07-27T00:00:00.000Z',
 	expiresAt: null,
 	downloadCount: 0,

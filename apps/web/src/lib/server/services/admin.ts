@@ -7,12 +7,14 @@ import { type Resolution } from '../report-policy';
 import { isScanVerdict, type ScanVerdict } from '../scan-policy';
 import { type TrustLevel } from '../trust-policy';
 import { AuthGuardStore } from './bindings';
+import { CurrentOrg, anonymousOrg } from './current-org';
 import { CloudflareCachePurge, deleteFromWorkerCache } from './cache-purge';
 
 // Operator actions. Nothing here is scoped to the current org: the admin
 // acts across tenants from the dashboard origin (/admin, request-auth.ts
 // requireAdmin), so every statement names its org explicitly and none of
-// them run inside an org-pinned transaction.
+// them run inside an org-pinned transaction. markFile explicitly removes
+// the operator org context from its cross-tenant transaction.
 
 const OrgRow = Schema.Struct({
 	id: Schema.String,
@@ -38,6 +40,7 @@ const ReportRow = Schema.Struct({
 	resolved_at: Schema.NullOr(Schema.String),
 	resolution: Schema.NullOr(Schema.String),
 	file_name: Schema.NullOr(Schema.String),
+	file_version: Schema.NullOr(Schema.Int),
 	file_public: Schema.NullOr(Schema.Boolean),
 	file_quarantined: Schema.NullOr(Schema.Boolean),
 	file_publish_pending: Schema.NullOr(Schema.Boolean)
@@ -104,6 +107,7 @@ export interface AdminReport {
 	readonly resolution: string | null;
 	readonly file: {
 		readonly name: string;
+		readonly version: number;
 		readonly public: boolean;
 		readonly quarantined: boolean;
 		readonly publishPending: boolean;
@@ -180,9 +184,10 @@ export interface AdminShape {
 	// quarantines. Recorded as an `admin` verdict row naming the operator.
 	readonly markFile: (
 		fileId: string,
+		version: number,
 		verdict: Exclude<ScanVerdict, 'suspicious'>,
 		by: string
-	) => Effect.Effect<void, NotFound | StorageError>;
+	) => Effect.Effect<void, InvalidRequest | NotFound | StorageError>;
 	readonly blockHash: (
 		sha256: string,
 		reason: string,
@@ -220,6 +225,7 @@ const toReport = (row: typeof ReportRow.Type): AdminReport => ({
 			? null
 			: {
 					name: row.file_name,
+					version: row.file_version ?? row.version ?? 1,
 					public: row.file_public ?? false,
 					quarantined: row.file_quarantined ?? false,
 					publishPending: row.file_publish_pending ?? false
@@ -229,7 +235,7 @@ const toReport = (row: typeof ReportRow.Type): AdminReport => ({
 const orgSelect = `
 	SELECT o.id, o.slug, o.name, o.trust, o.plan, o.created_at,
 		COALESCE(u.stored_bytes, 0) AS stored_bytes,
-		COALESCE(u.file_count, 0) AS file_count
+		(SELECT count(*)::int FROM files f WHERE f.org_id = o.id) AS file_count
 	FROM orgs o
 	LEFT JOIN org_usage u ON u.org_id = o.id
 `;
@@ -261,10 +267,13 @@ const makeAdmin = Effect.gen(function* () {
 		`.pipe(storageError('set org trust'));
 		const row = rows[0];
 		if (!row) return yield* new NotFound({ id: orgId });
-		// The host gate caches the slug with its trust; drop it so the change
-		// is live on the next request rather than in five minutes.
+		// KV invalidation speeds propagation, but it is eventually consistent.
+		// The host gate also checks live trust before serving cached mappings.
 		yield* forgetContentSlug(row.slug).pipe(
-			Effect.provideService(AuthGuardStore, store)
+			Effect.provideService(AuthGuardStore, store),
+			Effect.catchTag('StorageError', (failure) =>
+				Effect.logError('org trust saved; slug cache purge failed', failure)
+			)
 		);
 		return row.slug;
 	});
@@ -280,7 +289,8 @@ const makeAdmin = Effect.gen(function* () {
 		}>`
 			SELECT f.org_id, o.slug, f.current_version, f.display_name
 			FROM files f JOIN orgs o ON o.id = f.org_id
-			WHERE f.id = ${fileId} LIMIT 1
+			WHERE f.id = ${fileId} AND f.deleted_at IS NULL
+			FOR UPDATE OF f
 		`.pipe(storageError('find file for admin action'));
 		const row = rows[0];
 		if (!row) return yield* new NotFound({ id: fileId });
@@ -328,7 +338,7 @@ const makeAdmin = Effect.gen(function* () {
 					SELECT r.id, r.org_id, o.slug AS org_slug, r.file_id, r.version,
 						r.reason, r.details, r.reporter_ip_hash, r.created_at,
 						r.resolved_at, r.resolution,
-						f.display_name AS file_name, f.public AS file_public,
+						f.display_name AS file_name, f.current_version AS file_version, f.public AS file_public,
 						f.quarantined AS file_quarantined,
 						f.publish_pending AS file_publish_pending
 					FROM reports r
@@ -461,48 +471,73 @@ const makeAdmin = Effect.gen(function* () {
 			yield* setOrgTrust(orgId, trust);
 			return yield* loadOrg(orgId);
 		}),
-		markFile: Effect.fn('Admin.markFile')(function* (fileId, verdict, by) {
-			const file = yield* fileOrgAndVersion(fileId);
-			yield* sql`
-				INSERT INTO scan_verdicts (file_id, org_id, version, verdict, source, details)
-				VALUES (
-					${fileId}, ${file.org_id}, ${file.current_version}, ${verdict},
-					'admin', ${JSON.stringify({ by })}::jsonb
-				)
-				ON CONFLICT (file_id, version, source) DO UPDATE
-				SET verdict = EXCLUDED.verdict, details = EXCLUDED.details,
-					created_at = now()
-			`.pipe(storageError('record admin verdict'));
-			if (verdict === 'malicious') {
-				yield* sql`
-					UPDATE files
-					SET public = false, quarantined = true, publish_pending = false
-					WHERE id = ${fileId}
-				`.pipe(storageError('quarantine file'));
-				yield* notify(
-					file.org_id,
-					fileId,
-					'quarantined',
-					`${file.display_name} was taken offline after review`
-				);
-			} else {
-				// A held publish goes live; a quarantine is lifted back to
-				// private so the owner decides again.
-				yield* sql`
-					UPDATE files
-					SET public = (public OR publish_pending) AND NOT quarantined,
-						quarantined = false, publish_pending = false
-					WHERE id = ${fileId}
-				`.pipe(storageError('clear file'));
-				yield* notify(
-					file.org_id,
-					fileId,
-					'cleared',
-					`${file.display_name} was reviewed and cleared`
-				);
+		markFile: Effect.fn('Admin.markFile')(
+			function* (fileId, version, verdict, by) {
+				const file = yield* sql
+					.withTransaction(
+						Effect.gen(function* () {
+							const file = yield* fileOrgAndVersion(fileId);
+							if (file.current_version !== version) {
+								return yield* new InvalidRequest({
+									status: 409,
+									message:
+										'The file changed. Refresh the overview before reviewing it.'
+								});
+							}
+							yield* sql`
+					INSERT INTO scan_verdicts (file_id, org_id, version, verdict, source, details)
+					VALUES (
+						${fileId}, ${file.org_id}, ${file.current_version}, ${verdict},
+						'admin', ${JSON.stringify({ by })}::jsonb
+					)
+					ON CONFLICT (file_id, version, source) DO UPDATE
+					SET verdict = EXCLUDED.verdict, details = EXCLUDED.details,
+						created_at = now()
+				`.pipe(storageError('record admin verdict'));
+							if (verdict === 'malicious') {
+								yield* sql`
+						UPDATE files
+						SET public = false, quarantined = true, publish_pending = false
+						WHERE id = ${fileId}
+					`.pipe(storageError('quarantine file'));
+								yield* notify(
+									file.org_id,
+									fileId,
+									'quarantined',
+									`${file.display_name} was taken offline after review`
+								);
+							} else {
+								// A held publish goes live; a quarantine is lifted back to
+								// private so the owner decides again.
+								yield* sql`
+						UPDATE files
+						SET public = (public OR publish_pending) AND NOT quarantined,
+							quarantined = false, publish_pending = false
+						WHERE id = ${fileId}
+					`.pipe(storageError('clear file'));
+								yield* notify(
+									file.org_id,
+									fileId,
+									'cleared',
+									`${file.display_name} was reviewed and cleared`
+								);
+							}
+							return file;
+						})
+					)
+					.pipe(
+						// Authorized cross-tenant moderation must not inherit the
+						// operator's organization pin. The override is operation-local.
+						Effect.provideService(CurrentOrg, anonymousOrg),
+						Effect.catchTag(
+							'SqlError',
+							(cause) => new StorageError({ operation: 'review file', cause })
+						)
+					);
+
+				yield* purgeFile(file.slug, fileId, file.current_version);
 			}
-			yield* purgeFile(file.slug, fileId, file.current_version);
-		}),
+		),
 		blockHash: Effect.fn('Admin.blockHash')(
 			function* (sha256, reason, addedBy) {
 				const normalized = sha256.trim().toLowerCase();
