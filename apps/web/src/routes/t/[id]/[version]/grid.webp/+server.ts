@@ -37,7 +37,7 @@ const parsedVersion = (value: string) => {
 
 const thumbnailResponse = (
 	body: BodyInit | null,
-	size: number,
+	size: number | undefined,
 	etag: string,
 	cacheControl: string,
 	contentType = 'image/webp'
@@ -45,7 +45,7 @@ const thumbnailResponse = (
 	new Response(body, {
 		headers: {
 			'Cache-Control': cacheControl,
-			'Content-Length': String(size),
+			...(size === undefined ? {} : { 'Content-Length': String(size) }),
 			'Content-Security-Policy': contentSecurityPolicy(contentType),
 			'Content-Type': contentType,
 			ETag: etag,
@@ -225,8 +225,7 @@ export const GET: RequestHandler = ({
 					| { readonly kind: 'transformed'; readonly bytes: ArrayBuffer }
 					| {
 							readonly kind: 'unresized';
-							readonly bytes: ArrayBuffer;
-							readonly contentType: string;
+							readonly response: Response;
 					  }
 				> => {
 					const response = rendered
@@ -259,10 +258,7 @@ export const GET: RequestHandler = ({
 						if (dev && !rendered) {
 							return {
 								kind: 'unresized',
-								bytes: await response.arrayBuffer(),
-								contentType:
-									response.headers.get('content-type') ??
-									'application/octet-stream'
+								response
 							};
 						}
 						throw new Error('Image transform did not return transformed WebP');
@@ -277,12 +273,26 @@ export const GET: RequestHandler = ({
 					new StorageError({ operation: 'generate dashboard thumbnail', cause })
 			});
 			if (generated.kind === 'unresized') {
+				const { response } = generated;
+				const length = response.headers.get('content-length');
+				const size =
+					length !== null && /^\d+$/.test(length) ? Number(length) : undefined;
+				// Preserve the original stream: a grid can request several large
+				// uploads concurrently. Encoded or unknown-length bodies must not
+				// inherit a length that differs from the decoded stream.
+				const contentLength =
+					!response.headers.has('content-encoding') &&
+					size !== undefined &&
+					Number.isSafeInteger(size) &&
+					size >= 0
+						? size
+						: undefined;
 				return thumbnailResponse(
-					generated.bytes,
-					generated.bytes.byteLength,
+					response.body,
+					contentLength,
 					`"dev-${params.id}-${content.file.version}"`,
 					'private, no-store',
-					generated.contentType
+					response.headers.get('content-type') ?? content.file.contentType
 				);
 			}
 			const bytes = generated.bytes;

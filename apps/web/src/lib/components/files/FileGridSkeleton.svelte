@@ -40,7 +40,7 @@
 						</div>
 					</div>
 					<div class="my-3.5 h-px bg-zinc-200"></div>
-					<div class="flex justify-between">
+					<div class="flex h-5 items-center justify-between">
 						<div class="h-3 w-16 rounded bg-zinc-200/60"></div>
 						<div class="h-3 w-12 rounded bg-zinc-200/60"></div>
 					</div>

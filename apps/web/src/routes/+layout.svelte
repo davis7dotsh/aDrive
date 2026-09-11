@@ -72,7 +72,7 @@
 <div class="min-h-screen bg-white" data-theme={variant ?? undefined}>
 	<header class="border-b border-zinc-200 bg-white">
 		<div
-			class="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6"
+			class="mx-auto flex min-h-16 max-w-7xl flex-wrap items-center justify-between gap-y-2 px-4 py-3 sm:h-16 sm:flex-nowrap sm:px-6 sm:py-0"
 		>
 			<div class="flex items-center gap-5">
 				<a
@@ -105,25 +105,33 @@
 				{/if}
 			</div>
 			{#if data.session}
-				<nav class="flex items-center gap-1" aria-label="Account">
-					<span class="truncate px-3 py-2 text-sm text-zinc-500">
+				<nav
+					class="flex w-full min-w-0 items-center justify-end gap-1 sm:w-auto"
+					aria-label="Account"
+				>
+					<span class="min-w-0 flex-1 truncate px-3 py-2 text-sm text-zinc-500">
 						{data.session.org.name}
 					</span>
 					{#if data.session.user.admin}
 						<a
 							href="/admin"
-							class="rounded-md px-3 py-2 text-sm text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900"
+							class="shrink-0 rounded-md px-3 py-2 text-sm text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900"
 						>
 							Admin
 						</a>
 					{/if}
 					<a
 						href="/settings"
-						class="rounded-md px-3 py-2 text-sm text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900"
+						class="shrink-0 rounded-md px-3 py-2 text-sm text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900"
 					>
 						Settings
 					</a>
-					<form method="post" action="/auth/sign-out" data-sveltekit-reload>
+					<form
+						class="shrink-0"
+						method="post"
+						action="/auth/sign-out"
+						data-sveltekit-reload
+					>
 						<button
 							type="submit"
 							class="rounded-md px-3 py-2 text-sm text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900"

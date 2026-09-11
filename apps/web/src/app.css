@@ -666,6 +666,11 @@
 [data-theme='e'] .stack-select:checked {
 	opacity: 1;
 }
+@media (hover: none) {
+	[data-theme='e'] .stack-select {
+		opacity: 1;
+	}
+}
 [data-theme='e'] .hex-badge {
 	clip-path: polygon(25% 3%, 75% 3%, 100% 50%, 75% 97%, 25% 97%, 0 50%);
 	background: var(--color-zinc-900);
