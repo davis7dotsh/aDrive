@@ -222,21 +222,35 @@ export const mutationOps = (
 		// A generator body reads the org when the effect runs, not when the
 		// layer is built (content routes build the layer with no tenant).
 		scheduleAllPurgesNow: Effect.gen(function* () {
-			const rows = yield* sql<{ id: string }>`
-				UPDATE files
-				SET purge_at = ${EPOCH}, purge_state = 'none', purge_error = NULL,
-					purge_next_run_at = NULL
-				WHERE org_id = ${org.id} AND deleted_at IS NOT NULL
-					AND purge_state <> 'pending'
-				RETURNING id
+			const rows = yield* sql<{ count: number; ids: string[] }>`
+				WITH scheduled AS (
+					UPDATE files
+					SET purge_at = ${EPOCH}, purge_state = 'none', purge_error = NULL,
+						purge_next_run_at = NULL
+					WHERE org_id = ${org.id} AND deleted_at IS NOT NULL
+						AND purge_state <> 'pending'
+					RETURNING id
+				)
+				SELECT count(*)::int AS count,
+					ARRAY(SELECT id FROM scheduled LIMIT 20) AS ids
+				FROM scheduled
 			`.pipe(
 				Effect.mapError(
 					(cause) =>
 						new StorageError({ operation: 'schedule empty trash', cause })
 				)
 			);
-			for (const row of rows) yield* sendPurgeJob(row.id, EPOCH);
-			return rows.length;
+			// All work is durable in Postgres. Kick a small batch now; the
+			// bounded reconciliation sweep picks up the rest or a slow send.
+			yield* Effect.forEach(
+				rows[0]?.ids ?? [],
+				(id) => sendPurgeJob(id, EPOCH),
+				{
+					concurrency: 5,
+					discard: true
+				}
+			).pipe(Effect.timeoutOption('5 seconds'));
+			return rows[0]?.count ?? 0;
 		}).pipe(Effect.withSpan('Files.scheduleAllPurgesNow')),
 		recordDownload: Effect.fn('Files.recordDownload')(function* (id) {
 			const now = new Date().toISOString();
