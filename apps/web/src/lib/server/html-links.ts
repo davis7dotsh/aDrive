@@ -1,3 +1,5 @@
+import { decodeHTMLAttribute } from 'entities';
+
 // The outbound targets inside a published HTML document: `<a href>`,
 // `<script src>`, and `<form action>`. Only absolute http(s) URLs to other
 // hosts are returned; relative links point back at the same site, which
@@ -21,19 +23,13 @@ const attributeValue = (tagBody: string, attribute: string) => {
 	return match ? (match[1] ?? match[2] ?? match[3] ?? '') : null;
 };
 
-const decodeEntities = (value: string) =>
-	value
-		.replaceAll('&amp;', '&')
-		.replaceAll('&quot;', '"')
-		.replaceAll('&#39;', "'")
-		.replaceAll('&lt;', '<')
-		.replaceAll('&gt;', '>');
-
 const absoluteHttpUrl = (raw: string) => {
-	const value = decodeEntities(raw).trim();
-	if (!/^https?:\/\//i.test(value)) return null;
 	try {
-		const url = new URL(value);
+		// Decode exactly once with HTML attribute rules, including numeric
+		// references without semicolons. URL parsing applies the browser's
+		// ASCII tab/newline normalization before we check the scheme.
+		const url = new URL(decodeHTMLAttribute(raw));
+		if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
 		url.hash = '';
 		return url.href;
 	} catch {

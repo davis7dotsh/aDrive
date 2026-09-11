@@ -1,11 +1,12 @@
 import type { Job } from '@adrive/shared';
-import { Context, Effect, Layer, Schema } from 'effect';
+import { Context, Data, Effect, Layer, Schema } from 'effect';
 import { AppConfig } from '../config';
 import { StorageError } from '../errors';
 import { extractLinks } from '../html-links';
 import { SNIFF_LENGTH, sniffMismatch } from '../mime-sniff';
 import { inspectScanObject, isHtml, type ScanObject } from '../scan-inspection';
 import { PgSql } from '../pg';
+import { markScanPending } from '../scan-jobs';
 import {
 	SCAN_HTML_MAX_BYTES,
 	SCAN_LINK_LIMIT,
@@ -53,6 +54,8 @@ export interface ScannerShape {
 export class Scanner extends Context.Service<Scanner, ScannerShape>()(
 	'app/Scanner'
 ) {}
+
+class StaleScan extends Data.TaggedError('StaleScan')<{}> {}
 
 const VersionRow = Schema.Struct({
 	id: Schema.String,
@@ -102,6 +105,21 @@ const makeScanner = Effect.gen(function* () {
 		version: number,
 		lock = false
 	) {
+		if (lock) {
+			// Match publication/admin lock order, then lock the version marker
+			// against recovery (which only locks versions). Separate statements
+			// give the read below a fresh snapshot after either lock waited.
+			yield* sql`
+				SELECT id FROM files
+				WHERE id = ${fileId} AND org_id = ${org.id}
+				FOR UPDATE
+			`.pipe(storageError('lock file for scan'));
+			yield* sql`
+				SELECT version FROM file_versions
+				WHERE file_id = ${fileId} AND org_id = ${org.id} AND version = ${version}
+				FOR UPDATE
+			`.pipe(storageError('lock scan request'));
+		}
 		const rows = yield* sql`
 			SELECT f.id, f.display_name, f.is_site, f.public, f.publish_pending,
 				f.quarantined, f.current_version, v.r2_key, v.size_bytes,
@@ -113,10 +131,37 @@ const makeScanner = Effect.gen(function* () {
 				AND (f.expires_at IS NULL OR f.expires_at > now())
 				AND (NOT f.is_site OR f.current_version = ${version})
 			LIMIT 1
-			${lock ? sql`FOR UPDATE OF f` : sql``}
 		`.pipe(storageError('find version to scan'));
-		return decodeRows(VersionRow, rows)[0] ?? null;
+		return decodeRows(VersionRow, rows).at(0) ?? null;
 	});
+
+	const holdScanRequest = Effect.fn('Scanner.holdRequest')(function* (
+		row: typeof VersionRow.Type,
+		version: number
+	) {
+		const live = yield* findVersion(row.id, version, true);
+		if (!live || live.scan_next_run_at !== row.scan_next_run_at) {
+			return yield* new StaleScan();
+		}
+		return live;
+	});
+
+	const withScanRequest = <A, E, R>(
+		row: typeof VersionRow.Type,
+		version: number,
+		operation: Effect.Effect<A, E, R>
+	) =>
+		sql
+			.withTransaction(
+				holdScanRequest(row, version).pipe(Effect.andThen(operation))
+			)
+			.pipe(
+				Effect.catchTag(
+					'SqlError',
+					(cause) =>
+						new StorageError({ operation: 'persist scan progress', cause })
+				)
+			);
 
 	const siteAssets = Effect.fn('Scanner.siteAssets')(function* (
 		fileId: string,
@@ -133,22 +178,26 @@ const makeScanner = Effect.gen(function* () {
 	});
 
 	const record = Effect.fn('Scanner.record')(function* (
-		fileId: string,
+		row: typeof VersionRow.Type,
 		version: number,
 		source: string,
 		verdict: ScanVerdict,
 		details: Record<string, unknown>
 	) {
-		yield* sql`
+		yield* withScanRequest(
+			row,
+			version,
+			sql`
 			INSERT INTO scan_verdicts (file_id, org_id, version, verdict, source, details)
 			VALUES (
-				${fileId}, ${org.id}, ${version}, ${verdict}, ${source},
+				${row.id}, ${org.id}, ${version}, ${verdict}, ${source},
 				${JSON.stringify(details)}::jsonb
 			)
 			ON CONFLICT (file_id, version, source) DO UPDATE
 			SET verdict = EXCLUDED.verdict, details = EXCLUDED.details,
 				created_at = now()
-		`.pipe(storageError('record scan verdict'));
+		`.pipe(storageError('record scan verdict'))
+		);
 		return verdict;
 	});
 
@@ -228,7 +277,7 @@ const makeScanner = Effect.gen(function* () {
 		const result = yield* sql
 			.withTransaction(
 				Effect.gen(function* () {
-					const live = yield* findVersion(row.id, version, true);
+					const live = yield* holdScanRequest(row, version);
 					const rows = yield* sql<{ source: string; verdict: string }>`
 				SELECT source, verdict FROM scan_verdicts
 				WHERE file_id = ${row.id} AND org_id = ${org.id} AND version = ${version}
@@ -240,11 +289,6 @@ const makeScanner = Effect.gen(function* () {
 							: worstVerdict(
 									rows.map((entry) => entry.verdict).filter(isScanVerdict)
 								);
-					// A newer request (or a reconciliation resend) owns a different
-					// marker. This scan must not clear it or apply stale URL results.
-					if (!live || live.scan_next_run_at !== row.scan_next_run_at) {
-						return { verdict, changed: false };
-					}
 					const current = version === live.current_version;
 					const outcome = scanOutcome(verdict, live.publish_pending && current);
 					let changed = false;
@@ -307,7 +351,13 @@ const makeScanner = Effect.gen(function* () {
 					return { verdict, changed };
 				})
 			)
-			.pipe(storageError('finalize content scan'));
+			.pipe(
+				Effect.catchTag(
+					'SqlError',
+					(cause) =>
+						new StorageError({ operation: 'finalize content scan', cause })
+				)
+			);
 		if (result.changed) yield* purgeEdge(row.id, version);
 		yield* log({
 			message: 'scan finished',
@@ -345,7 +395,7 @@ const makeScanner = Effect.gen(function* () {
 			settled.map((result) => result.verdict)
 		);
 		if (settledVerdict === 'malicious') {
-			yield* record(row.id, job.version, 'urlscan', 'malicious', {
+			yield* record(row, job.version, 'urlscan', 'malicious', {
 				links: settled.map((result) => result.details),
 				pending: results.length - settled.length
 			});
@@ -360,13 +410,13 @@ const makeScanner = Effect.gen(function* () {
 				);
 				return { _tag: 'Polling' as const, ids: urlScan.ids };
 			}
-			yield* record(row.id, job.version, 'urlscan', 'suspicious', {
+			yield* record(row, job.version, 'urlscan', 'suspicious', {
 				timedOut: true,
 				ids: urlScan.ids,
 				attempts: urlScan.attempt
 			});
 		} else {
-			yield* record(row.id, job.version, 'urlscan', settledVerdict, {
+			yield* record(row, job.version, 'urlscan', settledVerdict, {
 				links: settled.map((result) => result.details)
 			});
 		}
@@ -376,8 +426,36 @@ const makeScanner = Effect.gen(function* () {
 		};
 	});
 
-	const runOne = Effect.fn('Scanner.runOne')(function* (job: ScanJob) {
-		const row = yield* findVersion(job.fileId, job.version);
+	const run = Effect.fn('Scanner.runOne')(function* (job: ScanJob) {
+		let row = yield* findVersion(job.fileId, job.version);
+		if (
+			row !== null &&
+			row.scan_next_run_at === null &&
+			job.urlScan === undefined
+		) {
+			// An explicit rescan (including a retained private version) needs
+			// its own marker. NULL cannot identify ownership: another scan may
+			// start and finish while this one waits on the provider.
+			row = yield* sql
+				.withTransaction(
+					Effect.gen(function* () {
+						const current = yield* findVersion(job.fileId, job.version, true);
+						if (current === null) return null;
+						if (current.scan_next_run_at === null) {
+							yield* markScanPending(sql, org.id, job.fileId, job.version);
+							return yield* findVersion(job.fileId, job.version);
+						}
+						return current;
+					})
+				)
+				.pipe(
+					Effect.catchTag(
+						'SqlError',
+						(cause) =>
+							new StorageError({ operation: 'start content scan', cause })
+					)
+				);
+		}
 		if (row === null) {
 			yield* log({
 				message: 'scan skipped: version is gone',
@@ -386,11 +464,14 @@ const makeScanner = Effect.gen(function* () {
 			});
 			return { _tag: 'Skipped' as const, reason: 'missing' };
 		}
-		if (
-			job.urlScan !== undefined &&
-			(job.urlScan.requestedAt === undefined ||
-				job.urlScan.requestedAt === row.scan_next_run_at)
-		) {
+		if (job.urlScan !== undefined) {
+			if (
+				row.scan_next_run_at === null ||
+				(job.urlScan.requestedAt !== undefined &&
+					job.urlScan.requestedAt !== row.scan_next_run_at)
+			) {
+				return { _tag: 'Skipped' as const, reason: 'stale' };
+			}
 			return yield* pollUrlScans(job, row, job.urlScan);
 		}
 
@@ -423,16 +504,20 @@ const makeScanner = Effect.gen(function* () {
 		if (!row.is_site) {
 			const sha256 = inspected[0]?.sha256 ?? null;
 			if (sha256 !== null) {
-				yield* sql`
+				yield* withScanRequest(
+					row,
+					job.version,
+					sql`
 					UPDATE file_versions SET sha256 = ${sha256}
 					WHERE file_id = ${row.id} AND version = ${job.version}
 						AND org_id = ${org.id} AND sha256 IS NULL
-				`.pipe(storageError('store version hash'));
+				`.pipe(storageError('store version hash'))
+				);
 			}
 		}
 		const blocked = yield* blockedHashes(hashes);
 		yield* record(
-			row.id,
+			row,
 			job.version,
 			'hash',
 			blocked.length > 0 ? 'malicious' : 'clean',
@@ -462,7 +547,7 @@ const makeScanner = Effect.gen(function* () {
 		});
 		const missing = inspected.filter((entry) => entry.missing).length;
 		yield* record(
-			row.id,
+			row,
 			job.version,
 			'sniff',
 			mismatches.length > 0 || missing > 0 || objects.length === 0
@@ -493,7 +578,7 @@ const makeScanner = Effect.gen(function* () {
 			if (links.size >= SCAN_LINK_LIMIT) break;
 		}
 		if (links.size === 0 || !reputation.enabled) {
-			yield* record(row.id, job.version, 'urlscan', 'clean', {
+			yield* record(row, job.version, 'urlscan', 'clean', {
 				links: [...links],
 				skipped: links.size === 0 ? 'no-links' : 'not-configured'
 			});
@@ -518,7 +603,7 @@ const makeScanner = Effect.gen(function* () {
 			// Keep submission failures separate from poll results: successful
 			// submissions can still reveal malicious links, while clean results
 			// cannot clear the links the provider never accepted.
-			yield* record(row.id, job.version, 'urlscan-submit', 'suspicious', {
+			yield* record(row, job.version, 'urlscan-submit', 'suspicious', {
 				links: [...links],
 				submitted: submitted.length,
 				failed: ids.length - submitted.length
@@ -526,11 +611,15 @@ const makeScanner = Effect.gen(function* () {
 		} else {
 			// A later explicit scan can recover from a provider outage. Only a
 			// complete submission supersedes the earlier incomplete attempt.
-			yield* sql`
+			yield* withScanRequest(
+				row,
+				job.version,
+				sql`
 				DELETE FROM scan_verdicts
 				WHERE file_id = ${row.id} AND org_id = ${org.id}
 					AND version = ${job.version} AND source = 'urlscan-submit'
-			`.pipe(storageError('clear recovered URL submissions'));
+			`.pipe(storageError('clear recovered URL submissions'))
+			);
 		}
 		if (submitted.length === 0) {
 			return {
@@ -553,6 +642,13 @@ const makeScanner = Effect.gen(function* () {
 		);
 		return { _tag: 'Polling' as const, ids: submitted };
 	});
+
+	const runOne = (job: ScanJob) =>
+		run(job).pipe(
+			Effect.catchTag('StaleScan', () =>
+				Effect.succeed({ _tag: 'Skipped' as const, reason: 'stale' })
+			)
+		);
 
 	return Scanner.of({ runOne, contentUrls });
 });
