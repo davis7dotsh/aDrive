@@ -8,8 +8,8 @@ export const DashboardFileRow = Schema.Struct({
 	kind: Schema.Literals(['file', 'site']),
 	current_version: Schema.Int,
 	size_bytes: Schema.Int,
-	is_public: Schema.Int,
-	has_html: Schema.Int,
+	is_public: Schema.Boolean,
+	has_html: Schema.Boolean,
 	created_at: Schema.String,
 	updated_at: Schema.String,
 	deleted_at: Schema.NullOr(Schema.String),
@@ -26,9 +26,12 @@ export const DashboardFileRow = Schema.Struct({
 	indexed_version: Schema.NullOr(Schema.Int),
 	index_attempts: Schema.Int,
 	index_error: Schema.NullOr(Schema.String),
-	tags_json: Schema.String
+	// jsonb comes back from pg already parsed.
+	tags_json: Schema.Array(TagSchema)
 });
 
+// Column list for the `files f` alias. Interpolate as a raw string through
+// `sql.unsafe` or wrap with `sql.literal`; it contains no parameters.
 export const dashboardFileColumns = `
 	f.id,
 	f.display_name,
@@ -53,19 +56,18 @@ export const dashboardFileColumns = `
 	f.index_attempts,
 	f.index_error,
 	COALESCE((
-		SELECT json_group_array(json_object(
+		SELECT jsonb_agg(jsonb_build_object(
 			'id', t.id,
 			'name', t.name,
 			'normalizedName', t.normalized_name,
 			'color', t.color,
 			'fileCount', 0,
 			'createdAt', t.created_at
-		))
+		) ORDER BY t.normalized_name)
 		FROM file_tags ft
 		JOIN tags t ON t.id = ft.tag_id
 		WHERE ft.file_id = f.id
-		ORDER BY t.normalized_name
-	), '[]') AS tags_json
+	), '[]'::jsonb) AS tags_json
 `;
 
 export const decodeDashboardRows = (rows: unknown) => {
@@ -73,17 +75,6 @@ export const decodeDashboardRows = (rows: unknown) => {
 		rows
 	);
 	return decoded._tag === 'Some' ? decoded.value : [];
-};
-
-const decodeTags = (value: string) => {
-	try {
-		const decoded = Schema.decodeUnknownOption(Schema.Array(TagSchema))(
-			JSON.parse(value)
-		);
-		return decoded._tag === 'Some' ? decoded.value : [];
-	} catch {
-		return [];
-	}
 };
 
 export const toDashboardFile = (
@@ -95,8 +86,8 @@ export const toDashboardFile = (
 	kind: row.kind,
 	version: row.current_version,
 	sizeBytes: row.size_bytes,
-	public: row.is_public === 1,
-	htmlForcedPublic: row.has_html === 1,
+	public: row.is_public,
+	htmlForcedPublic: row.has_html,
 	createdAt: row.created_at,
 	updatedAt: row.updated_at,
 	deletedAt: row.deleted_at,
@@ -107,5 +98,5 @@ export const toDashboardFile = (
 	indexedVersion: row.indexed_version,
 	indexAttempts: row.index_attempts,
 	indexError: row.index_error,
-	tags: decodeTags(row.tags_json)
+	tags: row.tags_json
 });

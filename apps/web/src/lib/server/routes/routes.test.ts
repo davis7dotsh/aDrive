@@ -1,7 +1,8 @@
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
-import { Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 import { FileListResponseSchema } from '@adrive/shared';
 import { dashboardThumbnailUrl } from '$lib/file-thumbnail';
+import type { PgSql } from '$lib/server/pg';
 
 vi.mock('$app/server', async () => {
 	const { mockGetRequestEvent } = await import('../test/route-context.js');
@@ -22,6 +23,17 @@ import {
 } from '../test/helpers';
 
 const SESSION_COOKIE = '__Host-adrive-session';
+
+// Files and versions live in Postgres now; read them through the request
+// layer rather than the D1 binding.
+const queryPg = async <A>(
+	env: Env,
+	query: (sql: PgSql['Service']) => Effect.Effect<A, unknown>
+) => {
+	const { runWorkerProgram } = await import('$lib/server/edge');
+	const { PgSql } = await import('$lib/server/pg');
+	return runWorkerProgram(env, Effect.flatMap(PgSql, query));
+};
 
 const mockBrowserScreenshot = (env: Env, body: string) => {
 	const original = env.BROWSER;
@@ -325,12 +337,12 @@ describe('route integration (local platform)', () => {
 
 		const downloadCount = async () =>
 			(
-				await ctx.env.DB.prepare(
-					'SELECT download_count FROM files WHERE id = ?'
+				await queryPg(
+					ctx.env,
+					(sql) => sql<{ download_count: number }>`
+						SELECT download_count FROM files WHERE id = ${session.fileId}`
 				)
-					.bind(session.fileId)
-					.first<{ download_count: number }>()
-			)?.download_count;
+			)[0]?.download_count;
 		const countBefore = await downloadCount();
 		const sourceEvent = ctx.event({
 			path: `${sourceUrl.pathname}${sourceUrl.search}`,
@@ -380,11 +392,14 @@ describe('route integration (local platform)', () => {
 		expect(cached.headers.get('cache-control')).toContain('immutable');
 		expect(await cached.text()).toBe('site-webp');
 		expect(screenshot).toHaveBeenCalledOnce();
-		const stored = await ctx.env.DB.prepare(
-			'SELECT thumbnail_r2_key FROM file_versions WHERE file_id = ? AND version = 1'
-		)
-			.bind(session.fileId)
-			.first<{ thumbnail_r2_key: string }>();
+		const stored = (
+			await queryPg(
+				ctx.env,
+				(sql) => sql<{ thumbnail_r2_key: string | null }>`
+					SELECT thumbnail_r2_key FROM file_versions
+					WHERE file_id = ${session.fileId} AND version = 1`
+			)
+		)[0];
 		expect(stored?.thumbnail_r2_key).toContain(
 			`thumbnail/${session.fileId}/1/`
 		);
@@ -409,10 +424,12 @@ describe('route integration (local platform)', () => {
 			isPublic: false
 		});
 		expect(
-			await ctx.env.DB.prepare('SELECT public FROM files WHERE id = ?')
-				.bind(file.id)
-				.first<{ public: number }>()
-		).toEqual({ public: 1 });
+			await queryPg(
+				ctx.env,
+				(sql) => sql<{ public: boolean }>`
+					SELECT public FROM files WHERE id = ${file.id}`
+			)
+		).toEqual([{ public: true }]);
 		const screenshot = mockBrowserScreenshot(ctx.env, 'html-webp');
 		const { GET: linkGET } =
 			await import('../../../routes/api/files/[id]/link/+server.js');

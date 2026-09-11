@@ -11,7 +11,7 @@
 		"dev": "concurrently --kill-others --names dashboard,content \"bun run dev:dashboard\" \"bun run dev:content\"",
 		"dev:content": "node scripts/content-proxy.mjs",
 		"dev:dashboard": "vite dev --host 0.0.0.0 --port 5173",
-		"search:rebuild:local": "wrangler d1 execute DB --local --file scripts/rebuild-search-index.sql",
+		"search:rebuild:local": "bun scripts/pg-rebuild-search.mjs",
 		"test": "vitest run --config vite.config.ts",
 		"test:runes": "vitest run --config vitest.runes.config.ts",
 		"test:routes": "vitest run --config vitest.routes.config.ts",
@@ -19,7 +19,6 @@
 	},
 	"dependencies": {
 		"@adrive/shared": "workspace:^",
-		"@effect/sql-d1": "4.0.0-beta.102",
 		"@effect/sql-pg": "4.0.0-beta.102",
 		"@modelcontextprotocol/server": "2.0.0",
 		"agents": "^0.20.1",

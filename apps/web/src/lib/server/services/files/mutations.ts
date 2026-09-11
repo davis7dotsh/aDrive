@@ -5,9 +5,11 @@ import {
 	trashWindow,
 	visibilityForFile
 } from '../../file-policy';
-import { fileIndexStatements } from '../../search-index';
+import { refreshSearchDocument } from '../../search-index';
 import type { FileInternals } from './internals';
 import type { FilesShape } from './types';
+
+const EPOCH = '1970-01-01T00:00:00.000Z';
 
 export const mutationOps = (
 	internals: FileInternals
@@ -22,7 +24,7 @@ export const mutationOps = (
 	| 'scheduleAllPurgesNow'
 	| 'recordDownload'
 > => {
-	const { db, sql } = internals;
+	const { sql } = internals;
 	const { findDashboardFile } = internals;
 	return {
 		setVisibility: Effect.fn('Files.setVisibility')(function* (id, isPublic) {
@@ -41,7 +43,7 @@ export const mutationOps = (
 			const updatedAt = new Date().toISOString();
 			yield* sql`
 				UPDATE files
-				SET public = ${visibility.public ? 1 : 0}, updated_at = ${updatedAt}
+				SET public = ${visibility.public}, updated_at = ${updatedAt}
 				WHERE id = ${id}
 			`.pipe(
 				Effect.mapError(
@@ -61,20 +63,18 @@ export const mutationOps = (
 		trash: Effect.fn('Files.trash')(function* (id) {
 			const current = yield* findDashboardFile(id);
 			const { deletedAt, purgeAt } = trashWindow(current.deletedAt, new Date());
-			const result = yield* Effect.tryPromise({
-				try: () =>
-					db
-						.prepare(
-							`UPDATE files
-							SET deleted_at = ?, purge_at = ?, purge_state = 'none',
-								purge_error = NULL, purge_next_run_at = NULL, updated_at = ?
-							WHERE id = ? AND purge_state <> 'pending'`
-						)
-						.bind(deletedAt, purgeAt, deletedAt, id)
-						.run(),
-				catch: (cause) => new StorageError({ operation: 'trash file', cause })
-			});
-			if (result.meta.changes !== 1) {
+			const rows = yield* sql<{ id: string }>`
+				UPDATE files
+				SET deleted_at = ${deletedAt}, purge_at = ${purgeAt}, purge_state = 'none',
+					purge_error = NULL, purge_next_run_at = NULL, updated_at = ${deletedAt}
+				WHERE id = ${id} AND purge_state <> 'pending'
+				RETURNING id
+			`.pipe(
+				Effect.mapError(
+					(cause) => new StorageError({ operation: 'trash file', cause })
+				)
+			);
+			if (rows.length !== 1) {
 				return yield* new NotFound({ id });
 			}
 			return {
@@ -85,21 +85,19 @@ export const mutationOps = (
 		restore: Effect.fn('Files.restore')(function* (id) {
 			const current = yield* findDashboardFile(id);
 			const updatedAt = new Date().toISOString();
-			const result = yield* Effect.tryPromise({
-				try: () =>
-					db
-						.prepare(
-							`UPDATE files
-							SET deleted_at = NULL, purge_at = NULL, purge_state = 'none',
-								purge_error = NULL, purge_next_run_at = NULL,
-								updated_at = ?
-							WHERE id = ? AND purge_state <> 'pending'`
-						)
-						.bind(updatedAt, id)
-						.run(),
-				catch: (cause) => new StorageError({ operation: 'restore file', cause })
-			});
-			if (result.meta.changes !== 1) {
+			const rows = yield* sql<{ id: string }>`
+				UPDATE files
+				SET deleted_at = NULL, purge_at = NULL, purge_state = 'none',
+					purge_error = NULL, purge_next_run_at = NULL,
+					updated_at = ${updatedAt}
+				WHERE id = ${id} AND purge_state <> 'pending'
+				RETURNING id
+			`.pipe(
+				Effect.mapError(
+					(cause) => new StorageError({ operation: 'restore file', cause })
+				)
+			);
+			if (rows.length !== 1) {
 				return yield* new InvalidRequest({
 					status: 409,
 					message: 'This file is already being purged'
@@ -146,23 +144,22 @@ export const mutationOps = (
 				current.public
 			);
 			const updatedAt = new Date().toISOString();
-			yield* Effect.tryPromise({
-				try: () =>
-					db.batch([
-						db
-							.prepare(
-								`UPDATE files
-								SET display_name = ?, public = ?, updated_at = ?,
-									index_state = 'pending', index_cursor = 0,
-									index_attempts = 0, index_error = NULL,
-									index_next_run_at = NULL, index_lease_token = NULL
-								WHERE id = ?`
-							)
-							.bind(displayName, visibility.public ? 1 : 0, updatedAt, id),
-						...fileIndexStatements(db, id)
-					]),
-				catch: (cause) => new StorageError({ operation: 'rename file', cause })
-			});
+			yield* sql
+				.withTransaction(
+					sql`
+						UPDATE files
+						SET display_name = ${displayName}, public = ${visibility.public},
+							updated_at = ${updatedAt}, index_state = 'pending',
+							index_cursor = 0, index_attempts = 0, index_error = NULL,
+							index_next_run_at = NULL, index_lease_token = NULL
+						WHERE id = ${id}
+					`.pipe(Effect.andThen(refreshSearchDocument(sql, id)))
+				)
+				.pipe(
+					Effect.mapError(
+						(cause) => new StorageError({ operation: 'rename file', cause })
+					)
+				);
 			return {
 				file: {
 					...current,
@@ -186,22 +183,20 @@ export const mutationOps = (
 					message: 'Move the file to trash before deleting it permanently'
 				});
 			}
-			const result = yield* Effect.tryPromise({
-				try: () =>
-					db
-						.prepare(
-							`UPDATE files
-							SET purge_at = ?, purge_state = 'none', purge_error = NULL,
-								purge_next_run_at = NULL
-							WHERE id = ? AND deleted_at IS NOT NULL
-								AND purge_state <> 'pending'`
-						)
-						.bind('1970-01-01T00:00:00.000Z', id)
-						.run(),
-				catch: (cause) =>
-					new StorageError({ operation: 'schedule immediate purge', cause })
-			});
-			if (result.meta.changes !== 1) {
+			const rows = yield* sql<{ id: string }>`
+				UPDATE files
+				SET purge_at = ${EPOCH}, purge_state = 'none', purge_error = NULL,
+					purge_next_run_at = NULL
+				WHERE id = ${id} AND deleted_at IS NOT NULL
+					AND purge_state <> 'pending'
+				RETURNING id
+			`.pipe(
+				Effect.mapError(
+					(cause) =>
+						new StorageError({ operation: 'schedule immediate purge', cause })
+				)
+			);
+			if (rows.length !== 1) {
 				return yield* new InvalidRequest({
 					status: 409,
 					message: 'This file is already being purged'
@@ -209,22 +204,20 @@ export const mutationOps = (
 			}
 			return { file: current, forcedPublic: false };
 		}),
-		scheduleAllPurgesNow: Effect.tryPromise({
-			try: async () => {
-				const result = await db
-					.prepare(
-						`UPDATE files
-						SET purge_at = ?, purge_state = 'none', purge_error = NULL,
-							purge_next_run_at = NULL
-						WHERE deleted_at IS NOT NULL AND purge_state <> 'pending'`
-					)
-					.bind('1970-01-01T00:00:00.000Z')
-					.run();
-				return result.meta.changes;
-			},
-			catch: (cause) =>
-				new StorageError({ operation: 'schedule empty trash', cause })
-		}).pipe(Effect.withSpan('Files.scheduleAllPurgesNow')),
+		scheduleAllPurgesNow: sql<{ id: string }>`
+			UPDATE files
+			SET purge_at = ${EPOCH}, purge_state = 'none', purge_error = NULL,
+				purge_next_run_at = NULL
+			WHERE deleted_at IS NOT NULL AND purge_state <> 'pending'
+			RETURNING id
+		`.pipe(
+			Effect.map((rows) => rows.length),
+			Effect.mapError(
+				(cause) =>
+					new StorageError({ operation: 'schedule empty trash', cause })
+			),
+			Effect.withSpan('Files.scheduleAllPurgesNow')
+		),
 		recordDownload: Effect.fn('Files.recordDownload')(function* (id) {
 			const now = new Date().toISOString();
 			yield* sql`

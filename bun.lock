@@ -19,7 +19,6 @@
       "version": "0.1.0",
       "dependencies": {
         "@adrive/shared": "workspace:^",
-        "@effect/sql-d1": "4.0.0-beta.102",
         "@effect/sql-pg": "4.0.0-beta.102",
         "@modelcontextprotocol/server": "2.0.0",
         "agents": "^0.20.1",
@@ -167,8 +166,6 @@
     "@effect/platform-node": ["@effect/platform-node@4.0.0-beta.102", "", { "dependencies": { "@effect/platform-node-shared": "^4.0.0-beta.102", "mime": "^4.1.0", "undici": "^8.7.0" }, "peerDependencies": { "effect": "^4.0.0-beta.102", "ioredis": "^5.7.0" } }, "sha512-wYVAU9jAePT+gouMr/EVz1CaW6yDLjPAgXYeEFLz7wugT5iZhFRag6mqajV/wwN3bzWP2fzZHokLuPmqD/rqeA=="],
 
     "@effect/platform-node-shared": ["@effect/platform-node-shared@4.0.0-rc.111", "", { "dependencies": { "@types/ws": "^8.18.1", "ws": "^8.21.3" }, "peerDependencies": { "effect": "^4.0.0-rc.111" } }, "sha512-iES0Q9vmjhaUKqeW9ceonuD45MUg/Ouk08LzRSptZ+B5qB0w9WlRjDmUz5TJmY2betNop5FRI5k4AD4mtQt3Bw=="],
-
-    "@effect/sql-d1": ["@effect/sql-d1@4.0.0-beta.102", "", { "dependencies": { "@cloudflare/workers-types": "^5.20260708.1" }, "peerDependencies": { "effect": "^4.0.0-beta.102" } }, "sha512-p6V1BqXEKF/EVH1JkWjjslPtg5Knl2TWopMnDdgto2jGfRpCHfhEaI8fA2OmR5J5H/TIH9ihYBiUA6Awru2Kvg=="],
 
     "@effect/sql-pg": ["@effect/sql-pg@4.0.0-beta.102", "", { "dependencies": { "pg": "^8.22.0", "pg-connection-string": "2.14.0", "pg-cursor": "^2.21.0", "pg-pool": "^3.14.0", "pg-types": "^4.1.0" }, "peerDependencies": { "effect": "^4.0.0-beta.102" } }, "sha512-02a+fNfECWCZIZcgHl7OLQN2jZj42gq90EdwdnvR3KA6GLGypY02swABS4zFtaW9H80rTa0ukqVnTdcO/DT5GQ=="],
 
@@ -1043,8 +1040,6 @@
     "zod-to-json-schema": ["zod-to-json-schema@3.25.2", "", { "peerDependencies": { "zod": "^3.25.28 || ^4" } }, "sha512-O/PgfnpT1xKSDeQYSCfRI5Gy3hPf91mKVDuYLUHZJMiDFptvP41MSnWofm8dnCm0256ZNfZIM7DSzuSMAFnjHA=="],
 
     "@cspotcode/source-map-support/@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.9", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.0.3", "@jridgewell/sourcemap-codec": "^1.4.10" } }, "sha512-3Belt6tdc8bPgAtbcmdtNJlirVoTmEb5e2gC94PnkwEW9jI6CAHUeoG85tjWP5WquqfavoMtMwiG4P926ZKKuQ=="],
-
-    "@effect/sql-d1/@cloudflare/workers-types": ["@cloudflare/workers-types@5.20260821.1", "", {}, "sha512-jZiTISghTPeytJ7eDt5K1AV7df998xGECMgT8oy838VfFLJLROvdLzDaJb0/Jv4WfxO00keNoWt1d6olL7URRg=="],
 
     "@effect/sql-pg/pg-types": ["pg-types@4.1.0", "", { "dependencies": { "pg-int8": "1.0.1", "pg-numeric": "1.0.2", "postgres-array": "~3.0.1", "postgres-bytea": "~3.0.0", "postgres-date": "~2.1.0", "postgres-interval": "^3.0.0", "postgres-range": "^1.1.1" } }, "sha512-o2XFanIMy/3+mThw69O8d4n1E5zsLhdO+OPqswezu7Z5ekP4hYDqlDjlmOpYMbzY2Br0ufCwJLdDIXeNVwcWFg=="],
 

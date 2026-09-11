@@ -32,7 +32,6 @@ import type { Lifecycle } from './services/lifecycle';
 import type { GrantSecrets } from './services/grant-secrets';
 
 export type AppServices =
-	| SqlClient.SqlClient
 	| PgSql
 	| AppConfig
 	| AuthGuard

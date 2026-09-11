@@ -21,7 +21,7 @@ echo "Releasing ${COMMIT} to env ${ENV_NAME}"
 # Only the target env's resource ids must be real. The top-level D1 id is
 # an intentional local-dev placeholder and is ignored here.
 if ! bun "${ROOT}/scripts/check-wrangler-drift.mjs" --placeholders-only --env "${ENV_NAME}"; then
-	echo "Create the D1 database / KV namespace and paste their ids first." >&2
+	echo "Create the Hyperdrive config / KV namespace and paste their ids first." >&2
 	exit 1
 fi
 
@@ -45,13 +45,15 @@ step "Deploy dry run"
 bun x wrangler deploy --dry-run --env "${ENV_NAME}"
 (cd "${ROOT}/apps/site" && bun x wrangler deploy --dry-run)
 
-step "D1 migrations"
+step "Postgres migrations"
 # Migrations run before the new Worker so both old and new code briefly run
 # against the migrated schema. Keep every migration backwards-compatible
 # for at least one release (additive columns/tables; no drops or renames
 # until the release after the code stops using them) so wrangler rollback
-# stays safe.
-bun x wrangler d1 migrations apply DB --env "${ENV_NAME}" --remote
+# stays safe. DATABASE_URL must point at the production database with a
+# role that owns the schema (see docs/release.md).
+: "${DATABASE_URL:?DATABASE_URL is required to run Postgres migrations}"
+bun "${WEB}/scripts/pg-migrate.mjs" --url "${DATABASE_URL}"
 
 step "Deploy"
 bun x wrangler deploy --env "${ENV_NAME}"
