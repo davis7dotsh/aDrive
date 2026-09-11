@@ -347,7 +347,7 @@
 	/>
 	{#if selection.selectedFiles.length > 0 || uploads.items.length > 0}
 		<div
-			class="dashboard-dock fixed right-3 bottom-3 z-40 flex max-h-[calc(100dvh-1.5rem)] max-w-[calc(100vw-1.5rem)] flex-col items-end gap-3 overflow-y-auto overscroll-contain p-1 sm:right-5 sm:bottom-5 sm:max-h-[calc(100dvh-2.5rem)] sm:max-w-[calc(100vw-2.5rem)]"
+			class="dashboard-dock pointer-events-none fixed right-3 bottom-3 z-40 flex max-h-[calc(100dvh-1.5rem)] max-w-[calc(100vw-1.5rem)] flex-col items-end gap-3 overflow-y-auto overscroll-contain p-1 sm:right-5 sm:bottom-5 sm:max-h-[calc(100dvh-2.5rem)] sm:max-w-[calc(100vw-2.5rem)]"
 		>
 			<BulkActionBar
 				selectedCount={selection.selectedFiles.length}

@@ -29,7 +29,7 @@
 {#if selectedCount > 0}
 	<div
 		transition:fly={{ y: 12, duration: 180 }}
-		class="bulk-bar flex max-w-full shrink-0 flex-wrap items-center gap-2 rounded-xl border border-zinc-200 bg-white p-2 pl-4 shadow-xl"
+		class="bulk-bar pointer-events-auto flex max-w-full shrink-0 flex-wrap items-center gap-2 rounded-xl border border-zinc-200 bg-white p-2 pl-4 shadow-xl"
 		aria-label="Selected file actions"
 	>
 		<p class="mr-2 text-sm font-medium text-zinc-800">
