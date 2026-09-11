@@ -29,7 +29,7 @@
 {#if selectedCount > 0}
 	<div
 		transition:fly={{ y: 12, duration: 180 }}
-		class="bulk-bar fixed right-4 bottom-4 z-30 flex max-w-[calc(100vw-2rem)] flex-wrap items-center gap-2 rounded-xl border border-zinc-200 bg-white p-2 pl-4 shadow-xl sm:right-6 sm:bottom-6"
+		class="bulk-bar flex max-w-full shrink-0 flex-wrap items-center gap-2 rounded-xl border border-zinc-200 bg-white p-2 pl-4 shadow-xl"
 		aria-label="Selected file actions"
 	>
 		<p class="mr-2 text-sm font-medium text-zinc-800">
@@ -50,7 +50,7 @@
 				aria-label="Add tag to selected files"
 				value={bulkTagId}
 				disabled={batchBusy}
-				class="rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm text-zinc-600"
+				class="min-w-0 max-w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm text-zinc-600"
 				onchange={(event) => onbulktag(event.currentTarget.value)}
 			>
 				<option value="">Add tag…</option>

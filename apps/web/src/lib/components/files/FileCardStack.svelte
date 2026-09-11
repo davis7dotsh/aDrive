@@ -3,11 +3,12 @@
 	import { fileFamily } from '$lib/dashboard/file-family';
 	import { formatBytes, formatShortDate } from '$lib/dashboard/format';
 	import { shiftSelectHandlers } from '$lib/dashboard/shift-select';
+	import Icon from '$lib/components/ui/Icon.svelte';
 	import FileMenu from './FileMenu.svelte';
 	import FileThumb from './FileThumb.svelte';
 
 	// The "stack" card used by design variant E: the file's facts sit at
-	// the top of a soft card and the preview rests below on a small pile.
+	// the top of a soft card with a flat preview below.
 	let {
 		file,
 		token,
@@ -89,11 +90,21 @@
 				class="mt-0.5 flex min-w-0 items-center gap-1.5 truncate text-xs text-zinc-500"
 			>
 				<span
-					class="vis-dot size-1.5 shrink-0 rounded-full"
+					class="size-1.5 shrink-0 rounded-full {file.quarantined
+						? 'bg-red-500'
+						: file.publishPending
+							? 'bg-amber-500'
+							: 'vis-dot'}"
 					data-public={file.public}
 				></span>
 				<span class="truncate">
-					{file.public ? 'Public' : 'Private'}
+					{file.quarantined
+						? 'Quarantined'
+						: file.publishPending
+							? 'Pending review'
+							: file.public
+								? 'Public'
+								: 'Private'}
 					{#if file.tags.length > 0}
 						· {file.tags
 							.slice(0, 2)
@@ -152,13 +163,21 @@
 		aria-hidden="true"
 		class="stack relative mt-4 block"
 	>
-		<FileThumb
-			{file}
-			{token}
-			{contentOrigin}
-			unavailable={trashed ||
-				file.deletedAt !== null ||
-				file.expiresAt !== null}
-		/>
+		{#if file.quarantined}
+			<div
+				class="thumb relative flex aspect-square items-center justify-center overflow-hidden rounded-xl bg-zinc-100"
+			>
+				<Icon name="file" class="size-12 text-zinc-400" />
+			</div>
+		{:else}
+			<FileThumb
+				{file}
+				{token}
+				{contentOrigin}
+				unavailable={trashed ||
+					file.deletedAt !== null ||
+					file.expiresAt !== null}
+			/>
+		{/if}
 	</a>
 </li>

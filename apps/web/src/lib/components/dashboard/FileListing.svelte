@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { DashboardFile } from '@adrive/shared';
 	import { page } from '$app/state';
+	import { dashboardReturnHref } from '$lib/dashboard/return-href';
 	import Button from '$lib/components/ui/Button.svelte';
 	import FileGrid from '$lib/components/files/FileGrid.svelte';
 
@@ -74,7 +75,7 @@
 		trashed={showTrash}
 		loading={listLoading || initialLoading}
 		{queryActive}
-		returnQuery={page.url.search}
+		returnQuery={dashboardReturnHref(page.url.pathname + page.url.search)}
 		view={layout}
 		actions={{
 			open: onopen,

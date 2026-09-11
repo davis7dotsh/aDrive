@@ -299,19 +299,6 @@
 			onmanagetags={() => (tagManagerOpen = true)}
 		/>
 
-		<BulkActionBar
-			selectedCount={selection.selectedFiles.length}
-			{showTrash}
-			tags={files.list.current.tags}
-			bulkTagId={selection.bulkTagId}
-			batchBusy={selection.batchBusy}
-			onbulktag={(tagId) => void addSelectedTag(tagId)}
-			onmutate={(label, mutation) =>
-				void selection.mutateSelected(label, mutation)}
-			onbulkpurge={() => (trash.bulkPurgeOpen = true)}
-			onclear={selection.clear}
-		/>
-
 		<FileListing
 			files={files.visibleFiles}
 			token={session.token}
@@ -358,7 +345,25 @@
 		token={session.token}
 		onchanged={() => void files.list.refetch()}
 	/>
-	<UploadQueue {uploads} />
+	{#if selection.selectedFiles.length > 0 || uploads.items.length > 0}
+		<div
+			class="dashboard-dock fixed right-3 bottom-3 z-40 flex max-h-[calc(100dvh-1.5rem)] max-w-[calc(100vw-1.5rem)] flex-col items-end gap-3 overflow-y-auto overscroll-contain p-1 sm:right-5 sm:bottom-5 sm:max-h-[calc(100dvh-2.5rem)] sm:max-w-[calc(100vw-2.5rem)]"
+		>
+			<BulkActionBar
+				selectedCount={selection.selectedFiles.length}
+				{showTrash}
+				tags={files.list.current.tags}
+				bulkTagId={selection.bulkTagId}
+				batchBusy={selection.batchBusy}
+				onbulktag={(tagId) => void addSelectedTag(tagId)}
+				onmutate={(label, mutation) =>
+					void selection.mutateSelected(label, mutation)}
+				onbulkpurge={() => (trash.bulkPurgeOpen = true)}
+				onclear={selection.clear}
+			/>
+			<UploadQueue {uploads} />
+		</div>
+	{/if}
 	<Confirm
 		bind:open={trash.purgeOpen}
 		title="Delete permanently?"
