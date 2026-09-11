@@ -94,9 +94,25 @@ write access (deliberately _not_ stored on the backup host).
 
 ### All versions of one file
 
-Repeat for each stored key in the selected file's `file_versions` rows and
-its thumbnails, or the site's `site_assets` rows. Preserve the exact keys
-from the dump, including imported paths; do not infer them from a prefix.
+For an ordinary file, repeat for each stored key in its `file_versions`
+rows and its thumbnails. Preserve the exact keys from the dump, including
+imported paths; do not infer them from a prefix.
+
+Sites have a different recovery boundary: publishing a new version removes
+the previous `site_assets` rows and queues the previous object bytes for
+deletion. The retained `site-version/...` markers are not objects and do
+not contain the asset path mapping. The current dump's `site_assets` rows
+therefore recover only the site's current publication.
+
+To recover an earlier site publication, restore a database snapshot taken
+while that version was current into a scratch database. Use its exact
+`site_assets` paths, keys, content types, and sizes together with matching
+object bytes from the mirror or retained deleted-object directories.
+Verify the bytes against the matching manifest before reconstructing the
+site on the isolated target. If no database snapshot captured that version,
+or its object bytes were never backed up or are no longer retained, that
+version cannot be recovered from these backups. A historical version marker
+alone is insufficient.
 
 ### Metadata and tags only
 
@@ -177,7 +193,9 @@ resources. Record the source snapshot, destination, date, checks, and outcome
 below; do not overwrite live objects or metadata to perform a drill:
 
 1. Restore one file and verify its checksum matches the manifest.
-2. Restore all versions of one multi-version file.
+2. Restore all versions of one multi-version ordinary file. For a site,
+   separately rehearse an earlier publication using its matching database
+   snapshot and retained object bytes; record any unavailable versions.
 3. Restore metadata and tags for one file into a scratch Postgres database.
 4. Restore the complete Postgres dump into a scratch database and spot-check
    row counts against production.
