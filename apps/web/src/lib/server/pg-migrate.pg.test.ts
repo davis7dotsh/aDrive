@@ -1,6 +1,6 @@
 import Pg from 'pg';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { migrate } from '../../../scripts/pg-migrate.mjs';
+import { migrate, MIGRATION_LOCK_NAME } from '../../../scripts/pg-migrate.mjs';
 import { TEST_DATABASE_URL } from './test/database';
 
 const createMigrationContext = async () => {
@@ -11,8 +11,10 @@ const createMigrationContext = async () => {
 	await client.query(`SET search_path TO ${schema}, public`);
 	const url = new URL(TEST_DATABASE_URL);
 	url.searchParams.set('options', `-csearch_path=${schema},public`);
+	url.searchParams.set('application_name', schema);
 	return {
 		client,
+		applicationName: schema,
 		migrate: () => migrate({ url: url.href, log: () => undefined }),
 		close: async () => {
 			try {
@@ -95,5 +97,42 @@ describe('Postgres migration ledger', () => {
 			'ALTER TABLE schema_migrations DROP COLUMN applied_at'
 		);
 		expect(await context.migrate()).toBe(0);
+	});
+
+	it('serializes concurrent runs before either reads or changes the ledger', async () => {
+		await context.client.query('SELECT pg_advisory_lock(hashtext($1))', [
+			MIGRATION_LOCK_NAME
+		]);
+		const runs = Promise.allSettled([context.migrate(), context.migrate()]);
+		try {
+			await expect
+				.poll(
+					async () =>
+						(
+							await context.client.query<{ waiting: number }>(
+								`SELECT count(*)::int AS waiting FROM pg_stat_activity
+								 WHERE application_name = $1 AND wait_event = 'advisory'`,
+								[context.applicationName]
+							)
+						).rows[0]?.waiting,
+					{ timeout: 5_000 }
+				)
+				.toBe(2);
+		} finally {
+			await context.client.query('SELECT pg_advisory_unlock(hashtext($1))', [
+				MIGRATION_LOCK_NAME
+			]);
+			// Settle both clients before teardown even if the waiting assertion fails.
+			await runs;
+		}
+		const counts = (await runs).map((result) => {
+			if (result.status === 'rejected') throw result.reason;
+			return result.value;
+		});
+		const ledger = await context.client.query(
+			'SELECT version FROM schema_migrations'
+		);
+		expect(ledger.rows.length).toBeGreaterThan(0);
+		expect(counts.sort((a, b) => a - b)).toEqual([0, ledger.rows.length]);
 	});
 });
