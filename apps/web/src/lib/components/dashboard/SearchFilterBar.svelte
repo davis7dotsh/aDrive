@@ -42,7 +42,7 @@
 		<div class="relative min-w-[16rem] flex-1">
 			<Icon
 				name="search"
-				class="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-zinc-400"
+				class="search-icon pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-zinc-400"
 			/>
 			<label for="drive-search" class="sr-only">Search files</label>
 			<input
@@ -52,7 +52,7 @@
 				value={query}
 				oninput={(event) => onquery(event.currentTarget.value)}
 				placeholder={showTrash ? 'Search trash' : 'Search files'}
-				class="w-full rounded-lg bg-zinc-100 py-2.5 pr-14 pl-10 text-sm outline-none focus:bg-white focus:ring-2 focus:ring-accent-500"
+				class="search-input w-full rounded-lg bg-zinc-100 py-2.5 pr-14 pl-10 text-sm outline-none focus:bg-white focus:ring-2 focus:ring-accent-500"
 			/>
 			<span
 				class="absolute top-1/2 right-3 -translate-y-1/2 text-[10px] text-zinc-400"
@@ -79,7 +79,7 @@
 				<option value="size">Size</option>
 			</select>
 		{/if}
-		<div class="inline-flex rounded-md border border-zinc-200 p-0.5">
+		<div class="segment inline-flex rounded-md border border-zinc-200 p-0.5">
 			<button
 				type="button"
 				aria-label="Grid view"

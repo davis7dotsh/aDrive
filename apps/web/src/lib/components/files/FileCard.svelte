@@ -2,6 +2,7 @@
 	import type { DashboardFile } from '@adrive/shared';
 	import { formatBytes, formatDate } from '$lib/dashboard/format';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import { shiftSelectHandlers } from '$lib/dashboard/shift-select';
 	import FileMenu from './FileMenu.svelte';
 	import FileThumb from './FileThumb.svelte';
 
@@ -33,12 +34,14 @@
 		onselect?: (selected: boolean, shift: boolean) => void;
 	} = $props();
 
+	const shiftSelect = shiftSelectHandlers(() => ({ selected, onselect }));
+
 	const detailUrl = $derived(
 		`/files/${file.id}${returnQuery ? `?from=${encodeURIComponent(returnQuery)}` : ''}`
 	);
 </script>
 
-<li class="group min-w-0">
+<li class="group min-w-0" {...shiftSelect}>
 	<a href={detailUrl} aria-label={`Open ${file.displayName}`}>
 		{#if file.quarantined}
 			<div
@@ -73,11 +76,11 @@
 		<div class="min-w-0 flex-1">
 			<a
 				href={detailUrl}
-				class="block truncate text-sm font-medium text-zinc-900 hover:text-accent-600"
+				class="file-name block truncate text-sm font-medium text-zinc-900 hover:text-accent-600"
 			>
 				{file.displayName}
 			</a>
-			<p class="mt-0.5 truncate text-xs text-zinc-400">
+			<p class="file-meta mt-0.5 truncate text-xs text-zinc-400">
 				{formatBytes(file.sizeBytes)} · {trashed && file.deletedAt
 					? `deleted ${formatDate(file.deletedAt)} · purges after 30 days`
 					: formatDate(file.updatedAt)}
@@ -99,9 +102,8 @@
 				? 'bg-red-500'
 				: file.publishPending
 					? 'bg-amber-500'
-					: file.public
-						? 'bg-emerald-500'
-						: 'bg-zinc-400'}"
+					: 'vis-dot'}"
+			data-public={file.public}
 		></span>
 		<span class="truncate text-[11px] text-zinc-400">
 			{file.quarantined
@@ -114,7 +116,7 @@
 		</span>
 		{#each file.tags.slice(0, 2) as tag (tag.id)}
 			<span
-				class="truncate rounded-full bg-zinc-100 px-1.5 py-0.5 text-[10px] text-zinc-500"
+				class="tag-pill truncate rounded-full bg-zinc-100 px-1.5 py-0.5 text-[10px] text-zinc-500"
 				>{tag.name}</span
 			>
 		{/each}

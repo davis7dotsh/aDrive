@@ -1,12 +1,32 @@
 @import 'tailwindcss';
+@import '@fontsource-variable/geist';
+@import '@fontsource-variable/geist-mono';
 
 @theme {
+	--font-sans:
+		'Geist Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
+		sans-serif;
+	--font-mono:
+		'Geist Mono Variable', ui-monospace, SFMono-Regular, Menlo, Consolas,
+		monospace;
+	/* True neutral grays; the zinc names stay so the utilities do not change. */
+	--color-zinc-50: #fafafa;
+	--color-zinc-100: #f4f4f4;
+	--color-zinc-200: #e6e6e6;
+	--color-zinc-300: #d4d4d4;
+	--color-zinc-400: #9a9a9a;
+	--color-zinc-500: #737373;
+	--color-zinc-600: #525252;
+	--color-zinc-700: #404040;
+	--color-zinc-800: #262626;
+	--color-zinc-900: #171717;
+	--color-zinc-950: #0a0a0a;
 	--color-accent-50: #eff6ff;
 	--color-accent-100: #dbeafe;
 	--color-accent-500: #2563eb;
 	--color-accent-600: #1d4ed8;
 	--color-accent-700: #1e40af;
-	--color-tag-default: #a1a1aa;
+	--color-tag-default: #9a9a9a;
 }
 
 @layer base {
@@ -28,15 +48,9 @@
 
 	html {
 		background: #ffffff;
-		color: #18181b;
-		font-family:
-			Inter,
-			ui-sans-serif,
-			system-ui,
-			-apple-system,
-			BlinkMacSystemFont,
-			'Segoe UI',
-			sans-serif;
+		color: #171717;
+		font-family: var(--font-sans);
+		font-feature-settings: 'ss01', 'cv11';
 	}
 
 	body {
@@ -230,18 +244,18 @@
 
 @media (prefers-color-scheme: dark) {
 	:root {
-		--color-white: #18181b;
-		--color-zinc-50: #18181b;
-		--color-zinc-100: #27272a;
-		--color-zinc-200: #3f3f46;
-		--color-zinc-300: #52525b;
-		--color-zinc-400: #a1a1aa;
-		--color-zinc-500: #d4d4d8;
-		--color-zinc-600: #e4e4e7;
-		--color-zinc-700: #f4f4f5;
-		--color-zinc-800: #fafafa;
-		--color-zinc-900: #fafafa;
-		--color-zinc-950: #ffffff;
+		--color-white: #0a0a0a;
+		--color-zinc-50: #111111;
+		--color-zinc-100: #181818;
+		--color-zinc-200: #262626;
+		--color-zinc-300: #333333;
+		--color-zinc-400: #8a8a8a;
+		--color-zinc-500: #a8a8a8;
+		--color-zinc-600: #c4c4c4;
+		--color-zinc-700: #d9d9d9;
+		--color-zinc-800: #e8e8e8;
+		--color-zinc-900: #f2f2f2;
+		--color-zinc-950: #fafafa;
 		--color-accent-50: #172554;
 		--color-accent-100: #1e3a8a;
 		--color-accent-500: #60a5fa;
@@ -273,7 +287,506 @@
 	}
 
 	html {
-		background: #09090b;
-		color: #f4f4f5;
+		background: #0a0a0a;
+		color: #f2f2f2;
+	}
+}
+
+/* ------------------------------------------------------------------ */
+/* Design variants. Each block remaps the accent scale and radii, then */
+/* adds the one signature the variant is remembered by. These rules   */
+/* sit outside the cascade layers so they win over utilities.          */
+/* ------------------------------------------------------------------ */
+
+.brand-dot {
+	background: var(--color-accent-500);
+}
+
+/* Without a variant the page keeps its neutral primary and green "public". */
+.vis-dot[data-public='true'] {
+	background: #10b981;
+}
+.vis-dot[data-public='false'] {
+	background: var(--color-zinc-400);
+}
+
+/* Shared by every variant: the accent carries the primary action, every
+   active state, and the one status that matters here, "public". */
+[data-theme] {
+	--accent-strong: var(--color-accent-500);
+	--accent-fg: #ffffff;
+}
+[data-theme] .btn-primary {
+	background: var(--accent-strong);
+	color: var(--accent-fg);
+}
+[data-theme] .btn-primary:hover {
+	background: var(--color-accent-600);
+	color: var(--accent-fg);
+}
+[data-theme] .segment [aria-pressed='true'],
+[data-theme] .segment [aria-current='page'] {
+	color: var(--color-accent-700);
+}
+[data-theme] input[type='checkbox'] {
+	accent-color: var(--color-accent-500);
+}
+[data-theme] :focus-visible {
+	outline-color: var(--color-accent-500);
+}
+[data-theme] .vis-dot[data-public='true'] {
+	background: var(--color-accent-500);
+}
+[data-theme] .vis-dot[data-public='false'] {
+	background: var(--color-zinc-300);
+}
+[data-theme] .bulk-bar {
+	border-color: color-mix(in srgb, var(--color-accent-500) 35%, transparent);
+}
+[data-theme] .file-name:hover {
+	color: var(--color-accent-600);
+}
+
+/* A · Ember — orange on true neutrals; orange means "public". */
+[data-theme='a'] {
+	--color-accent-50: #fff3ea;
+	--color-accent-100: #ffe1c9;
+	--color-accent-500: #f97316;
+	--color-accent-600: #e5640a;
+	--color-accent-700: #b84f08;
+	--radius-md: 0.375rem;
+	--radius-lg: 0.5rem;
+	--radius-xl: 0.5rem;
+	--radius-2xl: 0.625rem;
+}
+[data-theme='a'] .thumb[data-public='true']::after {
+	content: '';
+	position: absolute;
+	inset: 0 0 auto 0;
+	height: 2px;
+	background: var(--color-accent-500);
+}
+[data-theme='a'] .group:hover .thumb[data-public='true'] {
+	background: color-mix(
+		in oklab,
+		var(--color-accent-500) 10%,
+		var(--color-zinc-100)
+	);
+}
+
+/* B · Iris — violet, soft corners, the tag color becomes structure. */
+[data-theme='b'] {
+	--color-accent-50: #f1efff;
+	--color-accent-100: #e2ddff;
+	--color-accent-500: #6f5cf6;
+	--color-accent-600: #5a47e3;
+	--color-accent-700: #4838bb;
+	--radius-md: 0.5rem;
+	--radius-lg: 0.75rem;
+	--radius-xl: 1rem;
+	--radius-2xl: 1.25rem;
+}
+@media (min-width: 40rem) {
+	[data-theme='b'] .file-grid {
+		grid-template-columns: repeat(auto-fill, minmax(13.5rem, 1fr));
+		column-gap: 1.25rem;
+		row-gap: 2rem;
+	}
+}
+[data-theme='b'] .thumb::after {
+	content: '';
+	position: absolute;
+	inset: auto 0 0 0;
+	height: 3px;
+	background: var(--tag-color, transparent);
+}
+[data-theme='b'] .group:hover .thumb {
+	background: color-mix(
+		in oklab,
+		var(--tag-color, var(--color-accent-500)) 14%,
+		var(--color-zinc-100)
+	);
+}
+[data-theme='b'] .file-row {
+	box-shadow: inset 3px 0 0 var(--tag-color, transparent);
+}
+[data-theme='b'] .file-row > td:first-child {
+	padding-left: 0.75rem;
+}
+[data-theme='b'] .tag-chip[aria-pressed='true'] {
+	background: var(--tag-color, var(--color-accent-500));
+	border-color: var(--tag-color, var(--color-accent-500));
+	color: var(--tag-foreground, #fff);
+	box-shadow: none;
+}
+[data-theme='b'] .tag-chip[aria-pressed='true'] .tag-dot {
+	background: var(--tag-foreground, #fff) !important;
+}
+[data-theme='b'] .tag-chip[aria-pressed='true'] .tag-count {
+	color: var(--tag-foreground, #fff);
+}
+
+/* C · Terminal — amber, square corners, mono names, ls-style type color. */
+[data-theme='c'] {
+	--accent-fg: #1a1200;
+	--color-accent-50: #fff8e0;
+	--color-accent-100: #ffeeb3;
+	--color-accent-500: #d99a00;
+	--color-accent-600: #b98200;
+	--color-accent-700: #8f6500;
+	--radius-md: 0.125rem;
+	--radius-lg: 0.125rem;
+	--radius-xl: 0.25rem;
+	--radius-2xl: 0.25rem;
+	--family-image: #c026d3;
+	--family-code: #16a34a;
+	--family-data: #ca8a04;
+	--family-archive: #dc2626;
+	--family-site: #0891b2;
+	--family-doc: #2563eb;
+	--family-text: #737373;
+}
+[data-theme='c'] .file-name,
+[data-theme='c'] .file-meta,
+[data-theme='c'] .count-row,
+[data-theme='c'] .search-input,
+[data-theme='c'] .ext-label,
+[data-theme='c'] .tag-chip,
+[data-theme='c'] .file-table {
+	font-family: var(--font-mono);
+}
+[data-theme='c'] .tag-chip,
+[data-theme='c'] .tag-pill,
+[data-theme='c'] .segment,
+[data-theme='c'] .segment > button {
+	border-radius: 0.125rem;
+}
+@media (min-width: 40rem) {
+	[data-theme='c'] .file-grid {
+		grid-template-columns: repeat(auto-fill, minmax(12.5rem, 1fr));
+	}
+}
+[data-theme='c'] .file-name {
+	font-size: 0.8125rem;
+	letter-spacing: -0.01em;
+}
+[data-theme='c'] .file-meta {
+	font-size: 0.6875rem;
+}
+[data-theme='c'] .thumb[data-family] {
+	background: color-mix(in oklab, var(--family) 12%, var(--color-zinc-100));
+}
+[data-theme='c'] .group:hover .thumb[data-family] {
+	background: color-mix(in oklab, var(--family) 20%, var(--color-zinc-100));
+}
+[data-theme='c'] .thumb[data-family='image'] {
+	--family: var(--family-image);
+}
+[data-theme='c'] .thumb[data-family='code'] {
+	--family: var(--family-code);
+}
+[data-theme='c'] .thumb[data-family='data'] {
+	--family: var(--family-data);
+}
+[data-theme='c'] .thumb[data-family='archive'] {
+	--family: var(--family-archive);
+}
+[data-theme='c'] .thumb[data-family='site'] {
+	--family: var(--family-site);
+}
+[data-theme='c'] .thumb[data-family='doc'] {
+	--family: var(--family-doc);
+}
+[data-theme='c'] .thumb[data-family='text'] {
+	--family: var(--family-text);
+}
+[data-theme='c'] .thumb[data-family] .thumb-icon,
+[data-theme='c'] .thumb[data-family] .ext-label {
+	color: var(--family);
+}
+[data-theme='c'] .file-row[data-family='image'] .file-name {
+	color: var(--family-image);
+}
+[data-theme='c'] .file-row[data-family='code'] .file-name {
+	color: var(--family-code);
+}
+[data-theme='c'] .file-row[data-family='data'] .file-name {
+	color: var(--family-data);
+}
+[data-theme='c'] .file-row[data-family='archive'] .file-name {
+	color: var(--family-archive);
+}
+[data-theme='c'] .file-row[data-family='site'] .file-name {
+	color: var(--family-site);
+}
+[data-theme='c'] .file-row[data-family='doc'] .file-name {
+	color: var(--family-doc);
+}
+
+/* D · Tide — blue, search as the hero, ambient glow and lit thumbs. */
+[data-theme='d'] {
+	--color-accent-50: #eaf5ff;
+	--color-accent-100: #d0e9ff;
+	--color-accent-500: #4dabf7;
+	--color-accent-600: #2b93e4;
+	--color-accent-700: #1b76bd;
+	--radius-md: 0.5rem;
+	--radius-lg: 0.625rem;
+	--radius-xl: 0.75rem;
+	--radius-2xl: 1rem;
+	isolation: isolate;
+}
+[data-theme='d'] {
+	position: relative;
+	--accent-strong: var(--color-accent-600);
+}
+[data-theme='d']::before {
+	content: '';
+	position: absolute;
+	inset: 0 0 auto 0;
+	height: 28rem;
+	pointer-events: none;
+	z-index: -1;
+	background: radial-gradient(
+		70% 100% at 50% -10%,
+		color-mix(in oklab, var(--color-accent-500) 22%, transparent),
+		transparent 70%
+	);
+}
+[data-theme='d'] > header {
+	background: transparent;
+	border-bottom-color: color-mix(
+		in oklab,
+		var(--color-accent-500) 25%,
+		var(--color-zinc-200)
+	);
+}
+[data-theme='d'] .search-input {
+	height: 3rem;
+	font-size: 0.95rem;
+	padding-left: 2.75rem;
+	background: color-mix(
+		in oklab,
+		var(--color-white) 70%,
+		var(--color-zinc-100)
+	);
+	box-shadow: inset 0 0 0 1px var(--color-zinc-200);
+}
+[data-theme='d'] .search-input:focus {
+	background: var(--color-white);
+	box-shadow:
+		0 0 0 2px var(--color-accent-500),
+		0 0 32px color-mix(in oklab, var(--color-accent-500) 30%, transparent);
+}
+[data-theme='d'] .search-icon {
+	left: 1rem;
+	color: var(--color-accent-600);
+}
+[data-theme='d'] .thumb {
+	transition:
+		box-shadow 160ms ease,
+		transform 160ms ease;
+}
+[data-theme='d'] .group:hover .thumb {
+	box-shadow:
+		0 0 0 1px var(--color-accent-500),
+		0 0 28px color-mix(in oklab, var(--color-accent-500) 35%, transparent);
+}
+
+/* E · Sage — mint, soft stacked cards, a line that draws itself. */
+[data-theme='e'] {
+	--accent-fg: #06261b;
+	--color-accent-50: #e6faf2;
+	--color-accent-100: #c8f2e0;
+	--color-accent-500: #10b981;
+	--color-accent-600: #0c9c6c;
+	--color-accent-700: #0a7c56;
+	--radius-md: 0.625rem;
+	--radius-lg: 0.875rem;
+	--radius-xl: 1rem;
+	--radius-2xl: 1.25rem;
+	--stack-card: var(--color-zinc-50);
+	--stack-card-hover: #f0f0f0;
+	--stack-sheet: #ffffff;
+	--stack-shadow:
+		0 0 0 1px rgb(0 0 0 / 0.04), 0 1px 2px rgb(0 0 0 / 0.05),
+		0 8px 18px -6px rgb(0 0 0 / 0.14);
+}
+[data-theme='e'] .file-grid {
+	gap: 1rem;
+	padding-top: 1.5rem;
+}
+@media (min-width: 40rem) {
+	[data-theme='e'] .file-grid {
+		grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+	}
+}
+@media (max-width: 30rem) {
+	[data-theme='e'] .file-grid {
+		grid-template-columns: 1fr;
+	}
+}
+[data-theme='e'] .count-row {
+	position: relative;
+	border-bottom-color: transparent;
+}
+[data-theme='e'] .count-row::after {
+	content: '';
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: -1px;
+	height: 2px;
+	background: var(--color-accent-500);
+	transform-origin: left;
+	animation: draw-line 720ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes draw-line {
+	from {
+		transform: scaleX(0);
+	}
+}
+[data-theme='e'] .stack-card {
+	background: var(--stack-card);
+}
+[data-theme='e'] .stack-card:hover,
+[data-theme='e'] .stack-card[data-selected='true'] {
+	background: var(--stack-card-hover);
+}
+[data-theme='e'] .stack-card[data-selected='true'] {
+	box-shadow: inset 0 0 0 1.5px var(--color-accent-500);
+}
+[data-theme='e'] .stack-select {
+	opacity: 0;
+	transition: opacity 120ms ease;
+}
+[data-theme='e'] .stack-card:hover .stack-select,
+[data-theme='e'] .stack-card:focus-within .stack-select,
+[data-theme='e'] .stack-card[data-selected='true'] .stack-select,
+[data-theme='e'] .stack-select:checked {
+	opacity: 1;
+}
+@media (hover: none) {
+	[data-theme='e'] .stack-select {
+		opacity: 1;
+	}
+}
+[data-theme='e'] .hex-badge {
+	clip-path: polygon(25% 3%, 75% 3%, 100% 50%, 75% 97%, 25% 97%, 0 50%);
+	background: var(--color-zinc-900);
+	color: var(--color-white);
+	letter-spacing: 0.02em;
+}
+[data-theme='e'] .stack-card:has(.vis-dot[data-public='true']) .hex-badge {
+	background: var(--color-accent-500);
+	color: var(--accent-fg);
+}
+[data-theme='e'] .stack .thumb {
+	position: relative;
+	z-index: 1;
+	aspect-ratio: 1;
+	border-radius: 0.75rem;
+	background: var(--stack-sheet);
+	box-shadow: var(--stack-shadow);
+	transition:
+		transform 200ms cubic-bezier(0.16, 1, 0.3, 1),
+		box-shadow 200ms ease;
+}
+[data-theme='e'] .stack-card:hover .stack .thumb {
+	transform: translateY(-3px);
+}
+[data-theme='e'] .stack .thumb pre {
+	padding: 1rem;
+	font-size: 0.6875rem;
+	line-height: 1.1rem;
+	-webkit-line-clamp: 9;
+}
+[data-theme='e'] .thumb-icon {
+	display: none;
+}
+[data-theme='e'] .ext-label {
+	margin-top: 0;
+	font-family: var(--font-sans);
+	font-size: 2.25rem;
+	font-weight: 500;
+	letter-spacing: -0.04em;
+	text-transform: lowercase;
+	color: var(--color-zinc-400);
+}
+[data-theme='e'] .ext-label::before {
+	content: '.';
+	color: var(--color-accent-500);
+}
+[data-theme='e'] .stack-card:hover .ext-label {
+	color: var(--color-zinc-700);
+}
+
+@media (prefers-color-scheme: dark) {
+	[data-theme='a'] {
+		--accent-fg: #1a0a00;
+		--color-accent-50: #2a1506;
+		--color-accent-100: #4a2408;
+		--color-accent-500: #fb8a3c;
+		--color-accent-600: #f97316;
+		--color-accent-700: #ffb27d;
+	}
+	[data-theme='b'] {
+		--color-accent-50: #191533;
+		--color-accent-100: #292259;
+		--color-accent-500: #8b7cff;
+		--color-accent-600: #a498ff;
+		--color-accent-700: #c3baff;
+	}
+	[data-theme='c'] {
+		--color-accent-50: #2a1f02;
+		--color-accent-100: #4a3705;
+		--color-accent-500: #f5b301;
+		--color-accent-600: #ffc63d;
+		--color-accent-700: #ffd970;
+		--family-image: #e879f9;
+		--family-code: #4ade80;
+		--family-data: #facc15;
+		--family-archive: #f87171;
+		--family-site: #22d3ee;
+		--family-doc: #60a5fa;
+		--family-text: #a3a3a3;
+	}
+	[data-theme='d'] {
+		--accent-strong: var(--color-accent-500);
+		--accent-fg: #06192b;
+		--color-accent-50: #0b1d2e;
+		--color-accent-100: #0f2b46;
+		--color-accent-500: #4dabf7;
+		--color-accent-600: #74c0fa;
+		--color-accent-700: #a6d6fb;
+	}
+	[data-theme='e'] {
+		--color-accent-50: #06261b;
+		--color-accent-100: #0a3a29;
+		--color-accent-500: #34d399;
+		--color-accent-600: #5fe3b1;
+		--color-accent-700: #9df0cf;
+		--stack-card: #121212;
+		--stack-card-hover: #181818;
+		--stack-sheet: #202020;
+		--stack-shadow:
+			0 0 0 1px rgb(255 255 255 / 0.08), 0 8px 20px -8px rgb(0 0 0 / 0.6);
+	}
+	[data-theme='e'] .hex-badge {
+		background: var(--color-zinc-200);
+		color: var(--color-zinc-900);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	[data-theme='e'] .count-row::after {
+		animation: none;
+	}
+	[data-theme='e'] .stack .thumb,
+	[data-theme='e'] .stack-select {
+		transition: none;
+	}
+	[data-theme='d'] .thumb {
+		transition: none;
 	}
 }
