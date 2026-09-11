@@ -54,7 +54,29 @@ export const migrate = async ({ url, reset = false, log = console.log }) => {
 			.sort();
 		let count = 0;
 		for (const file of files) {
-			const version = file.replace(/\.sql$/u, '');
+			const version = /^(\d+).*\.sql$/u.exec(file)?.[1];
+			if (!version) {
+				throw new Error(
+					`Migration filename must start with a version: ${file}`
+				);
+			}
+			// Earlier runs stored the entire filename stem. Normalize that ledger
+			// in place so dbmate recognizes it, preserving data and applied_at.
+			const legacyVersion = file.replace(/\.sql$/u, '');
+			if (legacyVersion !== version && applied.has(legacyVersion)) {
+				if (applied.has(version)) {
+					await client.query(
+						'DELETE FROM schema_migrations WHERE version = $1',
+						[legacyVersion]
+					);
+				} else {
+					await client.query(
+						'UPDATE schema_migrations SET version = $1 WHERE version = $2',
+						[version, legacyVersion]
+					);
+					applied.add(version);
+				}
+			}
 			if (applied.has(version)) continue;
 			const sql = upSection(readFileSync(join(migrationsDir, file), 'utf8'));
 			await client.query('BEGIN');

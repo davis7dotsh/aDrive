@@ -45,14 +45,17 @@ export class PgSql extends Context.Service<PgSql, PgClient.PgClient>()(
 // real connections, so a small local pool is enough.
 export const pgLayer = (connection: PgConnection) => {
 	const acquire = Effect.acquireRelease(
-		Effect.sync(
-			() =>
-				new Pg.Pool({
-					connectionString: connection.connectionString,
-					max: 4,
-					types: typeParsers
-				})
-		),
+		Effect.sync(() => {
+			const pool = new Pg.Pool({
+				connectionString: connection.connectionString,
+				max: 4,
+				types: typeParsers
+			});
+			// pg-pool removes failed idle connections before emitting this event.
+			// Active query failures still flow through PgClient's typed errors.
+			pool.on('error', () => undefined);
+			return pool;
+		}),
 		(pool) => Effect.promise(() => pool.end())
 	);
 	return Layer.effect(
