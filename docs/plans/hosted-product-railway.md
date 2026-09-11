@@ -49,32 +49,32 @@ Everything except the bucket talks over `<service>.railway.internal`. Internal t
 
 Railway list prices, Pro plan, single region. Storage line assumes Railway Buckets. R2 would be the same $0.015 per GB plus a few dollars in request fees.
 
-| Line | 100 users | 1,000 users |
-| --- | --- | --- |
-| Pro subscription | $20 | $20 |
-| Web replicas | $40 | $120 |
-| Workers | $40 | $160 |
-| Screenshots | $10 | $30 |
-| Postgres single node with pgvector | $130 | $270 to $430 |
-| Postgres HA instead | n/a | $900 to $1,350 |
-| Embeddings via API | $1 | $10 |
-| Bucket storage | $24 | $240 |
-| Egress, presigned | $0 | $0 |
-| Egress, proxied no cache | $100 | $1,000 |
-| Egress, proxied with 70% CDN hit | $30 | $300 |
-| Total, presigned, single node DB | ~$255 | ~$850 to $1,050 |
-| Total, proxied, HA DB | ~$355 | ~$2,900 |
+| Line                               | 100 users     | 1,000 users       |
+| ---------------------------------- | ------------- | ----------------- |
+| Pro subscription                   | $20           | $20               |
+| Web replicas                       | $40           | $120              |
+| Workers                            | $40           | $160              |
+| Screenshots                        | $10           | $30               |
+| Postgres single node with pgvector | $130          | $270 to $430      |
+| Postgres HA instead                | n/a           | $900 to $1,350    |
+| Embeddings via API                 | $1            | $10               |
+| Bucket storage                     | $24           | $240              |
+| Egress, presigned                  | $0            | $0                |
+| Egress, proxied no cache           | $100          | $1,000            |
+| Egress, proxied with 70% CDN hit   | $30           | $300              |
+| Total, presigned, single node DB   | ~$265         | ~$850 to $1,010   |
+| Total, proxied no cache, HA DB     | not estimated | ~$2,480 to $2,930 |
 
 Same scenarios on the Cloudflare plan from `hosted-product.md`:
 
-| Line | 100 users | 1,000 users |
-| --- | --- | --- |
-| Workers Paid | $5 | $5 |
-| PlanetScale | $30 | $30 to $190, more storage at scale |
-| R2 storage | $24 | $246 |
-| Egress | $0 | $0 |
-| Workers AI, Queues, Browser Run, Images | ~$1 | ~$50 |
-| Total | ~$60 | ~$350 to $550 |
+| Line                                    | 100 users | 1,000 users                        |
+| --------------------------------------- | --------- | ---------------------------------- |
+| Workers Paid                            | $5        | $5                                 |
+| PlanetScale                             | $30       | $30 to $190, more storage at scale |
+| R2 storage                              | $24       | $246                               |
+| Egress                                  | $0        | $0                                 |
+| Workers AI, Queues, Browser Run, Images | ~$1       | ~$50                               |
+| Total                                   | ~$60      | ~$350 to $550                      |
 
 Where the gap comes from:
 
@@ -82,14 +82,14 @@ Where the gap comes from:
 - **Postgres.** Railway's container at 4 vCPU and 32 GB is about $400. PlanetScale PS-320 single node is $190 and HA is $570, and it is managed. At low load, PlanetScale PS-10 at $30 has no Railway equivalent since a pgvector container with enough RAM for the index is the floor.
 - **Egress.** Identical at $0 only if you accept the presigned redirect or keep R2. Proxying through Railway is the single largest possible line at scale.
 
-Railway is roughly 2 to 4 times the monthly bill at 100 and 1,000 users. In absolute terms that is $200 to $700 a month, which is not decision-making money at 1,000 paying users, but it is at 100.
+The presigned, single-node Railway estimate is about $265 versus $60 a month at 100 users, and $850 to $1,010 versus $350 to $550 at 1,000 users. These estimates imply a gap of about $205 and $300 to $660 a month, respectively.
 
 ## Recommendation
 
 Cloudflare for the product as scoped. The reasons in order:
 
 1. Public file serving with clean URLs, range requests, and free egress is the core of the product. R2 with a custom domain does this natively. Railway needs R2 anyway or a redirect hop.
-2. Cost at zero and at 100 users is an order of magnitude lower, which matters during the experimentation phase you are in.
+2. At 100 users, the estimated monthly cost is about $60 versus $265 for Railway's presigned, single-node setup, which matters during experimentation.
 3. The reliability record over the last ten months is materially worse on Railway, and the May 2026 outage was the kind that no architecture on their platform could route around.
 
 Railway wins if the shape changes toward:
@@ -102,14 +102,14 @@ A hybrid is reasonable and not weird: Railway for web and workers, R2 for bytes,
 
 ## Sources
 
-- railway.com/pricing, docs.railway.com/pricing/plans, /pricing/faqs, /pricing/cost-control
-- docs.railway.com/storage-buckets, /storage-buckets/billing, /storage-buckets/uploading-serving
-- docs.railway.com/databases/postgresql, /databases/postgresql-ha, /volumes/reference, /volumes/point-in-time-recovery
-- docs.railway.com/deployments/scaling, /deployments/regions, /deployments/serverless
-- docs.railway.com/networking/private-networking/how-it-works, /networking/domains/working-with-domains, /networking/public-networking/specs-and-limits, /networking/cdn, /networking/waf
-- docs.railway.com/guides/cron-workers-queues, /guides/playwright, /cron-jobs
-- docs.railway.com/infrastructure-as-code, /environments, /observability
-- blog.railway.com incident reports: 2026-05-19 GCP account outage, 2026-03-30 cached authenticated responses, 2026-02-11, 2026-07-02
-- status.railway.com
-- developers.cloudflare.com/workers-ai/platform/pricing, developers.cloudflare.com/r2/pricing
-- planetscale.com/docs/postgres/pricing
+- Railway [pricing](https://railway.com/pricing), [plans](https://docs.railway.com/pricing/plans), [pricing FAQs](https://docs.railway.com/pricing/faqs), [cost control](https://docs.railway.com/pricing/cost-control)
+- Railway [storage buckets](https://docs.railway.com/storage-buckets), [bucket billing](https://docs.railway.com/storage-buckets/billing), [uploading and serving files](https://docs.railway.com/storage-buckets/uploading-serving)
+- Railway [PostgreSQL](https://docs.railway.com/databases/postgresql), [PostgreSQL HA](https://docs.railway.com/databases/postgresql-ha), [volumes](https://docs.railway.com/volumes/reference), [point-in-time recovery](https://docs.railway.com/volumes/point-in-time-recovery)
+- Railway [scaling](https://docs.railway.com/deployments/scaling), [regions](https://docs.railway.com/deployments/regions), [serverless](https://docs.railway.com/deployments/serverless)
+- Railway [private networking](https://docs.railway.com/networking/private-networking/how-it-works), [domains](https://docs.railway.com/networking/domains/working-with-domains), [public networking limits](https://docs.railway.com/networking/public-networking/specs-and-limits), [CDN](https://docs.railway.com/networking/cdn), [WAF](https://docs.railway.com/networking/waf)
+- Railway [cron jobs, workers, and queues](https://docs.railway.com/guides/cron-workers-queues), [Playwright](https://docs.railway.com/guides/playwright), [cron jobs](https://docs.railway.com/cron-jobs)
+- Railway [infrastructure as code](https://docs.railway.com/infrastructure-as-code), [environments](https://docs.railway.com/environments), [observability](https://docs.railway.com/observability)
+- Railway incident reports: [2026-05-19 GCP account outage](https://blog.railway.com/p/incident-report-may-19-2026-gcp-account-outage), [2026-03-30 cached authenticated responses](https://blog.railway.com/p/incident-report-march-30-2026-authenticated-user-data-cached), [2026-02-11](https://blog.railway.com/p/incident-report-february-11-2026), [2026-07-02](https://blog.railway.com/p/incident-report-july-2-2026-us-east-services-outage)
+- [Railway status](https://status.railway.com)
+- Cloudflare [Workers AI pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/), [R2 pricing](https://developers.cloudflare.com/r2/pricing/)
+- [PlanetScale Postgres pricing](https://planetscale.com/docs/postgres/pricing)
