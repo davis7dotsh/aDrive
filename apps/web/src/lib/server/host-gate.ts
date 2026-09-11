@@ -23,17 +23,25 @@ const origin = (value: string, label: string) => {
 	return parsed.origin;
 };
 
-const domain = (value: string, label: string) => {
+const domain = (value: string, label: string, scheme: string) => {
 	const parsed = (() => {
 		try {
-			return new URL(`http://${value}/`);
+			return new URL(`${scheme}//${value}/`);
 		} catch {
 			return null;
 		}
 	})();
+	// URL.host removes a scheme's default port. Normalize using the actual
+	// content scheme so generated origins and incoming URL.host agree.
+	const defaultPort =
+		scheme === 'http:' ? '80' : scheme === 'https:' ? '443' : null;
+	const suppliedHost = value.toLowerCase();
 	if (
 		parsed === null ||
-		parsed.host !== value ||
+		(parsed.host !== suppliedHost &&
+			!(
+				defaultPort !== null && `${parsed.host}:${defaultPort}` === suppliedHost
+			)) ||
 		value.includes('/') ||
 		value.includes('@')
 	) {
@@ -46,8 +54,12 @@ const domain = (value: string, label: string) => {
 
 export const normalizeOrigins = (config: OriginConfig) => {
 	const dashboardOrigin = origin(config.dashboardOrigin, 'DASHBOARD_ORIGIN');
-	const contentDomain = domain(config.contentDomain, 'CONTENT_DOMAIN');
 	const dashboard = new URL(dashboardOrigin);
+	const contentDomain = domain(
+		config.contentDomain,
+		'CONTENT_DOMAIN',
+		dashboard.protocol
+	);
 	if (
 		dashboard.host === contentDomain ||
 		dashboard.host.endsWith(`.${contentDomain}`)

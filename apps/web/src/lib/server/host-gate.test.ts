@@ -68,6 +68,42 @@ describe('host gate', () => {
 		expect(classifyRoute('/')).toBe('dashboard');
 	});
 
+	it.each([
+		{ scheme: 'http:', port: '80', suffix: '' },
+		{ scheme: 'https:', port: '443', suffix: '' },
+		{ scheme: 'https:', port: '80', suffix: ':80' },
+		{ scheme: 'http:', port: '443', suffix: ':443' },
+		{ scheme: 'https:', port: '8443', suffix: ':8443' }
+	])(
+		'normalizes $scheme content port $port for generation and routing',
+		({ scheme, port, suffix }) => {
+			const config = {
+				dashboardOrigin: `${scheme}//drive.example.com`,
+				contentDomain: `content.example.com:${port}`
+			};
+			const normalized = normalizeOrigins(config);
+			expect(normalized.contentDomain).toBe(`content.example.com${suffix}`);
+			const contentOrigin = contentOriginFor(
+				normalized.contentScheme,
+				normalized.contentDomain,
+				'acme'
+			);
+			expect(contentOrigin).toBe(
+				`${scheme}//acme.content.example.com${suffix}`
+			);
+			expect(
+				assertHostRoute(new URL(`${contentOrigin}/f/file-id`), config)
+			).toEqual({ route: 'content', slug: 'acme' });
+			const wrongPort = port === '8443' ? '8444' : '8443';
+			expect(() =>
+				assertHostRoute(
+					new URL(`${scheme}//acme.content.example.com:${wrongPort}/f/file-id`),
+					config
+				)
+			).toThrow(MisdirectedRequest);
+		}
+	);
+
 	it('reads the slug from the leading host label only', () => {
 		expect(
 			contentSlugFromHost('acme.content.example.com', origins.contentDomain)

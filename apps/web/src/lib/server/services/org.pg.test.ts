@@ -27,7 +27,7 @@ const config = AppConfig.of({
 	embeddingDimensions: 384
 });
 
-const createContext = async () => {
+const createContext = async ({ failCacheDelete = false } = {}) => {
 	const suffix = crypto.randomUUID().replaceAll('-', '').slice(0, 16);
 	const control = new Pg.Client({ connectionString: TEST_DATABASE_URL });
 	await control.connect();
@@ -54,6 +54,7 @@ const createContext = async () => {
 						put: async () => undefined,
 						delete: async (key) => {
 							deleted.push(key);
+							if (failCacheDelete) throw new Error('KV delete unavailable');
 						}
 					})
 				)
@@ -114,6 +115,49 @@ const createContext = async () => {
 };
 
 describe('organization slug transactions', () => {
+	it('returns the committed rename when cache deletions fail and attempts both keys', async () => {
+		const ctx = await createContext({ failCacheDelete: true });
+		const [a] = ctx.tenants;
+		const newSlug = `changed-${ctx.suffix}`;
+		const logged = vi
+			.spyOn(console, 'error')
+			.mockImplementation(() => undefined);
+		try {
+			await ctx.seed();
+			const result = await ctx.start(a, newSlug, 'cache-failure');
+			expect(
+				Exit.isSuccess(result),
+				Exit.isFailure(result) ? Cause.pretty(result.cause) : undefined
+			).toBe(true);
+			if (Exit.isSuccess(result)) {
+				expect(result.value).toMatchObject({
+					slug: newSlug,
+					contentOrigin: config.contentOriginFor(newSlug),
+					nextSlugChangeAt: expect.any(String)
+				});
+			}
+			expect(
+				(await ctx.control.query('SELECT slug FROM orgs WHERE id = $1', [a.id]))
+					.rows
+			).toEqual([{ slug: newSlug }]);
+			expect(
+				(
+					await ctx.control.query(
+						'SELECT slug FROM org_slug_history WHERE org_id = $1',
+						[a.id]
+					)
+				).rows
+			).toEqual([{ slug: a.slug }]);
+			expect(ctx.deleted.sort()).toEqual(
+				[`org-slug:${a.slug}`, `org-slug:${newSlug}`].sort()
+			);
+			expect(logged).toHaveBeenCalledTimes(2);
+		} finally {
+			logged.mockRestore();
+			await ctx.close();
+		}
+	});
+
 	it.each([false, true])(
 		'serializes a waiting rename and rechecks reservations or cooldown (same org: %s)',
 		async (sameOrg) => {

@@ -22,9 +22,34 @@
 	let current = $state(untrack(() => org));
 	let slug = $state(untrack(() => org.slug));
 	let busy = $state(false);
+	let cooldownTick = $state(0);
 
 	const unchanged = $derived(slug.trim().toLowerCase() === current.slug);
-	const locked = $derived(current.nextSlugChangeAt !== null);
+	const cooldownEndsAt = $derived(
+		current.nextSlugChangeAt ? Date.parse(current.nextSlugChangeAt) : 0
+	);
+	const locked = $derived.by(() => {
+		cooldownTick;
+		return cooldownEndsAt > Date.now();
+	});
+
+	$effect(() => {
+		const target = cooldownEndsAt;
+		const remaining = target - Date.now();
+		if (!Number.isFinite(target) || remaining <= 0) return;
+		// Thirty days exceeds the browser's signed 32-bit timer limit.
+		const boundedDelay = (delay: number) => Math.min(delay, 2_147_000_000);
+		let timer = setTimeout(checkCooldown, boundedDelay(remaining));
+		function checkCooldown() {
+			const remaining = target - Date.now();
+			if (remaining <= 0) {
+				cooldownTick += 1;
+				return;
+			}
+			timer = setTimeout(checkCooldown, boundedDelay(remaining));
+		}
+		return () => clearTimeout(timer);
+	});
 
 	const save = async () => {
 		if (unchanged || locked || busy) return;
@@ -68,7 +93,7 @@
 	</Button>
 </form>
 <p class="mt-2 text-xs leading-5 text-zinc-500">
-	{#if current.nextSlugChangeAt}
+	{#if locked && current.nextSlugChangeAt}
 		Changed recently; it can change again on {formatDate(
 			current.nextSlugChangeAt
 		)}.
