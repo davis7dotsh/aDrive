@@ -36,6 +36,20 @@ describe('mime sniffing', () => {
 		expect(sniffKind(bytes(''))).toBe('unknown');
 	});
 
+	it.each([
+		{ format: 'FAT_MAGIC', header: [0xca, 0xfe, 0xba, 0xbe] },
+		{ format: 'FAT_CIGAM', header: [0xbe, 0xba, 0xfe, 0xca] },
+		{ format: 'FAT_MAGIC_64', header: [0xca, 0xfe, 0xba, 0xbf] },
+		{ format: 'FAT_CIGAM_64', header: [0xbf, 0xba, 0xfe, 0xca] }
+	])('holds $format executables disguised as images', ({ header }) => {
+		const prefix = bytes(header);
+		expect(sniffKind(prefix)).toBe('macho');
+		expect(sniffMismatch(prefix, 'image/png').verdict).toBe('suspicious');
+		expect(sniffMismatch(prefix, 'application/octet-stream').verdict).toBe(
+			'clean'
+		);
+	});
+
 	it('recognizes BOM-prefixed active markup and avoids plain MZ text', () => {
 		expect(sniffMismatch(bytes('\uFEFF<html>'), 'image/png').verdict).toBe(
 			'suspicious'
