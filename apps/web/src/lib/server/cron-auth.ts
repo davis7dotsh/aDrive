@@ -12,10 +12,10 @@ const hexToBytes = (value: string) =>
 			)
 		: new Uint8Array(32);
 
-const hmacKey = (passcode: string, usage: KeyUsage) =>
+const hmacKey = (secret: string, usage: KeyUsage) =>
 	crypto.subtle.importKey(
 		'raw',
-		new TextEncoder().encode(passcode),
+		new TextEncoder().encode(secret),
 		{ name: 'HMAC', hash: 'SHA-256' },
 		false,
 		[usage]
@@ -25,18 +25,18 @@ const scheduledMessage = (scheduledTime: string, cron: string) =>
 	new TextEncoder().encode(`${scheduledTime}\n${cron}`);
 
 export const signScheduledRequest = async (
-	passcode: string,
+	secret: string,
 	scheduledTime: string,
 	cron: string
 ) => {
-	const key = await hmacKey(passcode, 'sign');
+	const key = await hmacKey(secret, 'sign');
 	return bytesToHex(
 		await crypto.subtle.sign('HMAC', key, scheduledMessage(scheduledTime, cron))
 	);
 };
 
 export const verifyScheduledRequest = async (
-	passcode: string,
+	secret: string,
 	scheduledTime: string | null,
 	cron: string | null,
 	signature: string | null,
@@ -50,7 +50,7 @@ export const verifyScheduledRequest = async (
 	) {
 		return false;
 	}
-	const key = await hmacKey(passcode, 'verify');
+	const key = await hmacKey(secret, 'verify');
 	return crypto.subtle.verify(
 		'HMAC',
 		key,
@@ -65,18 +65,18 @@ const jobsMessage = (timestamp: string, body: string) =>
 	new TextEncoder().encode(`jobs\n${timestamp}\n${body}`);
 
 export const signJobsRequest = async (
-	passcode: string,
+	secret: string,
 	timestamp: string,
 	body: string
 ) => {
-	const key = await hmacKey(passcode, 'sign');
+	const key = await hmacKey(secret, 'sign');
 	return bytesToHex(
 		await crypto.subtle.sign('HMAC', key, jobsMessage(timestamp, body))
 	);
 };
 
 export const verifyJobsRequest = async (
-	passcode: string,
+	secret: string,
 	timestamp: string | null,
 	body: string,
 	signature: string | null,
@@ -90,7 +90,7 @@ export const verifyJobsRequest = async (
 	) {
 		return false;
 	}
-	const key = await hmacKey(passcode, 'verify');
+	const key = await hmacKey(secret, 'verify');
 	return crypto.subtle.verify(
 		'HMAC',
 		key,

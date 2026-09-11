@@ -1,6 +1,7 @@
 import { Effect } from 'effect';
 import { describe, expect, it } from 'vitest';
 import { PgSql } from './pg';
+import { ensureTestOrg, TEST_ORG_ID } from './test/org';
 import { testPgLayer } from './test/pg';
 import {
 	commitThumbnailStorage,
@@ -15,18 +16,19 @@ const seedImage = (fileId: string) =>
 	Effect.gen(function* () {
 		const sql = yield* PgSql;
 		const now = '2026-08-13T00:00:00.000Z';
+		yield* ensureTestOrg(sql);
 		yield* sql`
 			INSERT INTO files (
-				id, display_name, content_type, kind, current_version, size_bytes,
+				id, org_id, display_name, content_type, kind, current_version, size_bytes,
 				public, is_site, created_at, updated_at, index_state
 			) VALUES (
-				${fileId}, 'image.jpg', 'image/jpeg', 'file', 1, 80, true, false,
+				${fileId}, ${TEST_ORG_ID}, 'image.jpg', 'image/jpeg', 'file', 1, 80, true, false,
 				${now}, ${now}, 'disabled'
 			)`;
 		yield* sql`
 			INSERT INTO file_versions (
-				file_id, version, r2_key, size_bytes, content_type, created_at
-			) VALUES (${fileId}, 1, ${`v/${fileId}/one`}, 80, 'image/jpeg', ${now})`;
+				file_id, org_id, version, r2_key, size_bytes, content_type, created_at
+			) VALUES (${fileId}, ${TEST_ORG_ID}, 1, ${`v/${fileId}/one`}, 80, 'image/jpeg', ${now})`;
 	});
 
 describe('dashboard thumbnail storage on postgres', () => {
@@ -36,17 +38,28 @@ describe('dashboard thumbnail storage on postgres', () => {
 			Effect.gen(function* () {
 				const sql = yield* PgSql;
 				yield* seedImage(fileId);
-				const initial = yield* thumbnailStorageState(sql, fileId, 1);
+				const initial = yield* thumbnailStorageState(
+					sql,
+					TEST_ORG_ID,
+					fileId,
+					1
+				);
 				yield* sql`UPDATE files SET purge_state = 'pending' WHERE id = ${fileId}`;
 				const committed = yield* commitThumbnailStorage(
 					sql,
+					TEST_ORG_ID,
 					fileId,
 					1,
 					`thumbnail/${fileId}/1/loser.webp`,
 					20,
 					null
 				);
-				const claimed = yield* thumbnailStorageState(sql, fileId, 1);
+				const claimed = yield* thumbnailStorageState(
+					sql,
+					TEST_ORG_ID,
+					fileId,
+					1
+				);
 				return { initial, committed, claimed };
 			})
 		);
@@ -67,6 +80,7 @@ describe('dashboard thumbnail storage on postgres', () => {
 				yield* sql`UPDATE files SET deleted_at = '2026-08-13T00:00:00.000Z' WHERE id = ${fileId}`;
 				return yield* commitThumbnailStorage(
 					sql,
+					TEST_ORG_ID,
 					fileId,
 					1,
 					`thumbnail/${fileId}/1/trash.webp`,
@@ -86,6 +100,7 @@ describe('dashboard thumbnail storage on postgres', () => {
 				yield* seedImage(fileId);
 				const winner = yield* commitThumbnailStorage(
 					sql,
+					TEST_ORG_ID,
 					fileId,
 					1,
 					`thumbnail/${fileId}/1/winner.webp`,
@@ -94,13 +109,14 @@ describe('dashboard thumbnail storage on postgres', () => {
 				);
 				const loser = yield* commitThumbnailStorage(
 					sql,
+					TEST_ORG_ID,
 					fileId,
 					1,
 					`thumbnail/${fileId}/1/loser.webp`,
 					20,
 					null
 				);
-				const state = yield* thumbnailStorageState(sql, fileId, 1);
+				const state = yield* thumbnailStorageState(sql, TEST_ORG_ID, fileId, 1);
 				return { winner, loser, state };
 			})
 		);
@@ -112,8 +128,9 @@ describe('dashboard thumbnail storage on postgres', () => {
 		});
 	});
 
-	it('charges only the growth when replacing missing derivative bytes', () => {
+	it('charges the growth and refunds the shrink when replacing a thumbnail', () => {
 		expect(thumbnailQuotaDelta(20, 24)).toBe(4);
-		expect(thumbnailQuotaDelta(20, 16)).toBe(0);
+		expect(thumbnailQuotaDelta(20, 16)).toBe(-4);
+		expect(thumbnailQuotaDelta(0, 16)).toBe(16);
 	});
 });

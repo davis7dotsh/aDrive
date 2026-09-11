@@ -29,7 +29,11 @@ describe('queue consumer endpoint', () => {
 				2
 			) + '\n';
 		const timestamp = String(Date.now());
-		const signature = await signJobsRequest(ctx.env.PASSCODE, timestamp, body);
+		const signature = await signJobsRequest(
+			ctx.env.MAINTENANCE_SECRET,
+			timestamp,
+			body
+		);
 		const response = await call(
 			POST,
 			ctx.event({

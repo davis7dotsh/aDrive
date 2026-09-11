@@ -2,20 +2,20 @@ import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
 import { AppConfig } from '$lib/server/config';
 import { runEdge } from '$lib/server/edge';
-import { Auth, authorizeRequest } from '$lib/server/services/auth';
+import { requireAuth } from '$lib/server/request-auth';
 import { Search } from '$lib/server/services/search';
 import { Tags } from '$lib/server/services/tags';
 import { Indexing } from '$lib/server/services/indexing';
 
-export const GET: RequestHandler = ({ cookies, request, url }) =>
-	runEdge(
+export const GET: RequestHandler = (event) => {
+	const { request, url } = event;
+	return runEdge(
 		Effect.gen(function* () {
-			const auth = yield* Auth;
 			const search = yield* Search;
 			const tags = yield* Tags;
 			const indexing = yield* Indexing;
 			const config = yield* AppConfig;
-			yield* authorizeRequest(auth, request, url, cookies);
+			yield* requireAuth(event);
 			const omitMeta = url.searchParams.get('omitMeta') === '1';
 			const searchInput = {
 				query: url.searchParams.get('q') ?? '',
@@ -45,3 +45,4 @@ export const GET: RequestHandler = ({ cookies, request, url }) =>
 			});
 		})
 	);
+};

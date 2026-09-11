@@ -30,7 +30,7 @@ export const readOps = (
 			const pinVersion = options.version !== undefined;
 			const rows = yield* all(
 				sql`
-					SELECT a.path, a.r2_key, a.content_type, a.size_bytes
+					SELECT f.org_id, a.path, a.r2_key, a.content_type, a.size_bytes
 					FROM files f
 					JOIN site_assets a
 						ON a.file_id = f.id AND a.version = f.current_version
@@ -54,6 +54,7 @@ export const readOps = (
 			})[0];
 			if (!asset) return yield* new NotFound({ id: fileId });
 			return {
+				orgId: asset.org_id,
 				path: asset.path,
 				r2Key: asset.r2_key,
 				contentType: asset.content_type,

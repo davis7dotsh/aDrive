@@ -69,8 +69,12 @@ commands, including an explicitly requested `--reset`, keep their existing
 database selection behavior. Migration runs serialize through a Postgres
 advisory lock and wait at most 30 seconds to acquire it.
 
-Replace the example `PASSCODE` with a long local-only value. Copy the API key
-printed by the final command, then start both local origins:
+Set `WORKOS_DEV_FAKE=true` and leave `WORKOS_API_KEY` empty to use the
+in-memory WorkOS fake in the SvelteKit development server, as configured by
+`.dev.vars.example`. The sign-in button then signs you in as `user_local`
+with no credentials. Production requires real WorkOS credentials even when
+the fake flag is set. Copy the API key printed by the final command, then
+start both local origins:
 
 ```bash
 bun --filter @adrive/web dev
@@ -170,7 +174,7 @@ Run `bun --filter @adrive/web types:worker` after changing Wrangler bindings.
 The checked-in `worker-configuration.d.ts` is generated from `wrangler.jsonc`.
 The Cloudflare adapter wrapper emits a standard module Worker with both `fetch`
 and `scheduled` exports. Its signed internal maintenance request is authenticated
-with a short-lived HMAC derived from `PASSCODE`; the endpoint cannot be invoked
+with a short-lived HMAC derived from `MAINTENANCE_SECRET`; the endpoint cannot be invoked
 with a static or public header.
 
 The `search_documents` table is derived keyword-search state. After restoring
@@ -189,10 +193,11 @@ The checked-in Wrangler D1 and R2 resource names are placeholders. The
 `AUTH_GUARD` KV namespace is already provisioned and bound. Before deployment,
 create one D1 database and one private R2 bucket, replace the D1 database ID,
 apply the migration remotely, set production dashboard/content origins, and set
-the passcode as a secret:
+the secrets (`MAINTENANCE_SECRET`, `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`,
+`WORKOS_COOKIE_PASSWORD`, `WORKOS_WEBHOOK_SECRET`):
 
 ```bash
-cd apps/web && bun x wrangler secret put PASSCODE
+cd apps/web && bun x wrangler secret put MAINTENANCE_SECRET
 ```
 
 No remote resource is created or modified by the local setup above.

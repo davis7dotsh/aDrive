@@ -15,9 +15,10 @@ import { decodeContentRows } from './types';
 export const uploadOps = (
 	internals: FileInternals
 ): Pick<FilesShape, 'upload' | 'uploadVersion' | 'restoreVersion'> => {
-	const { blobs, sql, config, tags } = internals;
+	const { blobs, sql, config, tags, org } = internals;
 	const {
-		checkStorageQuota,
+		ensureHeadroom,
+		reserveBytes,
 		compensateStoredBlob,
 		commitStoredVersion,
 		findDashboardFile
@@ -45,7 +46,7 @@ export const uploadOps = (
 								message: 'File name is invalid'
 							})
 			});
-			yield* checkStorageQuota(size);
+			yield* ensureHeadroom(size);
 			const contentType = contentTypeForUpload(displayName, input.contentType);
 			const visibility = visibilityForFile(
 				displayName,
@@ -61,35 +62,38 @@ export const uploadOps = (
 				.withTransaction(
 					Effect.gen(function* () {
 						yield* sql`
-							INSERT INTO files (
-								id, display_name, content_type, kind, current_version, size_bytes,
-								public, is_site, created_at, updated_at, expires_at, index_state
-							) VALUES (
-								${id}, ${displayName}, ${contentType}, 'file', 1, ${stored.size},
-								${visibility.public}, false, ${createdAt}, ${createdAt},
-								${input.expiresAt}, 'pending'
-							)`;
+								INSERT INTO files (
+									id, org_id, display_name, content_type, kind, current_version,
+									size_bytes, public, is_site, created_at, updated_at, expires_at,
+									index_state
+								) VALUES (
+									${id}, ${org.id}, ${displayName}, ${contentType}, 'file', 1,
+									${stored.size}, ${visibility.public}, false, ${createdAt},
+									${createdAt}, ${input.expiresAt}, 'pending'
+								)`;
 						yield* sql`
-							INSERT INTO file_versions (
-								file_id, version, r2_key, size_bytes, sha256, content_type,
-								created_at, text_content
-							) VALUES (
-								${id}, 1, ${r2Key}, ${stored.size}, NULL, ${contentType},
-								${createdAt}, NULL
-							)`;
+								INSERT INTO file_versions (
+									file_id, org_id, version, r2_key, size_bytes, sha256,
+									content_type, created_at, text_content
+								) VALUES (
+									${id}, ${org.id}, 1, ${r2Key}, ${stored.size}, NULL,
+									${contentType}, ${createdAt}, NULL
+								)`;
 						if (resolvedTags.length > 0) {
 							yield* sql`
 								INSERT INTO file_tags ${sql.insert(
 									resolvedTags.map((tag) => ({ file_id: id, tag_id: tag.id }))
 								)}`;
 						}
-						yield* refreshSearchDocument(sql, id);
+						yield* refreshSearchDocument(sql, id, org.id);
+						yield* reserveBytes(org.id, stored.size);
 					})
 				)
 				.pipe(
-					Effect.mapError(
-						(cause) =>
+					Effect.catchTag('SqlError', (cause) =>
+						Effect.fail(
 							new StorageError({ operation: 'commit file metadata', cause })
+						)
 					)
 				);
 			yield* commit.pipe(
@@ -97,7 +101,7 @@ export const uploadOps = (
 					compensateStoredBlob(failure, id, 1, r2Key, 'upload')
 				)
 			);
-			forgetTagListCache();
+			forgetTagListCache(org.id);
 
 			return {
 				file: {
@@ -141,7 +145,7 @@ export const uploadOps = (
 								message: 'Upload length is invalid'
 							})
 			});
-			yield* checkStorageQuota(size);
+			yield* ensureHeadroom(size);
 			const contentType = contentTypeForUpload(
 				current.displayName,
 				input.contentType
@@ -188,15 +192,16 @@ export const uploadOps = (
 				});
 			}
 			const rows = yield* sql`
-				SELECT
-					f.id, f.display_name, v.content_type, v.version, v.size_bytes,
-					f.public AS is_public, f.is_site, v.r2_key, v.thumbnail_r2_key, v.created_at
-				FROM files f
-				JOIN file_versions v ON v.file_id = f.id
-				WHERE f.id = ${id} AND v.version = ${version}
-					AND f.deleted_at IS NULL AND f.is_site = false
-				LIMIT 1
-			`.pipe(
+					SELECT
+						f.id, f.org_id, f.display_name, v.content_type, v.version,
+						v.size_bytes, f.public AS is_public, f.is_site, v.r2_key,
+						v.thumbnail_r2_key, v.created_at
+					FROM files f
+					JOIN file_versions v ON v.file_id = f.id
+					WHERE f.id = ${id} AND f.org_id = ${org.id} AND v.version = ${version}
+						AND f.deleted_at IS NULL AND f.is_site = false
+					LIMIT 1
+				`.pipe(
 				Effect.mapError(
 					(cause) =>
 						new StorageError({ operation: 'find version to restore', cause })
@@ -204,7 +209,7 @@ export const uploadOps = (
 			);
 			const source = decodeContentRows(rows)[0];
 			if (!source) return yield* new NotFound({ id });
-			yield* checkStorageQuota(source.size_bytes);
+			yield* ensureHeadroom(source.size_bytes);
 			const sourceObject = yield* blobs.get(source.r2_key);
 			const r2Key = `v/${current.id}/${crypto.randomUUID()}`;
 			const stored = yield* blobs.put(

@@ -13,10 +13,11 @@ import {
 } from '../../file-rows';
 import { visibilityForFile } from '../../file-policy';
 import { refreshSearchDocument } from '../../search-index';
-import { ensureStoredBytesWithin } from '../../storage-quota';
+import { ensureStorageHeadroom, reserveWithinPlan } from '../../storage-quota';
 import type { AppConfig } from '../../config';
 import type { Blobs } from '../blobs';
 import type { Tags } from '../tags';
+import type { CurrentOrg } from '../current-org';
 import type { MutationResult } from './types';
 
 export interface CoreDeps {
@@ -24,10 +25,11 @@ export interface CoreDeps {
 	readonly blobs: Blobs['Service'];
 	readonly config: AppConfig['Service'];
 	readonly tags: Tags['Service'];
+	readonly org: CurrentOrg['Service'];
 }
 
 export const createInternals = (deps: CoreDeps) => {
-	const { sql, blobs, config, tags } = deps;
+	const { sql, blobs, config, tags, org } = deps;
 	const compensateStoredBlob = <OriginalError>(
 		failure: OriginalError,
 		fileId: string,
@@ -64,10 +66,12 @@ export const createInternals = (deps: CoreDeps) => {
 			}
 		);
 
-	// One aggregate query per upload; at personal scale this stays cheap
-	// and cannot drift the way a maintained counter can.
-	const checkStorageQuota = (incomingBytes: number) =>
-		ensureStoredBytesWithin(sql, config.maxTotalBytes, incomingBytes);
+	// Cheap read before a body streams; the reservation inside the commit
+	// transaction is what actually holds the bytes.
+	const ensureHeadroom = (incomingBytes: number) =>
+		ensureStorageHeadroom(sql, org.id, incomingBytes);
+	const reserveBytes = (orgId: string, delta: number) =>
+		reserveWithinPlan(sql, orgId, delta);
 
 	const findDashboardFile = Effect.fn('Files.findDashboardFile')(function* (
 		id: string
@@ -75,7 +79,7 @@ export const createInternals = (deps: CoreDeps) => {
 		const rows = yield* sql`
 			SELECT ${sql.literal(dashboardFileColumns)}
 			FROM files f
-			WHERE f.id = ${id}
+			WHERE f.id = ${id} AND f.org_id = ${org.id}
 			LIMIT 1`.pipe(
 			Effect.mapError(
 				(cause) => new StorageError({ operation: 'find dashboard file', cause })
@@ -111,7 +115,8 @@ export const createInternals = (deps: CoreDeps) => {
 							updated_at = ${updatedAt}, index_state = 'pending',
 							index_cursor = 0, index_attempts = 0, index_error = NULL,
 							index_next_run_at = NULL, index_lease_token = NULL
-						WHERE id = ${current.id} AND current_version = ${current.version}
+						WHERE id = ${current.id} AND org_id = ${org.id}
+							AND current_version = ${current.version}
 							AND deleted_at IS NULL
 						RETURNING id`;
 					if (updated.length !== 1) {
@@ -121,14 +126,15 @@ export const createInternals = (deps: CoreDeps) => {
 						});
 					}
 					yield* sql`
-						INSERT INTO file_versions (
-							file_id, version, r2_key, size_bytes, sha256, content_type,
-							created_at, text_content
-						) VALUES (
-							${current.id}, ${version}, ${r2Key}, ${size}, NULL, ${contentType},
-							${updatedAt}, NULL
-						)`;
-					yield* refreshSearchDocument(sql, current.id);
+							INSERT INTO file_versions (
+								file_id, org_id, version, r2_key, size_bytes, sha256,
+								content_type, created_at, text_content
+							) VALUES (
+								${current.id}, ${org.id}, ${version}, ${r2Key}, ${size}, NULL,
+								${contentType}, ${updatedAt}, NULL
+							)`;
+					yield* refreshSearchDocument(sql, current.id, org.id);
+					yield* reserveBytes(org.id, size);
 				})
 			)
 			.pipe(
@@ -161,8 +167,10 @@ export const createInternals = (deps: CoreDeps) => {
 		blobs,
 		config,
 		tags,
+		org,
 		compensateStoredBlob,
-		checkStorageQuota,
+		ensureHeadroom,
+		reserveBytes,
 		findDashboardFile,
 		commitStoredVersion
 	};

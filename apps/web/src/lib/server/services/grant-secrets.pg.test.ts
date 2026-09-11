@@ -20,6 +20,7 @@ const mintFromRequest = (fileId: string) =>
 			const secrets = yield* GrantSecrets;
 			return yield* secrets.mint({
 				contentOrigin: 'https://content.example.test',
+				orgId: 'org_test',
 				fileId,
 				version: 4,
 				now
@@ -36,6 +37,7 @@ const verifyFromRequest = (
 			const secrets = yield* GrantSecrets;
 			return yield* secrets.verify({
 				contentOrigin: 'https://content.example.test',
+				orgId: 'org_test',
 				requestOrigin: 'https://content.example.test',
 				fileId,
 				version: 4,
@@ -108,6 +110,7 @@ describe('persisted content grant secrets', () => {
 				verifyPrivateGrant({
 					signingKey: replacement,
 					contentOrigin: 'https://content.example.test',
+					orgId: 'org_test',
 					requestOrigin: 'https://content.example.test',
 					fileId,
 					version: 4,
@@ -138,6 +141,7 @@ describe('persisted content grant secrets', () => {
 			verifyPrivateGrant({
 				signingKey: 'the guessed human PASSCODE',
 				contentOrigin: 'https://content.example.test',
+				orgId: 'org_test',
 				requestOrigin: 'https://content.example.test',
 				fileId,
 				version: 4,

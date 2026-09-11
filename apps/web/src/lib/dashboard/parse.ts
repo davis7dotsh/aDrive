@@ -24,7 +24,6 @@ import type {
 // Response envelopes that @adrive/shared does not name as types.
 type ApiKeyListResponse = { readonly keys: ReadonlyArray<ApiKey> };
 type ApiKeyCreateResponse = { readonly key: ApiKey; readonly token: string };
-type SessionsRevokedResponse = { readonly revoked: number };
 type SemanticStatus = {
 	readonly enabled: boolean;
 	readonly indexedChunks: number;
@@ -262,14 +261,5 @@ export const parseApiKeyCreateResponse = (
 	return {
 		key: parseApiKey(record.key, 'key.key'),
 		token: text(record.token, 'key.token')
-	};
-};
-
-export const parseSessionsRevokedResponse = (
-	value: unknown
-): SessionsRevokedResponse => {
-	const record = requireRecord(value, 'sessions');
-	return {
-		revoked: integer(record.revoked, 'sessions.revoked')
 	};
 };

@@ -2,16 +2,12 @@ import { FileMutationSchema } from '@adrive/shared';
 import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
 import { runEdge, runEdgeWithEvent, runWorkerProgram } from '$lib/server/edge';
+import { requireAuth, requireWrite } from '$lib/server/request-auth';
 import { AppConfig } from '$lib/server/config';
 import { validateExpiration } from '$lib/server/auth-policy';
 import { InvalidRequest } from '$lib/server/errors';
 import { decodeJson } from '$lib/server/request-json';
 import { parsePageSize } from '$lib/server/list-cursor';
-import {
-	Auth,
-	authorizeRequest,
-	authorizeWriteRequest
-} from '$lib/server/services/auth';
 import { Files } from '$lib/server/services/files';
 import { Tags } from '$lib/server/services/tags';
 import { Indexing } from '$lib/server/services/indexing';
@@ -19,15 +15,15 @@ import { Indexing } from '$lib/server/services/indexing';
 const readMutation = (request: Request) =>
 	decodeJson(request, FileMutationSchema, 'File mutation is invalid');
 
-export const GET: RequestHandler = ({ cookies, params, request, url }) =>
-	runEdge(
+export const GET: RequestHandler = (event) => {
+	const { params, request, url } = event;
+	return runEdge(
 		Effect.gen(function* () {
-			const auth = yield* Auth;
 			const files = yield* Files;
 			const tags = yield* Tags;
 			const indexing = yield* Indexing;
 			const config = yield* AppConfig;
-			yield* authorizeRequest(auth, request, url, cookies);
+			yield* requireAuth(event);
 			// File detail, tag list, and indexing status are independent D1
 			// reads; run them concurrently like the list and search routes.
 			const [detail, tagList, semantic] = yield* Effect.all(
@@ -60,16 +56,16 @@ export const GET: RequestHandler = ({ cookies, params, request, url }) =>
 			});
 		})
 	);
+};
 
 export const PATCH: RequestHandler = async (event) => {
-	const { cookies, params, request, url } = event;
+	const { params, request, url } = event;
 	const output = await runEdgeWithEvent(
 		event,
 		Effect.gen(function* () {
-			const auth = yield* Auth;
 			const files = yield* Files;
 			const indexing = yield* Indexing;
-			yield* authorizeWriteRequest(auth, request, url, cookies);
+			yield* requireWrite(event);
 			const mutation = yield* readMutation(request);
 			const result =
 				mutation.action === 'visibility'
@@ -122,7 +118,8 @@ export const PATCH: RequestHandler = async (event) => {
 				Effect.gen(function* () {
 					const indexing = yield* Indexing;
 					yield* indexing.process(params.id);
-				})
+				}),
+				event.locals.auth
 			)
 		);
 	}
@@ -133,7 +130,8 @@ export const PATCH: RequestHandler = async (event) => {
 				Effect.gen(function* () {
 					const files = yield* Files;
 					yield* files.sweepPurges(1);
-				})
+				}),
+				event.locals.auth
 			)
 		);
 	}

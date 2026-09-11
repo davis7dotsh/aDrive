@@ -11,8 +11,14 @@
 // Each file is replayed into an in-memory SQLite database, then copied row
 // by row with type conversion (0/1 -> boolean, ISO text -> timestamptz).
 //
-//   bun apps/web/scripts/d1-to-postgres.mjs --dump d1/ --url postgres://...
-//   bun apps/web/scripts/d1-to-postgres.mjs --dump d1/ --url ... --wipe   # truncate first
+//   bun apps/web/scripts/d1-to-postgres.mjs --dump d1/ --url postgres://... \
+//     --org org_01ABC --user user_01ABC --email you@example.com [--slug you]
+//   ... --wipe   # truncate first
+//
+// The target is multi-tenant, so the import needs the WorkOS org and user
+// ids the drive's owner signed up with (sign in once on the hosted app
+// first, then read them from the orgs/users tables or the WorkOS
+// dashboard). Every copied row lands in that org.
 //
 // R2 objects do not move. Keyword search documents are rebuilt from the
 // copied rows; semantic vectors are not carried over (Vectorize is gone),
@@ -31,12 +37,22 @@ const arg = (flag) => {
 const dumpPath = arg('--dump');
 const url = arg('--url') ?? process.env.DATABASE_URL;
 const wipe = process.argv.includes('--wipe');
-if (!dumpPath || !url) {
+const orgId = arg('--org');
+const userId = arg('--user');
+const email = arg('--email');
+if (!dumpPath || !url || !orgId || !userId || !email) {
 	console.error(
-		'Usage: d1-to-postgres.mjs --dump <d1.sql> --url <postgres url> [--wipe]'
+		'Usage: d1-to-postgres.mjs --dump <d1.sql> --url <postgres url> --org <org id> --user <user id> --email <email> [--slug <slug>] [--wipe]'
 	);
 	process.exit(1);
 }
+const slug =
+	arg('--slug') ??
+	email
+		.split('@')[0]
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, '-')
+		.replace(/^-|-$/g, '');
 
 const sqlite = new DatabaseSync(':memory:', {
 	enableForeignKeyConstraints: false
@@ -131,14 +147,31 @@ try {
 	await client.query('BEGIN');
 	if (wipe) {
 		await client.query(
-			'TRUNCATE files, tags, api_keys, device_codes, dashboard_sessions, credential_state, site_upload_sessions, pending_site_asset_deletes, instance_secrets CASCADE'
+			'TRUNCATE files, tags, api_keys, device_codes, site_upload_sessions, pending_site_asset_deletes, instance_secrets CASCADE'
 		);
 	}
+	await client.query(
+		`INSERT INTO orgs (id, slug, name) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING`,
+		[orgId, slug, `${slug}'s drive`]
+	);
+	await client.query(
+		`INSERT INTO users (id, email, email_verified) VALUES ($1, $2, true) ON CONFLICT (id) DO NOTHING`,
+		[userId, email]
+	);
+	await client.query(
+		`INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, 'owner') ON CONFLICT DO NOTHING`,
+		[orgId, userId]
+	);
+	await client.query(
+		`INSERT INTO org_usage (org_id) VALUES ($1) ON CONFLICT DO NOTHING`,
+		[orgId]
+	);
 	await copy(
 		client,
 		'files',
 		[
 			'id',
+			'org_id',
 			'display_name',
 			'content_type',
 			'kind',
@@ -167,6 +200,7 @@ try {
 		],
 		(row) => ({
 			...row,
+			org_id: orgId,
 			public: bool(row.public),
 			is_site: bool(row.is_site),
 			created_at: ts(row.created_at),
@@ -191,6 +225,7 @@ try {
 		'file_versions',
 		[
 			'file_id',
+			'org_id',
 			'version',
 			'r2_key',
 			'size_bytes',
@@ -203,6 +238,7 @@ try {
 		],
 		(row) => ({
 			...row,
+			org_id: orgId,
 			created_at: ts(row.created_at),
 			text_content:
 				row.text_content == null
@@ -214,8 +250,8 @@ try {
 	await copy(
 		client,
 		'tags',
-		['id', 'name', 'normalized_name', 'color', 'created_at'],
-		(row) => ({ ...row, created_at: ts(row.created_at) })
+		['id', 'org_id', 'name', 'normalized_name', 'color', 'created_at'],
+		(row) => ({ ...row, org_id: orgId, created_at: ts(row.created_at) })
 	);
 	await copy(client, 'file_tags', ['file_id', 'tag_id'], (row) => row);
 	await copy(
@@ -229,6 +265,8 @@ try {
 		'api_keys',
 		[
 			'id',
+			'org_id',
+			'user_id',
 			'name',
 			'prefix',
 			'secret_hash',
@@ -240,6 +278,8 @@ try {
 		],
 		(row) => ({
 			...row,
+			org_id: orgId,
+			user_id: userId,
 			scope: row.scope ?? 'read-write',
 			created_at: ts(row.created_at),
 			expires_at: ts(row.expires_at),
@@ -273,11 +313,27 @@ try {
 		queuedStagedAssets += queued.rowCount;
 	}
 	console.log(`staged_site_assets queued for cleanup: ${queuedStagedAssets}`);
+	// The org's stored-byte counter is derived from what was copied.
+	await client.query(
+		`UPDATE org_usage u SET stored_bytes = COALESCE((
+			SELECT SUM(CASE
+				WHEN f.is_site THEN f.size_bytes + (
+					SELECT COALESCE(SUM(v.thumbnail_size_bytes), 0)
+					FROM file_versions v WHERE v.file_id = f.id
+				)
+				ELSE (SELECT COALESCE(SUM(v.size_bytes + v.thumbnail_size_bytes), 0)
+					FROM file_versions v WHERE v.file_id = f.id)
+			END)
+			FROM files f WHERE f.org_id = u.org_id
+		), 0) WHERE u.org_id = $1`,
+		[orgId]
+	);
+
 	// Sessions, device codes, and the passcode hash are not carried over;
 	// everyone signs in again. Keyword search documents are rebuilt.
 	await client.query(`
-		INSERT INTO search_documents (file_id, chunk_no, name, tags, body)
-		SELECT f.id, 0, f.display_name,
+		INSERT INTO search_documents (file_id, org_id, chunk_no, name, tags, body)
+		SELECT f.id, f.org_id, 0, f.display_name,
 			COALESCE((SELECT string_agg(t.name, ' ' ORDER BY t.normalized_name)
 				FROM file_tags ft JOIN tags t ON t.id = ft.tag_id WHERE ft.file_id = f.id), ''),
 			left(COALESCE(v.text_content, ''), 65536)

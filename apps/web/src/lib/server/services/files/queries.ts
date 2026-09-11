@@ -10,6 +10,7 @@ import {
 	encodeListCursor,
 	type ListCursor
 } from '../../list-cursor';
+import { tenantOrgId } from '../current-org';
 import type { FileInternals } from './internals';
 import type { FilesShape } from './types';
 import { decodeContentRows, decodeVersionRows, toVersion } from './types';
@@ -17,7 +18,7 @@ import { decodeContentRows, decodeVersionRows, toVersion } from './types';
 export const queryOps = (
 	internals: FileInternals
 ): Pick<FilesShape, 'list' | 'detail' | 'findContent'> => {
-	const { sql, findDashboardFile } = internals;
+	const { sql, org, findDashboardFile } = internals;
 	return {
 		list: Effect.fn('Files.list')(function* (trashed, page) {
 			const now = new Date().toISOString();
@@ -36,6 +37,7 @@ export const queryOps = (
 				SELECT ${sql.literal(dashboardFileColumns)}
 				FROM files f
 				WHERE ${sql.and([
+					sql`f.org_id = ${org.id}`,
 					trashed
 						? sql`f.deleted_at IS NOT NULL AND (f.purge_at IS NULL OR f.purge_at > ${now})`
 						: sql`f.deleted_at IS NULL AND (f.expires_at IS NULL OR f.expires_at > ${now})`,
@@ -90,6 +92,7 @@ export const queryOps = (
 				FROM file_versions
 				WHERE ${sql.and([
 					sql`file_id = ${id}`,
+					sql`org_id = ${org.id}`,
 					...(beforeVersion !== null ? [sql`version < ${beforeVersion}`] : [])
 				])}
 				ORDER BY version DESC
@@ -130,6 +133,11 @@ export const queryOps = (
 				});
 			}
 			const now = new Date().toISOString();
+			// Content routes run without a tenant and resolve the org from the
+			// file row (ids are globally unique); dashboard callers are pinned
+			// to their own org so a foreign id is a plain 404.
+			const orgId = tenantOrgId(org);
+			const orgFilter = sql`(${orgId}::text IS NULL OR f.org_id = ${orgId})`;
 			const available = sql`(
 				${includeUnavailable}::boolean
 				OR (
@@ -142,13 +150,14 @@ export const queryOps = (
 				version === undefined
 					? yield* sql`
 							SELECT
-								f.id, f.display_name, v.content_type, v.version, v.size_bytes,
-								f.public AS is_public, f.is_site, v.r2_key, v.thumbnail_r2_key,
-								v.created_at
+								f.id, f.org_id, f.display_name, v.content_type, v.version,
+								v.size_bytes, f.public AS is_public, f.is_site, v.r2_key,
+								v.thumbnail_r2_key, v.created_at
 							FROM files f
 							JOIN file_versions v
 								ON v.file_id = f.id AND v.version = f.current_version
-							WHERE f.id = ${id} AND ${available} AND ${siteFilter}
+							WHERE f.id = ${id} AND ${orgFilter} AND ${available}
+								AND ${siteFilter}
 							LIMIT 1
 						`.pipe(
 							Effect.mapError(
@@ -157,12 +166,12 @@ export const queryOps = (
 						)
 					: yield* sql`
 							SELECT
-								f.id, f.display_name, v.content_type, v.version, v.size_bytes,
-								f.public AS is_public, f.is_site, v.r2_key, v.thumbnail_r2_key,
-								v.created_at
+								f.id, f.org_id, f.display_name, v.content_type, v.version,
+								v.size_bytes, f.public AS is_public, f.is_site, v.r2_key,
+								v.thumbnail_r2_key, v.created_at
 							FROM files f
 							JOIN file_versions v ON v.file_id = f.id
-							WHERE f.id = ${id} AND v.version = ${version}
+							WHERE f.id = ${id} AND v.version = ${version} AND ${orgFilter}
 								AND ${available} AND ${siteFilter}
 								AND (f.is_site = false OR v.version = f.current_version)
 							LIMIT 1
@@ -192,6 +201,7 @@ export const queryOps = (
 					indexAttempts: 0,
 					indexError: null
 				},
+				orgId: row.org_id,
 				r2Key: row.r2_key,
 				thumbnailR2Key: row.thumbnail_r2_key
 			};

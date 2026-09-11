@@ -7,6 +7,7 @@ import { PgSql } from '../../pg';
 import { TEST_DATABASE_URL } from '../../test/database';
 import { createRouteContext } from '../../test/route-context';
 import { Blobs } from '../blobs';
+import { ensureTestOrg, TEST_ORG_ID, TEST_USER_ID } from '../../test/org';
 import { createInternals } from './internals';
 import { sessionOps } from './sessions';
 
@@ -15,6 +16,7 @@ describe('site asset staging competing with abort', () => {
 		'rechecks a blocked abort that commits=%s',
 		async (commits) => {
 			const ctx = await createRouteContext();
+			await runWorkerProgram(ctx.env, Effect.flatMap(PgSql, ensureTestOrg));
 			const control = new Client({ connectionString: TEST_DATABASE_URL });
 			await control.connect();
 			const sessionId = crypto.randomUUID();
@@ -26,8 +28,8 @@ describe('site asset staging competing with abort', () => {
 			try {
 				await control.query(
 					`INSERT INTO site_upload_sessions
-					 (id, file_id, display_name, version, status, created_at, expires_at)
-					 VALUES ($1, $2, 'site', 1, 'open', now(), now() + interval '1 hour')`,
+					 (org_id, id, file_id, display_name, version, status, created_at, expires_at)
+					 VALUES ('${TEST_ORG_ID}', $1, $2, 'site', 1, 'open', now(), now() + interval '1 hour')`,
 					[sessionId, fileId]
 				);
 				await control.query(
@@ -48,6 +50,7 @@ describe('site asset staging competing with abort', () => {
 						const config = yield* AppConfig;
 						const blobs = yield* Blobs;
 						const internals = createInternals({
+							org: { id: TEST_ORG_ID },
 							sql,
 							config,
 							blobs: {
@@ -83,7 +86,8 @@ describe('site asset staging competing with abort', () => {
 									Effect.succeed(failure.status)
 								)
 							);
-					})
+					}),
+					{ orgId: TEST_ORG_ID, userId: TEST_USER_ID }
 				);
 				// The uploader initially sees the committed open session. After
 				// storing bytes it must wait for the abort before recording them.

@@ -1,5 +1,19 @@
-# Copy to apps/web/.dev.vars and replace this with a long local-only passcode.
-PASSCODE="replace-with-at-least-12-characters"
+# Copy to apps/web/.dev.vars.
+
+# Signs the Worker facade's scheduled and queue self-requests. Any long
+# random string; production sets it with `wrangler secret put`.
+MAINTENANCE_SECRET="replace-with-at-least-12-characters"
+
+# WorkOS AuthKit. WORKOS_DEV_FAKE=true explicitly enables the fake in the
+# SvelteKit development server when the API key is empty or starts with
+# `fake:`. /auth/sign-in then signs in as `user_local` without credentials.
+# Production rejects missing/fake keys even with this flag. To use real
+# WorkOS, supply all four credentials; the cookie password must be 32+ chars.
+WORKOS_DEV_FAKE="true"
+WORKOS_API_KEY=""
+WORKOS_CLIENT_ID="client_replace"
+WORKOS_COOKIE_PASSWORD="replace-with-at-least-32-characters-of-random-text"
+WORKOS_WEBHOOK_SECRET="replace"
 
 # Local Postgres. `docker compose up -d` at the repo root starts one with
 # these credentials. Wrangler points the HYPERDRIVE binding at it.

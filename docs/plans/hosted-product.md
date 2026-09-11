@@ -9,6 +9,7 @@ Decisions already made:
 - All search moves into Postgres: `tsvector` + `pg_trgm` for keyword, `pgvector` for semantic. Vectorize is removed. Workers AI still produces embeddings.
 - Public content is served from `<org-slug>.<content-domain>` on a throwaway domain, one wildcard route.
 - Postgres port lands first while still single-tenant on passcode auth, so parity can be checked on the real drive before tenancy.
+- Hosted cutover uses a separate empty Postgres target. The tenancy layer does not upgrade a populated single-tenant database in place; retain that source until a verified migration with explicit owner/org mapping is available. The shipped importer supports D1 sources.
 - Stacked PRs via GitHub native `gh stack`.
 - Indexing and other background work moves to Cloudflare Queues. Cron shrinks to reconciliation sweeps.
 - Abuse at launch: hash lists + Cloudflare URL Scanner + trust levels + rate limit bindings + kill switch. ClamAV in Containers is a later phase.
@@ -251,7 +252,7 @@ CREATE TABLE org_usage (
 
 - Add `org_id text NOT NULL REFERENCES orgs(id)` to `files`, `tags`, `api_keys`, `device_codes`, `site_upload_sessions`. Child tables reach the org through their parent, but add `org_id` to `file_versions` and `file_chunks` too so the hot queries do not need a join.
 - Unique constraints gain the org: `tags (org_id, normalized_name)`, `api_keys (org_id, prefix)` if you want prefixes per org, though a global prefix is fine.
-- Backfill: create one org for the existing drive, set `org_id` on every row, then add `NOT NULL`.
+- Hosted bootstrap: apply tenancy to a separate empty database, create the owner's WorkOS identity, then import D1 metadata into that org. Populated single-tenant Postgres databases are guarded against this migration; an in-place backfill or Postgres-source import is separate work. Preserve the source database for a verified cutover.
 - Row level security as a safety net, policy keyed on a transaction-local setting. PlanetScale supports it and also advises against relying on it alone. Use it as the second layer, never the first:
 
 ```sql

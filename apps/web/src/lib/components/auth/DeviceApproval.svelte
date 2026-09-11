@@ -16,6 +16,7 @@
 	} = $props();
 
 	const toasts = getToasts();
+	const orgName = $derived(page.data.session?.org.name ?? '');
 	let busy = $state(false);
 	let approved = $state(false);
 	let deadline = $state(Date.now() + 10 * 60 * 1_000);
@@ -117,7 +118,9 @@
 				Start device sign-in again from the CLI.
 			{:else}
 				Confirm code <strong class="font-mono">{code}</strong> only if it
-				matches the CLI you started. Expires in {remainingLabel}.
+				matches the CLI you started.
+				{#if orgName}The key will belong to {orgName}.{/if}
+				Expires in {remainingLabel}.
 			{/if}
 		</p>
 	</div>

@@ -6,6 +6,7 @@ import {
 	toDashboardFile
 } from './file-rows';
 import { PgSql } from './pg';
+import { ensureTestOrg, TEST_ORG_ID } from './test/org';
 import { testPgLayer } from './test/pg';
 
 describe('dashboard file rows on postgres', () => {
@@ -16,12 +17,13 @@ describe('dashboard file rows on postgres', () => {
 			Effect.gen(function* () {
 				const sql = yield* PgSql;
 				const now = '2026-09-09T00:00:00.000Z';
-				yield* sql`INSERT INTO files (id, display_name, content_type, size_bytes, public, created_at, updated_at)
-					VALUES (${id}, ${'page.html'}, ${'text/html'}, ${10}, ${false}, ${now}, ${now})`;
-				yield* sql`INSERT INTO file_versions (file_id, version, r2_key, size_bytes, content_type, created_at)
-					VALUES (${id}, ${1}, ${`v/${id}/1`}, ${10}, ${'text/html'}, ${now})`;
-				yield* sql`INSERT INTO tags (id, name, normalized_name, created_at)
-					VALUES (${tagId}, ${'Web'}, ${`web-${tagId}`}, ${now})`;
+				yield* ensureTestOrg(sql);
+				yield* sql`INSERT INTO files (id, org_id, display_name, content_type, size_bytes, public, created_at, updated_at)
+					VALUES (${id}, ${TEST_ORG_ID}, ${'page.html'}, ${'text/html'}, ${10}, ${false}, ${now}, ${now})`;
+				yield* sql`INSERT INTO file_versions (file_id, org_id, version, r2_key, size_bytes, content_type, created_at)
+					VALUES (${id}, ${TEST_ORG_ID}, ${1}, ${`v/${id}/1`}, ${10}, ${'text/html'}, ${now})`;
+				yield* sql`INSERT INTO tags (id, org_id, name, normalized_name, created_at)
+					VALUES (${tagId}, ${TEST_ORG_ID}, ${'Web'}, ${`web-${tagId}`}, ${now})`;
 				yield* sql`INSERT INTO file_tags (file_id, tag_id) VALUES (${id}, ${tagId})`;
 				const rows = yield* sql.unsafe(
 					`SELECT ${dashboardFileColumns} FROM files f WHERE f.id = $1`,

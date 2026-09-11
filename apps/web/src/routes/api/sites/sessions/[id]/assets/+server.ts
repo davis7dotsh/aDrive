@@ -1,16 +1,16 @@
 import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
 import { runEdge } from '$lib/server/edge';
+import { requireWrite } from '$lib/server/request-auth';
 import { InvalidRequest } from '$lib/server/errors';
-import { Auth, authorizeWriteRequest } from '$lib/server/services/auth';
 import { Sites } from '$lib/server/services/sites';
 
-export const PUT: RequestHandler = ({ cookies, params, request, url }) =>
-	runEdge(
+export const PUT: RequestHandler = (event) => {
+	const { params, request, url } = event;
+	return runEdge(
 		Effect.gen(function* () {
-			const auth = yield* Auth;
 			const sites = yield* Sites;
-			yield* authorizeWriteRequest(auth, request, url, cookies);
+			yield* requireWrite(event);
 			const path = url.searchParams.get('path');
 			if (path === null) {
 				return yield* new InvalidRequest({
@@ -29,3 +29,4 @@ export const PUT: RequestHandler = ({ cookies, params, request, url }) =>
 			);
 		})
 	);
+};

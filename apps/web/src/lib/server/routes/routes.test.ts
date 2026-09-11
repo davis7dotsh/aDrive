@@ -22,7 +22,7 @@ import {
 	indexFile
 } from '../test/helpers';
 
-const SESSION_COOKIE = '__Host-adrive-session';
+const SESSION_COOKIE = '__Host-adrive-wos';
 
 // Files and versions live in Postgres now; read them through the request
 // layer rather than the D1 binding.
@@ -70,21 +70,38 @@ describe('route integration (local platform)', () => {
 		).rejects.toMatchObject({ status: 401 });
 	});
 
-	it('creates a session from the passcode', async () => {
+	it('signs in through the WorkOS callback and bootstraps a personal org', async () => {
 		const ctx = await setup();
-		const { POST } =
-			await import('../../../routes/api/auth/session/+server.js');
-		const response = await call(
-			POST,
-			ctx.event({
-				method: 'POST',
-				path: '/api/auth/session',
-				body: JSON.stringify({ passcode: ctx.env.PASSCODE }),
-				headers: { 'content-type': 'application/json' }
-			})
+		const { GET: signInGET } =
+			await import('../../../routes/auth/sign-in/+server.js');
+		const started = await call(signInGET, ctx.event({ path: '/auth/sign-in' }));
+		expect(started.status).toBe(302);
+		expect(started.headers.get('location')).toContain('/auth/callback');
+
+		const { GET: callbackGET } =
+			await import('../../../routes/auth/callback/+server.js');
+		await expect(
+			call(
+				callbackGET,
+				ctx.event({ path: '/auth/callback?code=fake:user_test:&state=wrong' })
+			)
+		).rejects.toMatchObject({ status: 400 });
+
+		await login(ctx);
+		expect(ctx.cookies.get(SESSION_COOKIE)).toMatch(/^fake:user_test:org_/);
+		const { GET } = await import('../../../routes/api/auth/check/+server.js');
+		const checked = await call(GET, ctx.event({ path: '/api/auth/check' }));
+		expect(checked.status).toBe(200);
+		const tenant = await queryPg(
+			ctx.env,
+			(sql) => sql<{ org_id: string; role: string; stored: number }>`
+				SELECT m.org_id, m.role, u.stored_bytes AS stored
+				FROM memberships m JOIN org_usage u ON u.org_id = m.org_id
+				WHERE m.user_id = 'user_test'`
 		);
-		expect(response.status).toBe(200);
-		expect(ctx.cookies.get(SESSION_COOKIE)).toBeDefined();
+		expect(tenant).toHaveLength(1);
+		expect(tenant[0]?.role).toBe('owner');
+		expect(tenant[0]?.stored).toBeGreaterThanOrEqual(0);
 	});
 
 	it('uploads, lists, links, and serves bytes end to end', async () => {
@@ -480,6 +497,65 @@ describe('route integration (local platform)', () => {
 		expect(await renderedSource.text()).toBe('<h1>lightweight preview</h1>');
 		expect(screenshot).toHaveBeenCalledOnce();
 		await ctx.drainWaitUntil();
+	});
+
+	it('mirrors WorkOS webhook removals and rejects unsigned payloads', async () => {
+		const ctx = await setup();
+		await login(ctx);
+		const { POST } =
+			await import('../../../routes/api/webhooks/workos/+server.js');
+		const deliver = (body: unknown, signed = true) =>
+			call(
+				POST,
+				ctx.event({
+					method: 'POST',
+					path: '/api/webhooks/workos',
+					body: JSON.stringify(body),
+					headers: {
+						'content-type': 'application/json',
+						...(signed ? { 'workos-signature': 't=1, v1=fake' } : {})
+					}
+				})
+			);
+		await expect(
+			deliver({ event: 'user.deleted' }, false)
+		).rejects.toMatchObject({ status: 401 });
+		const before = await queryPg(
+			ctx.env,
+			(sql) => sql<{ org_id: string }>`
+				SELECT org_id FROM memberships WHERE user_id = 'user_test'`
+		);
+		expect(before).toHaveLength(1);
+		const orgId = before[0]?.org_id ?? '';
+		const removed = await deliver({
+			event: 'organization_membership.deleted',
+			data: { organizationId: orgId, userId: 'user_test' }
+		});
+		expect(removed.status).toBe(200);
+		expect(
+			await queryPg(
+				ctx.env,
+				(sql) => sql<{ org_id: string }>`
+					SELECT org_id FROM memberships WHERE user_id = 'user_test'`
+			)
+		).toEqual([]);
+		// The session survives in WorkOS but no longer maps to a membership,
+		// so the dashboard treats it as signed out.
+		const { GET } = await import('../../../routes/api/auth/check/+server.js');
+		await expect(
+			call(GET, ctx.event({ path: '/api/auth/check' }))
+		).rejects.toMatchObject({ status: 401 });
+		// Signing in again as the same user rejoins the same org: the
+		// callback pins the org on the session and re-creates the membership.
+		const { loginAs } = await import('../test/helpers');
+		await loginAs(ctx, { userId: 'user_test', orgId });
+		expect(
+			await queryPg(
+				ctx.env,
+				(sql) => sql<{ org_id: string }>`
+					SELECT org_id FROM memberships WHERE user_id = 'user_test'`
+			)
+		).toEqual([{ org_id: orgId }]);
 	});
 
 	it('rejects credentials on a foreign origin with 421', async () => {

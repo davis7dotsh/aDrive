@@ -46,8 +46,14 @@ const rpc = async (scope: 'read-only' | 'read-write', body: unknown) => {
 				ctx,
 				credential: {
 					credentialId: 'key-1',
-					kind: 'api-key',
-					scope
+					orgId: 'org_test',
+					userId: 'user_test',
+					role: 'owner',
+					via: 'api-key',
+					scope,
+					email: 'user_test@example.test',
+					orgName: 'org_test drive',
+					orgSlug: 'org-test'
 				}
 			}),
 		{

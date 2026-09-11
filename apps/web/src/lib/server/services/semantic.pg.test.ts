@@ -5,6 +5,7 @@ import {
 } from 'effect/unstable/sql/Statement';
 import { describe, expect, it } from 'vitest';
 import { PgSql } from '../pg';
+import { ensureTestOrg, TEST_ORG_ID } from '../test/org';
 import { testPgLayer } from '../test/pg';
 import { chunkSearchText } from '../semantic-policy';
 import { searchTextLimit } from '../search-text';
@@ -34,10 +35,11 @@ const seedFile = (
 ) =>
 	Effect.gen(function* () {
 		const sql = yield* PgSql;
+		yield* ensureTestOrg(sql);
 		yield* sql`INSERT INTO files (
-				id, display_name, content_type, current_version, size_bytes,
+				id, org_id, display_name, content_type, current_version, size_bytes,
 				created_at, updated_at, deleted_at, expires_at
-			) VALUES (${id}, ${`${id}.txt`}, 'text/plain', 2, 1, ${NOW}, ${NOW}, ${options.deletedAt ?? null}, ${options.expiresAt ?? null})`;
+			) VALUES (${id}, ${TEST_ORG_ID}, ${`${id}.txt`}, 'text/plain', 2, 1, ${NOW}, ${NOW}, ${options.deletedAt ?? null}, ${options.expiresAt ?? null})`;
 		if (options.tagId) {
 			yield* sql`INSERT INTO file_tags (file_id, tag_id) VALUES (${id}, ${options.tagId})`;
 		}
@@ -58,8 +60,9 @@ describe('pgvector index', () => {
 			Effect.gen(function* () {
 				const sql = yield* PgSql;
 				const index = makeVectorIndex(sql, true);
-				yield* sql`INSERT INTO tags (id, name, normalized_name, created_at)
-					VALUES (${tagId}, ${tagId}, ${tagId}, ${NOW})`;
+				yield* ensureTestOrg(sql);
+				yield* sql`INSERT INTO tags (id, org_id, name, normalized_name, created_at)
+					VALUES (${tagId}, ${TEST_ORG_ID}, ${tagId}, ${tagId}, ${NOW})`;
 				yield* seedFile(near, { tagId });
 				yield* seedFile(far);
 				yield* seedFile(deleted, { deletedAt: NOW });
@@ -91,13 +94,14 @@ describe('pgvector index', () => {
 				// Re-upserting the same key replaces the embedding in place.
 				yield* index.upsert([chunk(far, 2, 0, 2)]);
 				const query = between(0, 1);
-				const all = yield* index.search(query, { now: NOW, tagIds: [] });
+				const filter = { orgId: TEST_ORG_ID, now: NOW, tagIds: [] };
+				const all = yield* index.search(query, filter);
 				const tagged = yield* index.search(query, {
-					now: NOW,
+					...filter,
 					tagIds: [tagId]
 				});
-				const none = yield* index.search(null, { now: NOW, tagIds: [] });
-				const count = yield* index.count;
+				const none = yield* index.search(null, filter);
+				const count = yield* index.count(TEST_ORG_ID);
 				const mine = (rows: ReadonlyArray<{ fileId: string }>) =>
 					rows.map((row) => row.fileId).filter((id) => id.startsWith(prefix));
 				return { all: mine(all), tagged: mine(tagged), none, count };
@@ -122,11 +126,13 @@ describe('pgvector index', () => {
 			Effect.gen(function* () {
 				const sql = yield* PgSql;
 				const index = makeVectorIndex(sql, true);
-				yield* sql`INSERT INTO tags (id, name, normalized_name, created_at)
-					VALUES (${tagId}, ${tagId}, ${tagId}, ${NOW})`;
+				yield* ensureTestOrg(sql);
+				yield* sql`INSERT INTO tags (id, org_id, name, normalized_name, created_at)
+					VALUES (${tagId}, ${TEST_ORG_ID}, ${tagId}, ${tagId}, ${NOW})`;
 				yield* sql`INSERT INTO files ${sql.insert(
 					[...ids, ...excluded].map((id) => ({
 						id,
+						org_id: TEST_ORG_ID,
 						display_name: id,
 						content_type: 'text/plain',
 						current_version: 2,
@@ -169,6 +175,7 @@ describe('pgvector index', () => {
 						let compiled: ReturnType<Statement<unknown>['compile']> | undefined;
 						const rows = yield* index
 							.search(unitVector(0), {
+								orgId: TEST_ORG_ID,
 								now: NOW,
 								tagIds: [tagId]
 							})

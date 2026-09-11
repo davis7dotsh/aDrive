@@ -7,7 +7,7 @@ import { AppConfig } from '../config';
 import { InvalidRequest, validate } from '../errors';
 import { maxPreviewBytes, previewKind } from '../file-preview';
 import { resolveFileContentLink } from '../file-content-link';
-import type { AuthorizedCredential } from '../services/auth';
+import type { AuthContext } from '../identity';
 import { AuthGuard } from '../services/auth-guard';
 import { Blobs } from '../services/blobs';
 import { Files } from '../services/files';
@@ -50,14 +50,14 @@ export const WRITE_TOOL_NAMES = [
 export interface McpServerInput {
 	readonly env: Env;
 	readonly ctx: ExecutionContext;
-	readonly credential: AuthorizedCredential;
+	readonly credential: AuthContext;
 }
 
 const toolValue = async <A, E>(
-	env: Env,
+	input: McpServerInput,
 	program: Effect.Effect<A, E, AppServices>
 ) => {
-	const result = await runMcp(env, program);
+	const result = await runMcp(input.env, input.credential, program);
 	return result.ok
 		? jsonResult(result.value)
 		: errorResult(result.message, result.status);
@@ -95,13 +95,15 @@ const registerReadTools = (server: McpServer, input: McpServerInput) => {
 		},
 		async () =>
 			toolValue(
-				env,
+				input,
 				Effect.gen(function* () {
 					const config = yield* AppConfig;
 					return {
-						kind: credential.kind,
+						kind: credential.via,
 						scope: credential.scope,
 						credentialId: credential.credentialId,
+						orgId: credential.orgId,
+						userId: credential.userId,
 						dashboardOrigin: config.dashboardOrigin,
 						contentOrigin: config.contentOrigin
 					};
@@ -117,7 +119,7 @@ const registerReadTools = (server: McpServer, input: McpServerInput) => {
 		},
 		async () =>
 			toolValue(
-				env,
+				input,
 				Effect.gen(function* () {
 					const files = yield* Files;
 					const tags = yield* Tags;
@@ -183,7 +185,7 @@ const registerReadTools = (server: McpServer, input: McpServerInput) => {
 		},
 		async ({ cursor, limit }) =>
 			toolValue(
-				env,
+				input,
 				Effect.gen(function* () {
 					const files = yield* Files;
 					const page = {
@@ -207,7 +209,7 @@ const registerReadTools = (server: McpServer, input: McpServerInput) => {
 		},
 		async ({ query, tag_ids, cursor }) =>
 			toolValue(
-				env,
+				input,
 				Effect.gen(function* () {
 					const search = yield* Search;
 					const page = yield* search.files({
@@ -235,7 +237,7 @@ const registerReadTools = (server: McpServer, input: McpServerInput) => {
 		},
 		async ({ id, include_text }) =>
 			toolValue(
-				env,
+				input,
 				Effect.gen(function* () {
 					const files = yield* Files;
 					const blobs = yield* Blobs;
@@ -292,7 +294,7 @@ const registerReadTools = (server: McpServer, input: McpServerInput) => {
 		},
 		async () =>
 			toolValue(
-				env,
+				input,
 				Effect.gen(function* () {
 					const tags = yield* Tags;
 					return { tags: yield* tags.list };
@@ -324,6 +326,7 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 			if (!decoded.ok) return errorResult(decoded.message, decoded.status);
 			const uploaded = await runMcp(
 				env,
+				credential,
 				Effect.gen(function* () {
 					const authGuard = yield* AuthGuard;
 					const files = yield* Files;
@@ -368,7 +371,7 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 			if (uploaded.value.kind === 'rate-limit') {
 				return errorResult(uploaded.value.message, 429);
 			}
-			scheduleIndex(env, ctx, uploaded.value.file.id);
+			scheduleIndex(env, ctx, credential, uploaded.value.file.id);
 			const { kind: _kind, ...value } = uploaded.value;
 			return jsonResult(value);
 		}
@@ -386,13 +389,14 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 		async ({ id, display_name }) => {
 			const result = await runMcp(
 				env,
+				credential,
 				Effect.gen(function* () {
 					const files = yield* Files;
 					return yield* files.rename(id, display_name);
 				})
 			);
 			if (!result.ok) return errorResult(result.message, result.status);
-			scheduleIndex(env, ctx, result.value.file.id);
+			scheduleIndex(env, ctx, credential, result.value.file.id);
 			return jsonResult(result.value);
 		}
 	);
@@ -408,7 +412,7 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 		},
 		async ({ name, color }) =>
 			toolValue(
-				env,
+				input,
 				Effect.gen(function* () {
 					const tags = yield* Tags;
 					return { tag: yield* tags.create({ name, color }) };
@@ -428,7 +432,7 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 		},
 		async ({ id, name, color }) =>
 			toolValue(
-				env,
+				input,
 				Effect.gen(function* () {
 					const tags = yield* Tags;
 					return { tag: yield* tags.update(id, { name, color }) };
@@ -446,7 +450,7 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 		},
 		async ({ id }) =>
 			toolValue(
-				env,
+				input,
 				Effect.gen(function* () {
 					const tags = yield* Tags;
 					yield* tags.remove(id);
@@ -466,7 +470,7 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 		},
 		async ({ file_id, names }) =>
 			toolValue(
-				env,
+				input,
 				Effect.gen(function* () {
 					const tags = yield* Tags;
 					const files = yield* Files;
@@ -521,6 +525,7 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 			}
 			const published = await runMcp(
 				env,
+				credential,
 				Effect.gen(function* () {
 					const authGuard = yield* AuthGuard;
 					const sites = yield* Sites;
@@ -576,7 +581,7 @@ const registerWriteTools = (server: McpServer, input: McpServerInput) => {
 			if (published.value.kind === 'rate-limit') {
 				return errorResult(published.value.message, 429);
 			}
-			scheduleIndex(env, ctx, published.value.file.id);
+			scheduleIndex(env, ctx, credential, published.value.file.id);
 			const { kind: _kind, ...value } = published.value;
 			return jsonResult(value);
 		}

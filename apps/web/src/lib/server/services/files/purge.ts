@@ -10,7 +10,7 @@ import type { FilesShape } from './types';
 export const purgeOps = (
 	internals: FileInternals
 ): Pick<FilesShape, 'sweepPurges'> => {
-	const { sql, blobs } = internals;
+	const { sql, blobs, org } = internals;
 	return {
 		sweepPurges: Effect.fn('Files.sweepPurges')(function* (limit) {
 			const bounded = Math.max(1, Math.min(limit, 10));
@@ -18,7 +18,7 @@ export const purgeOps = (
 			const due = yield* sql<{ id: string }>`
 				SELECT id
 				FROM files
-				WHERE (
+				WHERE org_id = ${org.id} AND ((
 					(
 						(expires_at IS NOT NULL AND expires_at <= ${now})
 						OR (deleted_at IS NOT NULL AND purge_at IS NOT NULL AND purge_at <= ${now})
@@ -28,7 +28,7 @@ export const purgeOps = (
 				) OR (
 					purge_state = 'pending'
 					AND (purge_next_run_at IS NULL OR purge_next_run_at <= ${now})
-				)
+				))
 				ORDER BY COALESCE(purge_at, expires_at), id
 				LIMIT ${bounded}
 			`.pipe(
@@ -47,7 +47,7 @@ export const purgeOps = (
 						purge_at = COALESCE(purge_at, ${now}),
 						purge_attempts = purge_attempts + 1,
 						purge_error = NULL, purge_next_run_at = ${leaseUntil}
-					WHERE id = ${row.id} AND (
+					WHERE id = ${row.id} AND org_id = ${org.id} AND (
 						(
 							purge_state IN ('none', 'failed')
 							AND (
@@ -124,8 +124,8 @@ export const purgeOps = (
 				);
 				if (!deleted) continue;
 
-				yield* completePurge(sql, row.id);
-				forgetTagListCache();
+				yield* completePurge(sql, org.id, row.id);
+				forgetTagListCache(org.id);
 			}
 			return due.length;
 		})

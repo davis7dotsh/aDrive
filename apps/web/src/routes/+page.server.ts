@@ -60,10 +60,12 @@ const preloadUrls = (
 // failure falls back to bare URLs, which still self-heal after generation.
 const grantedThumbnailPreloads = async (
 	env: Env | undefined,
+	auth: App.Locals['auth'],
 	list: FileListResponse
 ) => {
 	const plain = preloadUrls(list, []);
-	if (plain.length === 0 || env === undefined) return plain;
+	if (plain.length === 0 || env === undefined || auth === null) return plain;
+	const orgId = auth.orgId;
 	try {
 		const minted = await runWorkerProgram(
 			env,
@@ -74,13 +76,15 @@ const grantedThumbnailPreloads = async (
 						const secrets = yield* GrantSecrets;
 						return yield* secrets.mint({
 							contentOrigin: config.contentOrigin,
+							orgId,
 							fileId: id,
 							version
 						});
 					})
 				),
 				{ concurrency: 'unbounded' }
-			)
+			),
+			auth
 		);
 		return preloadUrls(
 			list,
@@ -127,6 +131,7 @@ const tagIds = (url: URL) => {
 export const load: PageServerLoad = async ({
 	depends,
 	fetch,
+	locals,
 	platform,
 	url
 }) => {
@@ -182,6 +187,7 @@ export const load: PageServerLoad = async ({
 			initialError: '',
 			thumbnailPreloads: await grantedThumbnailPreloads(
 				platform?.env,
+				locals.auth,
 				initialList
 			)
 		};

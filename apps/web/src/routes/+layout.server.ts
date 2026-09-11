@@ -1,26 +1,18 @@
 import type { LayoutServerLoad } from './$types';
 
-export const load: LayoutServerLoad = async ({ fetch, setHeaders, url }) => {
+// The handle hook already resolved the session; expose only what the
+// shell renders so the sealed cookie and ids never reach the client.
+export const load: LayoutServerLoad = ({ locals, setHeaders, url }) => {
 	setHeaders({ 'Cache-Control': 'private, no-store' });
-	let response: Response;
-	try {
-		response = await fetch('/api/auth/check');
-	} catch {
-		return {
-			browserSession: false,
-			authError: 'Could not restore the session',
-			origin: url.origin
-		};
-	}
-	if (response.ok) {
-		return { browserSession: true, authError: '', origin: url.origin };
-	}
-	if (response.status === 401) {
-		return { browserSession: false, authError: '', origin: url.origin };
-	}
+	const auth = locals.auth;
 	return {
-		browserSession: false,
-		authError: `Could not restore the session (${response.status})`,
+		session:
+			auth && auth.via === 'session'
+				? {
+						user: { email: auth.email },
+						org: { name: auth.orgName, slug: auth.orgSlug }
+					}
+				: null,
 		origin: url.origin
 	};
 };

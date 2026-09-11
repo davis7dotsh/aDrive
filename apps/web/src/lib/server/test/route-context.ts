@@ -38,26 +38,38 @@ export interface RouteTestContext {
 	readonly env: Env;
 	readonly cookies: TestCookieStore;
 	readonly url: (path: string) => URL;
-	readonly event: (input: {
-		method?: string;
-		path: string;
-		body?: BodyInit | null;
-		headers?: Record<string, string>;
-		params?: Record<string, string>;
-	}) => RequestEvent;
+	readonly event: (input: EventInput) => RequestEvent;
 	readonly drainWaitUntil: () => Promise<void>;
+}
+
+export interface EventInput {
+	method?: string;
+	path: string;
+	body?: BodyInit | null;
+	headers?: Record<string, string>;
+	params?: Record<string, string>;
 }
 
 // SvelteKit types RequestEvent per route with phantom params, which a
 // generic test event can never satisfy; the runtime shape is what matters,
-// so this is the single sanctioned cast point.
+// so this is the single sanctioned cast point. The handle hook does not
+// run here, so its identity step is replayed first: locals.auth is
+// resolved from the Authorization header or the cookie jar. The import
+// is deferred because test files mock $app/server with a factory that
+// imports this module, and request-auth reaches $app/server through edge.
 export const call = async <E, R>(
 	handler: (event: E) => R,
 	event: RequestEvent
-): Promise<R extends Promise<infer A> ? A : R> =>
-	(handler as (event: RequestEvent) => R)(event) as Promise<
+): Promise<R extends Promise<infer A> ? A : R> => {
+	if (event.locals.auth === null && event.platform?.env) {
+		const { resolveEventAuth } = await import('../request-auth');
+		const resolved = await resolveEventAuth(event.platform.env, event);
+		event.locals.auth = resolved.auth;
+	}
+	return (handler as (event: RequestEvent) => R)(event) as Promise<
 		R extends Promise<infer A> ? A : R
 	>;
+};
 
 export const createRouteContext = async (): Promise<RouteTestContext> => {
 	const { getTestPlatform } = await import('./platform');
@@ -65,11 +77,19 @@ export const createRouteContext = async (): Promise<RouteTestContext> => {
 	const platformEnv = proxy.env as Env;
 	// Origins are pinned so a developer's .dev.vars overrides (for example
 	// a Tailscale hostname) do not change what the suite asserts.
+	// The WorkOS fake is forced so a developer's real credentials in
+	// .dev.vars never leak into the suite.
 	const env = {
 		...platformEnv,
 		DASHBOARD_ORIGIN,
 		CONTENT_ORIGIN: 'http://localhost:5174',
-		PASSCODE: platformEnv.PASSCODE ?? 'adrive-route-test-passcode'
+		MAINTENANCE_SECRET:
+			platformEnv.MAINTENANCE_SECRET ?? 'adrive-route-test-maintenance',
+		WORKOS_API_KEY: 'fake:route-tests',
+		WORKOS_DEV_FAKE: 'true',
+		WORKOS_CLIENT_ID: 'client_test',
+		WORKOS_COOKIE_PASSWORD: 'route-test-cookie-password-of-32-characters!',
+		WORKOS_WEBHOOK_SECRET: 'route-test-webhook'
 	} as Env;
 	const cookies = new TestCookieStore();
 
@@ -79,13 +99,7 @@ export const createRouteContext = async (): Promise<RouteTestContext> => {
 		body,
 		headers = {},
 		params = {}
-	}: {
-		method?: string;
-		path: string;
-		body?: BodyInit | null;
-		headers?: Record<string, string>;
-		params?: Record<string, string>;
-	}): RequestEvent => {
+	}: EventInput): RequestEvent => {
 		const url = new URL(path, DASHBOARD_ORIGIN);
 		// Upload routes require Content-Length (quota checks); undici only
 		// sets it for fixed-length bodies, so supply it for strings here.
@@ -126,7 +140,7 @@ export const createRouteContext = async (): Promise<RouteTestContext> => {
 			route: { id: null },
 			setHeaders: () => {},
 			isDataRequest: false,
-			locals: {},
+			locals: { auth: null },
 			fetch: globalThis.fetch
 		} as unknown as RequestEvent;
 		setRequestEvent(event);

@@ -3,8 +3,8 @@ import Pg from 'pg';
 import { describe, expect, it } from 'vitest';
 import { PgSql, pgLayer } from './pg';
 import { refreshAllIndexedTags, refreshSearchDocument } from './search-index';
-import { ensureStoredBytesWithin } from './storage-quota';
 import { TEST_DATABASE_URL } from './test/database';
+import { ensureTestOrg, TEST_ORG_ID } from './test/org';
 import { testPgLayer } from './test/pg';
 
 const run = <A, E>(effect: Effect.Effect<A, E, PgSql>) =>
@@ -18,32 +18,23 @@ describe('postgres search index helpers', () => {
 			Effect.gen(function* () {
 				const sql = yield* PgSql;
 				const now = new Date().toISOString();
-				yield* sql`INSERT INTO files (id, display_name, content_type, size_bytes, created_at, updated_at)
-					VALUES (${id}, ${'Quarterly report.pdf'}, ${'application/pdf'}, ${10}, ${now}, ${now})`;
-				yield* sql`INSERT INTO file_versions (file_id, version, r2_key, size_bytes, content_type, created_at, text_content)
-					VALUES (${id}, ${1}, ${`v/${id}/1`}, ${10}, ${'application/pdf'}, ${now}, ${'revenue grew in the third quarter'})`;
-				yield* sql`INSERT INTO tags (id, name, normalized_name, created_at)
-					VALUES (${tagId}, ${'Finance'}, ${`finance-${tagId}`}, ${now})`;
+				yield* ensureTestOrg(sql);
+				yield* sql`INSERT INTO files (id, org_id, display_name, content_type, size_bytes, created_at, updated_at)
+					VALUES (${id}, ${TEST_ORG_ID}, ${'Quarterly report.pdf'}, ${'application/pdf'}, ${10}, ${now}, ${now})`;
+				yield* sql`INSERT INTO file_versions (file_id, org_id, version, r2_key, size_bytes, content_type, created_at, text_content)
+					VALUES (${id}, ${TEST_ORG_ID}, ${1}, ${`v/${id}/1`}, ${10}, ${'application/pdf'}, ${now}, ${'revenue grew in the third quarter'})`;
+				yield* sql`INSERT INTO tags (id, org_id, name, normalized_name, created_at)
+					VALUES (${tagId}, ${TEST_ORG_ID}, ${'Finance'}, ${`finance-${tagId}`}, ${now})`;
 				yield* sql`INSERT INTO file_tags (file_id, tag_id) VALUES (${id}, ${tagId})`;
-				yield* refreshSearchDocument(sql, id);
+				yield* refreshSearchDocument(sql, id, TEST_ORG_ID);
 				const before = yield* sql<{ name: string; tags: string; hit: boolean }>`
 					SELECT name, tags, tsv @@ websearch_to_tsquery('english', 'revenue quarter') AS hit
 					FROM search_documents WHERE file_id = ${id}`;
 				yield* sql`UPDATE tags SET name = ${'Money'} WHERE id = ${tagId}`;
-				yield* refreshAllIndexedTags(sql);
+				yield* refreshAllIndexedTags(sql, TEST_ORG_ID);
 				const after = yield* sql<{ tags: string }>`
 					SELECT tags FROM search_documents WHERE file_id = ${id}`;
-				const quota = yield* ensureStoredBytesWithin(sql, 1_000_000, 5).pipe(
-					Effect.as('ok'),
-					Effect.catch(() => Effect.succeed('blocked'))
-				);
-				const blocked = yield* ensureStoredBytesWithin(sql, 1, 5).pipe(
-					Effect.as('ok'),
-					Effect.catchTag('InvalidRequest', (failure) =>
-						Effect.succeed(String(failure.status))
-					)
-				);
-				return { before: before[0], after: after[0], quota, blocked };
+				return { before: before[0], after: after[0] };
 			})
 		);
 		expect(result.before).toEqual({
@@ -52,8 +43,6 @@ describe('postgres search index helpers', () => {
 			hit: true
 		});
 		expect(result.after?.tags).toBe('Money');
-		expect(result.quota).toBe('ok');
-		expect(result.blocked).toBe('413');
 	});
 
 	it.each([
@@ -85,9 +74,9 @@ describe('postgres search index helpers', () => {
 							Effect.gen(function* () {
 								if (kind === 'rename') {
 									yield* sql`UPDATE tags SET name = ${newName} WHERE id = ${tagId}`;
-									yield* refreshAllIndexedTags(sql);
+									yield* refreshAllIndexedTags(sql, TEST_ORG_ID);
 								} else {
-									yield* refreshSearchDocument(sql, id);
+									yield* refreshSearchDocument(sql, id, TEST_ORG_ID);
 								}
 								if (pause) {
 									firstPaused = true;
@@ -102,20 +91,21 @@ describe('postgres search index helpers', () => {
 			const control = new Pg.Client({ connectionString: TEST_DATABASE_URL });
 			await control.connect();
 			try {
+				await run(Effect.flatMap(PgSql, ensureTestOrg));
 				await control.query(
-					`INSERT INTO files (id, display_name, content_type, size_bytes, created_at, updated_at)
-					VALUES ($1, 'Search refresh fixture', 'text/plain', 0, now(), now())`,
-					[id]
+					`INSERT INTO files (id, org_id, display_name, content_type, size_bytes, created_at, updated_at)
+					VALUES ($1, $2, 'Search refresh fixture', 'text/plain', 0, now(), now())`,
+					[id, TEST_ORG_ID]
 				);
 				await control.query(
-					`INSERT INTO file_versions (file_id, version, r2_key, size_bytes, content_type, created_at)
-					VALUES ($1, 1, $1, 0, 'text/plain', now())`,
-					[id]
+					`INSERT INTO file_versions (file_id, org_id, version, r2_key, size_bytes, content_type, created_at)
+					VALUES ($1, $2, 1, $1, 0, 'text/plain', now())`,
+					[id, TEST_ORG_ID]
 				);
 				await control.query(
-					`INSERT INTO tags (id, name, normalized_name, created_at)
-					VALUES ($1, $2, $1, now())`,
-					[tagId, oldName]
+					`INSERT INTO tags (id, org_id, name, normalized_name, created_at)
+					VALUES ($1, $3, $2, $1, now())`,
+					[tagId, oldName, TEST_ORG_ID]
 				);
 				await control.query(
 					'INSERT INTO file_tags (file_id, tag_id) VALUES ($1, $2)',
@@ -123,7 +113,9 @@ describe('postgres search index helpers', () => {
 				);
 				if (existingDocument) {
 					await run(
-						Effect.flatMap(PgSql, (sql) => refreshSearchDocument(sql, id))
+						Effect.flatMap(PgSql, (sql) =>
+							refreshSearchDocument(sql, id, TEST_ORG_ID)
+						)
 					);
 				}
 

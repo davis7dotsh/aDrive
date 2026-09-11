@@ -2,7 +2,10 @@ import { Effect, Layer } from 'effect';
 import Pg from 'pg';
 import { expect, it } from 'vitest';
 import { AppConfig } from '../config';
-import { pgLayer } from '../pg';
+import { PgSql, pgLayer } from '../pg';
+import { ensureTestOrg, TEST_ORG_ID, TEST_USER_ID } from '../test/org';
+import { CurrentOrg, CurrentUser } from './current-org';
+import { WorkOSFake } from './workos';
 import { TEST_DATABASE_URL } from '../test/database';
 import { Auth, AuthLive } from './auth';
 
@@ -14,16 +17,28 @@ it('mints only one API key when approved device polls overlap', async () => {
 	const lockId = crypto.getRandomValues(new Int32Array(1))[0]!;
 	const url = new URL(TEST_DATABASE_URL);
 	url.searchParams.set('application_name', name);
+	const databaseLayer = pgLayer({ connectionString: url.href });
+	await Effect.runPromise(
+		Effect.flatMap(PgSql, ensureTestOrg).pipe(Effect.provide(databaseLayer))
+	);
 	const authLayer = AuthLive.pipe(
 		Layer.provide(
-			Layer.merge(
-				pgLayer({ connectionString: url.href }),
+			Layer.mergeAll(
+				databaseLayer,
+				Layer.succeed(CurrentOrg, { id: TEST_ORG_ID }),
+				Layer.succeed(CurrentUser, { id: TEST_USER_ID }),
+				WorkOSFake,
 				Layer.succeed(AppConfig, {
 					dashboardOrigin: 'http://localhost:5173',
 					contentOrigin: 'http://localhost:5174',
 					maxUploadBytes: 1_000_000,
-					maxTotalBytes: 1_000_000,
-					passcode: 'device-race-test-passcode',
+					maintenanceSecret: 'device-race-test-secret',
+					workos: {
+						apiKey: null,
+						clientId: '',
+						cookiePassword: '',
+						webhookSecret: ''
+					},
 					semanticSearch: 'off',
 					embeddingModel: '@cf/baai/bge-small-en-v1.5',
 					embeddingPooling: 'cls',
@@ -106,17 +121,9 @@ it('mints only one API key when approved device polls overlap', async () => {
 		expect(codes).toEqual([{ status: 'consumed', api_key_id: keys[0]?.id }]);
 		if (first?.status === 'complete') {
 			const credential = await run(
-				Effect.flatMap(Auth, (auth) =>
-					auth.authorize({
-						authorization: `Bearer ${first.apiKey}`,
-						sessionToken: undefined,
-						requestOrigin: 'http://localhost:5173',
-						origin: null,
-						method: 'GET'
-					})
-				)
+				Effect.flatMap(Auth, (auth) => auth.resolveApiKey(first.apiKey))
 			);
-			expect(credential.credentialId).toBe(keys[0]?.id);
+			expect(credential?.credentialId).toBe(keys[0]?.id);
 		}
 	} finally {
 		await control.query('SELECT pg_advisory_unlock($1)', [lockId]);

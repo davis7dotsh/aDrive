@@ -22,6 +22,7 @@ import {
 	type RankedRow
 } from '../search-candidates';
 import { PgSql } from '../pg';
+import { CurrentOrg } from './current-org';
 import { Embedder, VectorIndex } from './semantic';
 
 export interface SearchInput {
@@ -63,6 +64,7 @@ const noCandidates = Effect.succeed<ReadonlyArray<RankedRow>>([]);
 
 const makeSearch = Effect.gen(function* () {
 	const sql = yield* PgSql;
+	const org = yield* CurrentOrg;
 	const embedder = yield* Embedder;
 	const vectorIndex = yield* VectorIndex;
 
@@ -82,7 +84,8 @@ const makeSearch = Effect.gen(function* () {
 		const result = yield* sql`
 			SELECT ${sql.literal(dashboardFileColumns)}
 			FROM files f
-			WHERE ${sql.in('f.id', fileIds)}
+			WHERE f.org_id = ${org.id}
+				AND ${sql.in('f.id', fileIds)}
 				AND f.deleted_at IS NULL
 				AND (f.expires_at IS NULL OR f.expires_at > ${new Date().toISOString()})
 				${selectedTagFilter(sql, tagIds)}`.pipe(
@@ -110,7 +113,8 @@ const makeSearch = Effect.gen(function* () {
 		const rows = yield* sql`
 			SELECT ${sql.literal(dashboardFileColumns)}
 			FROM files f
-			WHERE f.deleted_at IS NULL
+			WHERE f.org_id = ${org.id}
+				AND f.deleted_at IS NULL
 				AND (f.expires_at IS NULL OR f.expires_at > ${new Date().toISOString()})
 				${selectedTagFilter(sql, tagIds)}
 			ORDER BY f.updated_at DESC, f.id
@@ -149,7 +153,11 @@ const makeSearch = Effect.gen(function* () {
 				};
 			}
 
-			const filter = { now: new Date().toISOString(), tagIds: selectedTagIds };
+			const filter = {
+				orgId: org.id,
+				now: new Date().toISOString(),
+				tagIds: selectedTagIds
+			};
 			// The index reads (full text, trigram) and the optional embedding +
 			// vector query are independent; run them concurrently so search
 			// latency is the slowest source, not their sum. Workers AI

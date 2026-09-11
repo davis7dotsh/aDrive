@@ -7,6 +7,7 @@ import { PgSql } from '../../pg';
 import { TEST_DATABASE_URL } from '../../test/database';
 import { createRouteContext } from '../../test/route-context';
 import { Blobs } from '../blobs';
+import { ensureTestOrg, TEST_ORG_ID, TEST_USER_ID } from '../../test/org';
 import { createInternals } from './internals';
 import { sessionOps } from './sessions';
 
@@ -15,6 +16,7 @@ describe('site publication competing with purge', () => {
 		'rechecks a blocked purge claim that commits=%s',
 		async (commits) => {
 			const ctx = await createRouteContext();
+			await runWorkerProgram(ctx.env, Effect.flatMap(PgSql, ensureTestOrg));
 			const control = new Client({ connectionString: TEST_DATABASE_URL });
 			await control.connect();
 			const fileId = crypto.randomUUID();
@@ -25,14 +27,14 @@ describe('site publication competing with purge', () => {
 			let publish: Promise<boolean> | undefined;
 			try {
 				await control.query(
-					`INSERT INTO files (id, display_name, content_type, is_site, current_version,
+					`INSERT INTO files (org_id, id, display_name, content_type, is_site, current_version,
 				 size_bytes, created_at, updated_at)
-				 VALUES ($1, 'site', 'text/html', true, 1, 1, now(), now())`,
+				 VALUES ('${TEST_ORG_ID}', $1, 'site', 'text/html', true, 1, 1, now(), now())`,
 					[fileId]
 				);
 				await control.query(
-					`INSERT INTO file_versions (file_id, version, r2_key, size_bytes, content_type, created_at)
-				 VALUES ($1, 1, $2, 1, 'text/html', now())`,
+					`INSERT INTO file_versions (org_id, file_id, version, r2_key, size_bytes, content_type, created_at)
+				 VALUES ('${TEST_ORG_ID}', $1, 1, $2, 1, 'text/html', now())`,
 					[fileId, `site-version/${fileId}/1`]
 				);
 				await control.query(
@@ -42,8 +44,8 @@ describe('site publication competing with purge', () => {
 				);
 				await control.query(
 					`INSERT INTO site_upload_sessions
-				 (id, file_id, display_name, version, status, created_at, expires_at)
-				 VALUES ($1, $2, 'site', 2, 'open', now(), now() + interval '1 hour')`,
+				 (org_id, id, file_id, display_name, version, status, created_at, expires_at)
+				 VALUES ('${TEST_ORG_ID}', $1, $2, 'site', 2, 'open', now(), now() + interval '1 hour')`,
 					[sessionId, fileId]
 				);
 				await control.query(
@@ -64,6 +66,7 @@ describe('site publication competing with purge', () => {
 						const config = yield* AppConfig;
 						const blobs = yield* Blobs;
 						const internals = createInternals({
+							org: { id: TEST_ORG_ID },
 							sql,
 							config,
 							blobs: {
@@ -80,7 +83,8 @@ describe('site publication competing with purge', () => {
 								Effect.as(true),
 								Effect.catchTag('StorageError', () => Effect.succeed(false))
 							);
-					})
+					}),
+					{ orgId: TEST_ORG_ID, userId: TEST_USER_ID }
 				);
 				await vi.waitFor(
 					async () => {
