@@ -415,12 +415,12 @@ Goal: one bad tenant cannot take the domain down, and you can stop them in under
 "ratelimits": [
 	{ "name": "RL_UPLOAD",  "namespace_id": "1001", "simple": { "limit": 60,  "period": 60 } },
 	{ "name": "RL_PUBLISH", "namespace_id": "1002", "simple": { "limit": 10,  "period": 60 } },
-	{ "name": "RL_AUTH",    "namespace_id": "1003", "simple": { "limit": 10,  "period": 60 } },
+	{ "name": "RL_AUTH",    "namespace_id": "1003", "simple": { "limit": 30,  "period": 60 } },
 	{ "name": "RL_ANON",    "namespace_id": "1004", "simple": { "limit": 300, "period": 60 } }
 ]
 ```
 
-- Keyed by `orgId` for upload and publish, by `userId` for auth, by client IP for anonymous content fetches.
+- Keyed by `orgId` for upload and publish, by client IP for device auth and anonymous content fetches. Device creation and five-second token polling share the 30/min auth budget; refused polls return `slow_down` with `Retry-After: 60`.
 - Replaces the KV-based `auth-guard.ts` counters. Passcode lockout goes away with the passcode.
 - Bindings are per-colo and approximate. That is fine for abuse, not for billing.
 

@@ -27,6 +27,8 @@ export const readOps = (
 						message: 'Site asset path is unsafe'
 					})
 			});
+			// Only signed owner routes set this; the caller verifies the bound
+			// grant before serving bytes. Held sites remain private anonymously.
 			const includeUnavailable = options.includeUnavailable === true;
 			const pinVersion = options.version !== undefined;
 			// Content requests carry the org their host names, so a site id
@@ -38,7 +40,8 @@ export const readOps = (
 					FROM files f
 					JOIN site_assets a
 						ON a.file_id = f.id AND a.version = f.current_version
-					WHERE f.id = ${fileId} AND f.is_site = true AND f.public = true
+					WHERE f.id = ${fileId} AND f.is_site = true
+						AND (f.public = true OR ${includeUnavailable}::boolean)
 						AND f.quarantined = false
 						AND (${orgId}::text IS NULL OR f.org_id = ${orgId})
 						AND (

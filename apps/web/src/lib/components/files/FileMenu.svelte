@@ -46,7 +46,7 @@
 			disabled={file.quarantined}
 			onclick={onopen}
 		>
-			{file.public ? 'Open' : 'Download'}
+			{file.public || file.kind === 'site' ? 'Open' : 'Download'}
 		</button>
 		<CopyButton
 			variant="menu"

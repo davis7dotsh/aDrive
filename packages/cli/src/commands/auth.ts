@@ -135,8 +135,9 @@ export const login = Command.make(
 			}
 
 			let apiKey = '';
+			let pollDelaySeconds = authorization.interval;
 			while (!apiKey) {
-				yield* Effect.sleep(`${authorization.interval} seconds`);
+				yield* Effect.sleep(`${pollDelaySeconds} seconds`);
 				const pollResponse = yield* Effect.tryPromise({
 					try: async () => {
 						const response = await fetch(`${endpoint}/api/auth/device/token`, {
@@ -148,7 +149,15 @@ export const login = Command.make(
 						});
 						const body: unknown = await response.json();
 						if (response.status === 202 || response.status === 429) {
-							return { kind: 'pending' as const, body };
+							const retryAfter = Number(response.headers.get('Retry-After'));
+							return {
+								kind: 'pending' as const,
+								body,
+								retryAfterSeconds:
+									Number.isFinite(retryAfter) && retryAfter >= 0
+										? retryAfter
+										: 0
+							};
 						}
 						if (response.ok) return { kind: 'complete' as const, body };
 						throw new Error(`Device authorization failed (${response.status})`);
@@ -189,8 +198,13 @@ export const login = Command.make(
 							);
 				if ('apiKey' in poll) {
 					apiKey = poll.apiKey;
-				} else if (poll.status === 'slow_down') {
-					yield* Effect.sleep(`${authorization.interval} seconds`);
+				} else if (pollResponse.kind === 'pending') {
+					// A shared limiter can need longer than this device's own
+					// interval. Honor its delay before issuing another poll.
+					pollDelaySeconds = Math.max(
+						authorization.interval * (poll.status === 'slow_down' ? 2 : 1),
+						pollResponse.retryAfterSeconds
+					);
 				}
 			}
 			// Record the deployment's content origin so later commands can

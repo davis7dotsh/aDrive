@@ -158,7 +158,7 @@
 				session.token,
 				files.list.current.contentOrigin
 			);
-			if (file.public) {
+			if (file.public || file.kind === 'site') {
 				window.open(url, '_blank', 'noopener');
 			} else {
 				download(url, file.displayName);

@@ -63,7 +63,8 @@
 		{
 			"name": "RL_AUTH",
 			"namespace_id": "1003",
-			"simple": { "limit": 10, "period": 60 }
+			// Shared creation + polling budget; a device polls 12 times/minute.
+			"simple": { "limit": 30, "period": 60 }
 		},
 		{
 			"name": "RL_ANON",
@@ -194,7 +195,7 @@
 				{
 					"name": "RL_AUTH",
 					"namespace_id": "2003",
-					"simple": { "limit": 10, "period": 60 }
+					"simple": { "limit": 30, "period": 60 }
 				},
 				{
 					"name": "RL_ANON",
