@@ -60,6 +60,15 @@ Postgres (via a Hyperdrive binding) is being introduced beside D1; see
 `docs/plans/hosted-product.md` for the port sequence. The route test suite
 needs the docker compose Postgres running.
 
+Route tests reset their Postgres database before each suite run. They use
+`adrive_test` by default; `ADRIVE_TEST_DATABASE_URL` may point to another
+host, but must name either `adrive_test` or `adrive_review`. Reserve those
+databases for disposable test data. Other database names and malformed URLs
+are rejected before test setup connects or resets state. Manual migration
+commands, including an explicitly requested `--reset`, keep their existing
+database selection behavior. Migration runs serialize through a Postgres
+advisory lock and wait at most 30 seconds to acquire it.
+
 Replace the example `PASSCODE` with a long local-only value. Copy the API key
 printed by the final command, then start both local origins:
 

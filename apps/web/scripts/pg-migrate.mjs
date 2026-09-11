@@ -8,11 +8,13 @@
 //   bun scripts/pg-migrate.mjs --reset          # drop and recreate public schema first
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import Pg from 'pg';
 
 export const LOCAL_DATABASE_URL =
 	'postgres://adrive:adrive@127.0.0.1:5432/adrive';
+
+export const MIGRATION_LOCK_NAME = 'adrive:pg-migrate';
 
 const migrationsDir = join(
 	dirname(fileURLToPath(import.meta.url)),
@@ -38,6 +40,17 @@ export const migrate = async ({ url, reset = false, log = console.log }) => {
 	const client = new Pg.Client({ connectionString: url });
 	await client.connect();
 	try {
+		// A session lock spans the reset, ledger read, and every migration
+		// transaction. Closing this same connection releases it on all exits.
+		const originalLockTimeout = (await client.query('SHOW lock_timeout'))
+			.rows[0].lock_timeout;
+		await client.query("SET lock_timeout = '30s'");
+		await client.query('SELECT pg_advisory_lock(hashtext($1))', [
+			MIGRATION_LOCK_NAME
+		]);
+		await client.query("SELECT set_config('lock_timeout', $1, false)", [
+			originalLockTimeout
+		]);
 		if (reset) {
 			await client.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public;');
 		}
@@ -102,8 +115,7 @@ export const migrate = async ({ url, reset = false, log = console.log }) => {
 };
 
 const isMain =
-	process.argv[1] &&
-	import.meta.url === new URL(`file://${process.argv[1]}`).href;
+	process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 
 if (isMain) {
 	const urlFlag = process.argv.indexOf('--url');
