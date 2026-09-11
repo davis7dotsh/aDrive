@@ -16,7 +16,7 @@
 {#if uploads.items.length > 0}
 	<section
 		transition:fly={{ y: 16, duration: 200 }}
-		class="w-[min(26rem,calc(100vw-2rem))] max-w-full shrink-0 rounded-xl border border-zinc-200 bg-white p-3 shadow-xl"
+		class="pointer-events-auto w-[min(26rem,calc(100vw-2rem))] max-w-full shrink-0 rounded-xl border border-zinc-200 bg-white p-3 shadow-xl"
 		aria-label="Uploads"
 	>
 		<header class="mb-2 flex items-center justify-between">
