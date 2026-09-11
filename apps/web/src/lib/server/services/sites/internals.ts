@@ -6,6 +6,7 @@ import { NotFound, StorageError } from '../../errors';
 import { siteCleanupDisposition } from '../../site-policy';
 import { Blobs } from '../blobs';
 import type { CurrentOrg } from '../current-org';
+import type { JobQueue } from '../jobs';
 import {
 	PendingDeleteRow,
 	SiteSessionRow,
@@ -18,9 +19,16 @@ interface CoreDeps {
 	readonly blobs: Blobs['Service'];
 	readonly config: AppConfig['Service'];
 	readonly org: CurrentOrg['Service'];
+	readonly jobs: JobQueue['Service'];
 }
 
-export const createInternals = ({ sql, blobs, config, org }: CoreDeps) => {
+export const createInternals = ({
+	sql,
+	blobs,
+	config,
+	org,
+	jobs
+}: CoreDeps) => {
 	const all = <A, I>(
 		statement: Effect.Effect<ReadonlyArray<unknown>, unknown>,
 		schema: Schema.Codec<A, I, never>,
@@ -219,35 +227,6 @@ export const createInternals = ({ sql, blobs, config, org }: CoreDeps) => {
 		yield* drainDeletes(session.fileId);
 	});
 
-	const sweepExpiredSessions = Effect.fn('Sites.sweepExpiredSessions')(
-		function* (limit = 10) {
-			const now = new Date().toISOString();
-			const bounded = Math.max(1, Math.min(limit, 25));
-			const rows = yield* all(
-				sql`
-					SELECT id, file_id, display_name, version, status, created_at,
-						expires_at
-					FROM site_upload_sessions
-					WHERE org_id = ${org.id} AND status = 'open' AND expires_at <= ${now}
-					ORDER BY expires_at
-					LIMIT ${bounded}`,
-				SiteSessionRow,
-				'list expired site upload sessions'
-			);
-			for (const row of rows) {
-				yield* cleanupStaged(
-					{
-						id: row.id,
-						fileId: row.file_id,
-						version: row.version
-					},
-					'aborted'
-				);
-			}
-			return rows.length;
-		}
-	);
-
 	const sweepPendingDeletes = Effect.fn('Sites.sweepPendingDeletes')(function* (
 		limit: number
 	) {
@@ -277,12 +256,12 @@ export const createInternals = ({ sql, blobs, config, org }: CoreDeps) => {
 		compensateStagedBlob,
 		drainDeletes,
 		cleanupStaged,
-		sweepExpiredSessions,
 		sweepPendingDeletes,
 		sql,
 		blobs,
 		config,
-		org
+		org,
+		jobs
 	};
 };
 

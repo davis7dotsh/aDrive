@@ -385,28 +385,52 @@ export const ErrorResponseSchema = Schema.Struct({
 
 export const API_KEY_PATTERN = /^adr_([A-Za-z0-9]{8})_([A-Za-z0-9_-]{24,})$/;
 
-// Background work carried over the Cloudflare Queue. Tenancy adds orgId
-// to every variant later; keep the union closed so the consumer's switch
-// stays exhaustive.
+// Background work carried over the Cloudflare Queue. Every job names the
+// org it acts for; the consumer runs it with that org as CurrentOrg so the
+// services see only that tenant's rows. Keep the union closed so the
+// consumer's switch stays exhaustive.
 export const JobSchema = Schema.Union([
 	Schema.Struct({
 		kind: Schema.Literal('index'),
+		orgId: Schema.String,
 		fileId: Schema.String,
 		version: Schema.Int
 	}),
 	Schema.Struct({
 		kind: Schema.Literal('purge'),
+		orgId: Schema.String,
 		fileId: Schema.String
 	}),
 	Schema.Struct({
 		kind: Schema.Literal('scan'),
+		orgId: Schema.String,
 		fileId: Schema.String,
 		version: Schema.Int
 	}),
 	Schema.Struct({
 		kind: Schema.Literal('site-cleanup'),
+		orgId: Schema.String,
 		sessionId: Schema.String
 	})
 ]);
 
 export type Job = typeof JobSchema.Type;
+
+// A job the queue gave up on, as listed for an org's owner.
+export const FailedJobSchema = Schema.Struct({
+	id: Schema.String,
+	kind: Schema.String,
+	payload: Schema.Unknown,
+	error: Schema.String,
+	attempts: Schema.Int,
+	failedAt: Schema.String,
+	resolvedAt: Schema.NullOr(Schema.String)
+});
+
+export type FailedJob = typeof FailedJobSchema.Type;
+
+export const FailedJobListResponseSchema = Schema.Struct({
+	jobs: Schema.Array(FailedJobSchema)
+});
+
+export type FailedJobListResponse = typeof FailedJobListResponseSchema.Type;

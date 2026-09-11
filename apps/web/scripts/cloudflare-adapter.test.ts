@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { verifyJobsRequest } from '../src/lib/server/cron-auth';
+import type { JobDecision } from '../src/lib/server/jobs/consumer';
 import { facadeSource } from './cloudflare-adapter.mjs';
 
 const generatedQueue = (
@@ -27,9 +28,14 @@ describe('Cloudflare Worker facade', () => {
 		expect(source).toContain('return sveltekit.fetch(request, env, ctx)');
 		expect(source).toContain('scheduled(controller, env, ctx)');
 		expect(source).toContain('async queue(batch, env, ctx)');
-		expect(source).toContain('/api/internal/jobs');
+		expect(source).toContain("'/api/internal/jobs'");
+		expect(source).toContain("'/api/internal/jobs/dead'");
+		expect(source).toContain("batch.queue.endsWith('-dlq')");
 		expect(source).toContain('message.ack()');
 		expect(source).toContain('message.retry()');
+		expect(source).toContain(
+			'message.retry({ delaySeconds: decision.delaySeconds })'
+		);
 		expect(source).toContain("name: 'HMAC', hash: 'SHA-256'");
 		expect(source).toContain('ctx.waitUntil(');
 		expect(source).not.toContain('const { waitUntil } = ctx');
@@ -87,9 +93,9 @@ describe('Cloudflare Worker facade', () => {
 				).resolves.toBe(true);
 				return Response.json({
 					decisions: [
-						{ id: 'acknowledged', action: 'ack' },
-						{ id: 'retrying', action: 'retry' }
-					]
+						{ id: 'acknowledged', ack: true },
+						{ id: 'retrying', retry: true, delaySeconds: 120 }
+					] satisfies ReadonlyArray<JobDecision>
 				});
 			}
 		);
@@ -102,6 +108,11 @@ describe('Cloudflare Worker facade', () => {
 			expect(message.retry).toHaveBeenCalledTimes(
 				message.id === 'acknowledged' ? 0 : 1
 			);
+			if (message.id === 'retrying') {
+				expect(message.retry).toHaveBeenCalledWith({ delaySeconds: 120 });
+			} else if (message.id === 'undecided') {
+				expect(message.retry).toHaveBeenCalledWith();
+			}
 		}
 	});
 

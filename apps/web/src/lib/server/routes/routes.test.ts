@@ -160,10 +160,9 @@ describe('route integration (local platform)', () => {
 
 		const mutation = await mutateFile(ctx, file.id, { action: 'trash' });
 		expect(mutation.file.id).toBe(file.id);
-		await ctx.drainWaitUntil();
 
 		await mutateFile(ctx, file.id, { action: 'purge' });
-		await ctx.drainWaitUntil();
+		await ctx.drainJobs();
 
 		const listed = await listFiles(ctx);
 		expect(listed.files.map((entry) => entry.id)).not.toContain(file.id);
@@ -435,7 +434,7 @@ describe('route integration (local platform)', () => {
 		await ctx.drainWaitUntil();
 		await mutateFile(ctx, session.fileId, { action: 'trash' });
 		await mutateFile(ctx, session.fileId, { action: 'purge' });
-		await ctx.drainWaitUntil();
+		await ctx.drainJobs();
 		expect(
 			stored?.thumbnail_r2_key
 				? await ctx.env.BUCKET.head(stored.thumbnail_r2_key)

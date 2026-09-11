@@ -1,7 +1,7 @@
 import { FileMutationSchema } from '@adrive/shared';
 import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
-import { runEdge, runEdgeWithEvent, runWorkerProgram } from '$lib/server/edge';
+import { runEdge } from '$lib/server/edge';
 import { requireAuth, requireWrite } from '$lib/server/request-auth';
 import { AppConfig } from '$lib/server/config';
 import { validateExpiration } from '$lib/server/auth-policy';
@@ -59,10 +59,9 @@ export const GET: RequestHandler = (event) => {
 	);
 };
 
-export const PATCH: RequestHandler = async (event) => {
-	const { params, request, url } = event;
-	const output = await runEdgeWithEvent(
-		event,
+export const PATCH: RequestHandler = (event) => {
+	const { params, request } = event;
+	return runEdge(
 		Effect.gen(function* () {
 			const files = yield* Files;
 			const indexing = yield* Indexing;
@@ -102,39 +101,7 @@ export const PATCH: RequestHandler = async (event) => {
 														forcedPublic: false
 													}))
 												);
-			return {
-				reindex:
-					mutation.action === 'reindex' ||
-					mutation.action === 'rename' ||
-					mutation.action === 'restore-version',
-				purge: mutation.action === 'purge',
-				response: Response.json(result)
-			};
+			return Response.json(result);
 		})
 	);
-	if (output.reindex && event.platform) {
-		event.platform.ctx.waitUntil(
-			runWorkerProgram(
-				event.platform.env,
-				Effect.gen(function* () {
-					const indexing = yield* Indexing;
-					yield* indexing.process(params.id);
-				}),
-				event.locals.auth
-			)
-		);
-	}
-	if (output.purge && event.platform) {
-		event.platform.ctx.waitUntil(
-			runWorkerProgram(
-				event.platform.env,
-				Effect.gen(function* () {
-					const files = yield* Files;
-					yield* files.sweepPurges(1);
-				}),
-				event.locals.auth
-			)
-		);
-	}
-	return output.response;
 };

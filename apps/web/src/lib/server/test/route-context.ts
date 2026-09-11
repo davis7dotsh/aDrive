@@ -1,3 +1,4 @@
+import type { Job } from '@adrive/shared';
 import type { Cookies, RequestEvent } from '@sveltejs/kit';
 import { vi } from 'vitest';
 
@@ -7,6 +8,8 @@ export const DASHBOARD_ORIGIN = 'http://localhost:5173';
 export const CONTENT_DOMAIN = 'localhost:5174';
 export const contentOrigin = (slug: string) =>
 	`http://${slug}.${CONTENT_DOMAIN}`;
+
+import type { JobDecision } from '../jobs/consumer';
 
 // Route handlers read the event through two paths: runEdgeWithEvent takes
 // the event directly, and runEdge calls SvelteKit's getRequestEvent() —
@@ -39,6 +42,11 @@ class TestCookieStore implements Cookies {
 
 const waitUntilQueue: Array<Promise<unknown>> = [];
 
+export interface SentJob {
+	readonly body: Job;
+	readonly delaySeconds: number;
+}
+
 export interface RouteTestContext {
 	readonly env: Env;
 	readonly cookies: TestCookieStore;
@@ -49,7 +57,39 @@ export interface RouteTestContext {
 	// unknown or suspended slug rejects with the hook's 404.
 	readonly contentEvent: (input: ContentEventInput) => Promise<RequestEvent>;
 	readonly drainWaitUntil: () => Promise<void>;
+	// Every job the app sent since the last drain, in order. The delay is
+	// recorded, never waited for.
+	readonly jobs: Array<SentJob>;
+	// Runs the consumer in-process over every collected job as if its
+	// delay had elapsed, then over anything those runs sent or asked to
+	// retry, until nothing is left to run. A job the consumer re-sends
+	// with a delay (a purge that arrived before its deadline) stays in
+	// `jobs` for a later drain, since the clock has not moved. Returns
+	// every decision.
+	readonly drainJobs: () => Promise<ReadonlyArray<JobDecision>>;
 }
+
+// The JOBS binding from getPlatformProxy is a real local queue nothing
+// consumes, so tests swap it for this: sends are collected and drainJobs
+// feeds them through the same consumer the Worker facade calls.
+const collectingQueue = (sent: Array<SentJob>) => {
+	const push = (body: unknown, options?: QueueSendOptions) => {
+		sent.push({ body: body as Job, delaySeconds: options?.delaySeconds ?? 0 });
+	};
+	const metrics = async () => ({ backlogCount: sent.length, backlogBytes: 0 });
+	const queue: Queue<Job> = {
+		metrics,
+		send: async (body, options) => {
+			push(body, options);
+			return { metadata: { metrics: await metrics() } };
+		},
+		sendBatch: async (messages, options) => {
+			for (const message of messages) push(message.body, options);
+			return { metadata: { metrics: await metrics() } };
+		}
+	};
+	return queue;
+};
 
 export interface EventInput {
 	method?: string;
@@ -102,8 +142,10 @@ export const createRouteContext = async (): Promise<RouteTestContext> => {
 	// a Tailscale hostname) do not change what the suite asserts.
 	// The WorkOS fake is forced so a developer's real credentials in
 	// .dev.vars never leak into the suite.
+	const jobs: Array<SentJob> = [];
 	const env = {
 		...platformEnv,
+		JOBS: collectingQueue(jobs),
 		DASHBOARD_ORIGIN,
 		CONTENT_DOMAIN,
 		MAINTENANCE_SECRET:
@@ -207,6 +249,50 @@ export const createRouteContext = async (): Promise<RouteTestContext> => {
 		contentEvent: buildContent,
 		drainWaitUntil: async () => {
 			await Promise.allSettled(waitUntilQueue.splice(0));
+		},
+		jobs,
+		drainJobs: async () => {
+			const { handleJobBatch } = await import('../jobs/consumer');
+			const decisions: Array<JobDecision> = [];
+			const parked: Array<SentJob> = [];
+			let id = 0;
+			const attempts = new Map<string, number>();
+			// A retry decision re-queues the same body with attempts + 1,
+			// mirroring the queue; runaway retries are bounded like
+			// max_retries so a broken handler fails the test instead of
+			// spinning.
+			while (jobs.length > 0) {
+				const batch = jobs.splice(0).map((job) => {
+					const key = JSON.stringify(job.body);
+					const count = (attempts.get(key) ?? 0) + 1;
+					attempts.set(key, count);
+					if (count > 6) {
+						throw new Error(`Job exceeded retries: ${key}`);
+					}
+					id += 1;
+					return { id: `test-${id}`, attempts: count, body: job.body };
+				});
+				const batchDecisions = await handleJobBatch(env, {
+					queue: 'adrive-jobs',
+					messages: batch
+				});
+				decisions.push(...batchDecisions);
+				for (const sent of jobs.splice(0)) {
+					(sent.delaySeconds > 0 ? parked : jobs).push(sent);
+				}
+				for (const decision of batchDecisions) {
+					if (!('retry' in decision)) continue;
+					const message = batch.find((entry) => entry.id === decision.id);
+					if (message) {
+						jobs.push({
+							body: message.body,
+							delaySeconds: decision.delaySeconds
+						});
+					}
+				}
+			}
+			jobs.push(...parked);
+			return decisions;
 		}
 	};
 };

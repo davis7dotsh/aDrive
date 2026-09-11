@@ -23,7 +23,8 @@ export const StagedAssetRow = Schema.Struct({
 export const ExistingSiteRow = Schema.Struct({
 	id: Schema.String,
 	display_name: Schema.String,
-	current_version: Schema.Int
+	current_version: Schema.Int,
+	size_bytes: Schema.Int
 });
 
 export const SiteFileRow = Schema.Struct({
@@ -114,6 +115,12 @@ export interface SitesShape {
 			readonly version?: number;
 		}
 	) => Effect.Effect<SiteContent, InvalidRequest | NotFound | StorageError>;
+	// Aborts an open session whose TTL is up, run from the queue.
+	readonly cleanupSession: (
+		sessionId: string
+	) => Effect.Effect<void, StorageError>;
+	// Reconciliation: re-sends cleanup for sessions expired long ago and
+	// retries failed asset deletes.
 	readonly sweepLifecycle: (
 		limit: number
 	) => Effect.Effect<number, StorageError>;

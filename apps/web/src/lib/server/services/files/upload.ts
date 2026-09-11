@@ -21,7 +21,9 @@ export const uploadOps = (
 		reserveBytes,
 		compensateStoredBlob,
 		commitStoredVersion,
-		findDashboardFile
+		findDashboardFile,
+		sendIndexJob,
+		sendPurgeJob
 	} = internals;
 	return {
 		upload: Effect.fn('Files.upload')(function* (input) {
@@ -102,6 +104,8 @@ export const uploadOps = (
 				)
 			);
 			forgetTagListCache(org.id);
+			yield* sendIndexJob(id, 1);
+			if (input.expiresAt !== null) yield* sendPurgeJob(id, input.expiresAt);
 
 			return {
 				file: {

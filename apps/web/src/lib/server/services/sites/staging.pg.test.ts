@@ -7,6 +7,7 @@ import { PgSql } from '../../pg';
 import { TEST_DATABASE_URL } from '../../test/database';
 import { createRouteContext } from '../../test/route-context';
 import { Blobs } from '../blobs';
+import { JobQueue } from '../jobs';
 import { ensureTestOrg, TEST_ORG_ID, TEST_USER_ID } from '../../test/org';
 import { createInternals } from './internals';
 import { sessionOps } from './sessions';
@@ -53,6 +54,10 @@ describe('site asset staging competing with abort', () => {
 							org: { id: TEST_ORG_ID, slug: TEST_ORG_ID.replaceAll('_', '-') },
 							sql,
 							config,
+							jobs: JobQueue.of({
+								send: () => Effect.void,
+								trySend: () => Effect.void
+							}),
 							blobs: {
 								...blobs,
 								put: (key, _body, size) =>

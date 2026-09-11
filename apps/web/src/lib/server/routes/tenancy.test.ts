@@ -302,7 +302,7 @@ describe('tenancy (local platform)', () => {
 		await loginAs(ctx, ORG_A);
 		await mutateFile(ctx, file.id, { action: 'trash' });
 		await mutateFile(ctx, file.id, { action: 'purge' });
-		await ctx.drainWaitUntil();
+		await ctx.drainJobs();
 		expect(await usage(a.orgId)).toBe(before);
 	});
 

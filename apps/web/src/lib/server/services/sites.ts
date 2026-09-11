@@ -3,6 +3,7 @@ import { AppConfig } from '../config';
 import { PgSql } from '../pg';
 import { Blobs } from './blobs';
 import { CurrentOrg } from './current-org';
+import { JobQueue } from './jobs';
 import { cleanupOps } from './sites/cleanup';
 import { createInternals } from './sites/internals';
 import { readOps } from './sites/read';
@@ -23,8 +24,9 @@ const makeSites = Effect.gen(function* () {
 	const blobs = yield* Blobs;
 	const config = yield* AppConfig;
 	const org = yield* CurrentOrg;
+	const jobs = yield* JobQueue;
 
-	const internals = createInternals({ sql, blobs, config, org });
+	const internals = createInternals({ sql, blobs, config, org, jobs });
 
 	return Sites.of({
 		...sessionOps(internals),
