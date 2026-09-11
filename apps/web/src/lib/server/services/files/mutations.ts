@@ -152,23 +152,28 @@ export const mutationOps = (
 				current.public
 			);
 			const updatedAt = new Date().toISOString();
-			yield* sql
+			const rows = yield* sql
 				.withTransaction(
-					sql`
+					sql<{ current_version: number }>`
 						UPDATE files
 						SET display_name = ${displayName}, public = ${visibility.public},
 							updated_at = ${updatedAt}, index_state = 'pending',
 							index_cursor = 0, index_attempts = 0, index_error = NULL,
 							index_next_run_at = NULL, index_lease_token = NULL
 						WHERE id = ${id} AND org_id = ${org.id}
-					`.pipe(Effect.andThen(refreshSearchDocument(sql, id, org.id)))
+						RETURNING current_version
+					`.pipe(Effect.tap(() => refreshSearchDocument(sql, id, org.id)))
 				)
 				.pipe(
 					Effect.mapError(
 						(cause) => new StorageError({ operation: 'rename file', cause })
 					)
 				);
-			yield* sendIndexJob(id, current.version);
+			const renamed = rows[0];
+			if (!renamed) return yield* new NotFound({ id });
+			// A version upload may have committed after the initial dashboard
+			// read. Index the version whose state this rename actually reset.
+			yield* sendIndexJob(id, renamed.current_version);
 			return {
 				file: {
 					...current,

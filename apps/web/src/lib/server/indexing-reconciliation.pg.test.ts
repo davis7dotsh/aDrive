@@ -13,6 +13,36 @@ import { EmbedderNull, VectorIndexNull } from './services/semantic';
 import { TEST_DATABASE_URL } from './test/database';
 import { testPgLayer } from './test/pg';
 
+const reconciliationLayer = (orgId: string, jobs: Job[]) => {
+	const send = (job: Job) =>
+		Effect.sync(() => {
+			jobs.push(job);
+		});
+	const unexpectedBlobOperation = () =>
+		Effect.die('Index reconciliation must only enqueue work');
+	return IndexingLive.pipe(
+		Layer.provide(
+			Layer.mergeAll(
+				testPgLayer(),
+				Layer.succeed(CurrentOrg, { id: orgId, slug: 'index-reconcile' }),
+				Layer.succeed(JobQueue, { send, trySend: send }),
+				EmbedderNull,
+				VectorIndexNull,
+				Layer.succeed(Blobs, {
+					put: unexpectedBlobOperation,
+					get: unexpectedBlobOperation,
+					head: unexpectedBlobOperation,
+					getIfChanged: unexpectedBlobOperation,
+					readTextPrefix: unexpectedBlobOperation,
+					delete: unexpectedBlobOperation,
+					deleteMany: unexpectedBlobOperation,
+					deletePrefixes: unexpectedBlobOperation
+				})
+			)
+		)
+	);
+};
+
 it.each(['pending', 'running'])(
 	'keeps a concurrent consumer lease while reconciling other stuck %s rows',
 	async (state) => {
@@ -28,33 +58,7 @@ it.each(['pending', 'running'])(
 		const releaseConsumer = Promise.withResolvers<void>();
 		const claimed = Promise.withResolvers<boolean>();
 		const jobs: Job[] = [];
-		const send = (job: Job) =>
-			Effect.sync(() => {
-				jobs.push(job);
-			});
-		const unexpectedBlobOperation = () =>
-			Effect.die('Index reconciliation must only enqueue work');
-		const layer = IndexingLive.pipe(
-			Layer.provide(
-				Layer.mergeAll(
-					testPgLayer(),
-					Layer.succeed(CurrentOrg, { id: orgId, slug: 'index-reconcile' }),
-					Layer.succeed(JobQueue, { send, trySend: send }),
-					EmbedderNull,
-					VectorIndexNull,
-					Layer.succeed(Blobs, {
-						put: unexpectedBlobOperation,
-						get: unexpectedBlobOperation,
-						head: unexpectedBlobOperation,
-						getIfChanged: unexpectedBlobOperation,
-						readTextPrefix: unexpectedBlobOperation,
-						delete: unexpectedBlobOperation,
-						deleteMany: unexpectedBlobOperation,
-						deletePrefixes: unexpectedBlobOperation
-					})
-				)
-			)
-		);
+		const layer = reconciliationLayer(orgId, jobs);
 		const reconcile = () =>
 			Effect.runPromiseExit(
 				Effect.flatMap(Indexing, (indexing) => indexing.runDue(10)).pipe(
@@ -164,3 +168,98 @@ it.each(['pending', 'running'])(
 		}
 	}
 );
+
+it('closes an expired final lease without touching live leases or another organization', async () => {
+	const suffix = crypto.randomUUID();
+	const orgId = `org_final_${suffix}`;
+	const otherOrgId = `org_other_final_${suffix}`;
+	const staleAt = new Date(Date.now() - 60 * 60_000).toISOString();
+	const leaseUntil = new Date(Date.now() + 5 * 60_000).toISOString();
+	const expired = { id: `final_expired_${suffix}`, orgId, at: staleAt };
+	const live = { id: `final_live_${suffix}`, orgId, at: leaseUntil };
+	const other = { id: `final_other_${suffix}`, orgId: otherOrgId, at: staleAt };
+	const retryableId = `retryable_${suffix}`;
+	const jobs: Job[] = [];
+	const layer = reconciliationLayer(orgId, jobs);
+	const reconcile = () =>
+		Effect.runPromise(
+			Effect.flatMap(Indexing, (indexing) => indexing.runDue(10)).pipe(
+				Effect.provide(layer)
+			)
+		);
+	const control = new Pg.Client({ connectionString: TEST_DATABASE_URL });
+	await control.connect();
+	try {
+		await control.query(
+			'INSERT INTO orgs (id, slug, name) VALUES ($1, $1, $1), ($2, $2, $2)',
+			[orgId, otherOrgId]
+		);
+		for (const row of [expired, live, other]) {
+			await control.query(
+				`INSERT INTO files (id, org_id, display_name, content_type, size_bytes,
+					created_at, updated_at, index_state, index_attempts, index_next_run_at, index_lease_token)
+				VALUES ($1, $2, 'final.txt', 'text/plain', 0, $3, $3, 'running', $4, $5, $1)`,
+				[row.id, row.orgId, staleAt, MAX_INDEX_ATTEMPTS, row.at]
+			);
+		}
+		await control.query(
+			`INSERT INTO files (id, org_id, display_name, content_type, size_bytes,
+				created_at, updated_at, index_state, index_attempts, index_next_run_at)
+			VALUES ($1, $2, 'retryable.txt', 'text/plain', 0, $3, $3, 'running', $4, $3)`,
+			[retryableId, orgId, staleAt, MAX_INDEX_ATTEMPTS - 1]
+		);
+		expect(await reconcile()).toBe(1);
+		expect(jobs).toEqual([
+			{ kind: 'index', orgId, fileId: retryableId, version: 1 }
+		]);
+		expect(
+			(
+				await control.query(
+					`SELECT index_state, index_attempts, index_error, index_next_run_at, index_lease_token
+			FROM files WHERE id = $1`,
+					[expired.id]
+				)
+			).rows
+		).toEqual([
+			{
+				index_state: 'failed',
+				index_attempts: MAX_INDEX_ATTEMPTS,
+				index_error: 'Indexing lease expired after the final attempt',
+				index_next_run_at: null,
+				index_lease_token: null
+			}
+		]);
+		for (const row of [live, other]) {
+			expect(
+				(
+					await control.query(
+						`SELECT index_state, index_attempts, index_error, index_next_run_at, index_lease_token
+				FROM files WHERE id = $1`,
+						[row.id]
+					)
+				).rows
+			).toEqual([
+				{
+					index_state: 'running',
+					index_attempts: MAX_INDEX_ATTEMPTS,
+					index_error: null,
+					index_next_run_at: new Date(row.at),
+					index_lease_token: row.id
+				}
+			]);
+		}
+		expect(await reconcile()).toBe(0);
+		expect(jobs).toHaveLength(1);
+	} finally {
+		try {
+			await control.query('DELETE FROM files WHERE org_id = ANY($1::text[])', [
+				[orgId, otherOrgId]
+			]);
+			await control.query('DELETE FROM orgs WHERE id = ANY($1::text[])', [
+				[orgId, otherOrgId]
+			]);
+		} finally {
+			await control.end();
+		}
+	}
+});
