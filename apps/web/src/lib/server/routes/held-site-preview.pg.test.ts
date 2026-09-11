@@ -42,6 +42,7 @@ const setup = async () => {
 				`;
 				yield* blobs.deleteMany(keys.map((row) => row.r2_key));
 				yield* sql`DELETE FROM site_upload_sessions WHERE org_id = ${identity.orgId}`;
+				yield* sql`DELETE FROM files WHERE org_id = ${identity.orgId}`;
 				yield* sql`DELETE FROM orgs WHERE id = ${identity.orgId}`;
 				yield* sql`DELETE FROM users WHERE id = ${identity.userId}`;
 			})

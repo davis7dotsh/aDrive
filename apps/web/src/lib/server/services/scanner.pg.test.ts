@@ -1,8 +1,9 @@
 import type { Job } from '@adrive/shared';
 import { Effect, Layer } from 'effect';
 import { Client } from 'pg';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { AppConfig, type AppConfigShape } from '../config';
+import { contentVersionAccess } from '../content-version-access';
 import { StorageError } from '../errors';
 import { PgSql } from '../pg';
 import { markScanPending, recoverScanJobs } from '../scan-jobs';
@@ -177,6 +178,230 @@ const setup = async (
 
 describe('scanner publication and delivery recovery', () => {
 	it.each(['clean', 'malicious'] as const)(
+		'discards an in-flight stale %s poll after recovered work records the newer verdict',
+		async (staleVerdict) => {
+			const polling = Promise.withResolvers<void>();
+			const resume = Promise.withResolvers<void>();
+			const freshVerdict = staleVerdict === 'clean' ? 'malicious' : 'clean';
+			const fixture = await setup({
+				reputation: {
+					enabled: true,
+					submit: () => Effect.die('Poll must not resubmit'),
+					result: (id) =>
+						id === 'stale'
+							? Effect.promise(() => {
+									polling.resolve();
+									return resume.promise;
+								}).pipe(
+									Effect.as({
+										_tag: 'Settled' as const,
+										verdict: staleVerdict,
+										details: { id }
+									})
+								)
+							: Effect.succeed({
+									_tag: 'Settled' as const,
+									verdict: freshVerdict,
+									details: { id }
+								})
+				}
+			});
+			const marker = async () =>
+				(
+					await fixture.control.query<{ marker: string }>(
+						'SELECT scan_next_run_at::text AS marker FROM file_versions WHERE file_id = $1',
+						[fixture.fileId]
+					)
+				).rows[0]!.marker;
+			const before = await marker();
+			const staleJob = {
+				...fixture.job,
+				urlScan: { ids: ['stale'], attempt: 1, requestedAt: before }
+			};
+			const stale = fixture.run(staleJob);
+			try {
+				await Promise.race([
+					polling.promise,
+					stale.then(() => {
+						throw new Error('Poll did not reach the controlled result');
+					})
+				]);
+				await fixture.control.query(
+					"UPDATE file_versions SET scan_next_run_at = now() - interval '1 minute' WHERE file_id = $1",
+					[fixture.fileId]
+				);
+				expect(await fixture.recover()).toBe(1);
+				const requestedAt = await marker();
+				expect(requestedAt).not.toBe(before);
+				expect(
+					await fixture.run({
+						...fixture.job,
+						urlScan: { ids: ['fresh'], attempt: 1, requestedAt }
+					})
+				).toEqual({ _tag: 'Settled', verdict: freshVerdict });
+				resume.resolve();
+				expect(await stale).toEqual({ _tag: 'Skipped', reason: 'stale' });
+				// A later redelivery is also stale; it must not restart and erase
+				// the completed request's decision using old URL scan IDs.
+				expect(await fixture.run(staleJob)).toEqual({
+					_tag: 'Skipped',
+					reason: 'stale'
+				});
+				expect(
+					(
+						await fixture.control.query(
+							"SELECT verdict, details FROM scan_verdicts WHERE file_id = $1 AND source = 'urlscan'",
+							[fixture.fileId]
+						)
+					).rows
+				).toEqual([
+					{
+						verdict: freshVerdict,
+						details: {
+							links: [{ id: 'fresh' }],
+							...(freshVerdict === 'malicious' ? { pending: 0 } : {})
+						}
+					}
+				]);
+				const access = await Effect.runPromise(
+					Effect.flatMap(PgSql, (sql) => {
+						const policy = contentVersionAccess(sql);
+						return sql<{ allowed: boolean }>`SELECT ${policy.allowed} AS allowed
+						FROM files f JOIN file_versions v ON v.file_id = f.id
+						${policy.review} WHERE f.id = ${fixture.fileId} AND v.version = 1`;
+					}).pipe(Effect.provide(testPgLayer()))
+				);
+				expect(access).toEqual([{ allowed: freshVerdict === 'clean' }]);
+				expect(await fixture.state()).toMatchObject({
+					public: freshVerdict === 'clean',
+					quarantined: freshVerdict === 'malicious',
+					scan_next_run_at: null
+				});
+				expect(await fixture.kinds()).toEqual([
+					freshVerdict === 'clean' ? 'published' : 'quarantined'
+				]);
+			} finally {
+				resume.resolve();
+				await stale.catch(() => {});
+				await fixture.close();
+			}
+		}
+	);
+
+	it('rechecks the marker after waiting for a version lock before writing verdicts', async () => {
+		const fixture = await setup({
+			reputation: {
+				enabled: true,
+				submit: () => Effect.die('Poll must not resubmit'),
+				result: () =>
+					Effect.succeed({ _tag: 'Settled', verdict: 'malicious', details: {} })
+			}
+		});
+		let scanning: ReturnType<typeof fixture.run> | undefined;
+		try {
+			const marker = (
+				await fixture.control.query<{ marker: string }>(
+					'SELECT scan_next_run_at::text AS marker FROM file_versions WHERE file_id = $1',
+					[fixture.fileId]
+				)
+			).rows[0]!.marker;
+			await fixture.control.query('BEGIN');
+			await fixture.control.query(
+				'SELECT version FROM file_versions WHERE file_id = $1 FOR UPDATE',
+				[fixture.fileId]
+			);
+			scanning = fixture.run({
+				...fixture.job,
+				urlScan: { ids: ['id'], attempt: 1, requestedAt: marker }
+			});
+			await vi.waitFor(
+				async () => {
+					await fixture.control.query('SELECT pg_stat_clear_snapshot()');
+					const waiting = await fixture.control.query<{
+						count: number;
+					}>(`SELECT count(*)::int AS count
+					FROM pg_stat_activity
+					WHERE pg_backend_pid() = ANY(pg_blocking_pids(pid))
+					AND query LIKE '%SELECT version FROM file_versions%'`);
+					expect(waiting.rows[0]?.count).toBeGreaterThan(0);
+				},
+				{ timeout: 5_000, interval: 10 }
+			);
+			await fixture.control.query(
+				"UPDATE file_versions SET scan_next_run_at = now() + interval '30 minutes' WHERE file_id = $1",
+				[fixture.fileId]
+			);
+			await fixture.control.query('COMMIT');
+			expect(await scanning).toEqual({ _tag: 'Skipped', reason: 'stale' });
+			expect(
+				(
+					await fixture.control.query(
+						'SELECT source FROM scan_verdicts WHERE file_id = $1',
+						[fixture.fileId]
+					)
+				).rows
+			).toEqual([]);
+			expect((await fixture.state()).scan_next_run_at).not.toBeNull();
+		} finally {
+			await fixture.control.query('ROLLBACK');
+			await scanning?.catch(() => {});
+			await fixture.close();
+		}
+	});
+
+	it('keeps a newer incomplete-submission verdict when a stale submission succeeds', async () => {
+		const submitting = Promise.withResolvers<void>();
+		const resume = Promise.withResolvers<void>();
+		const fixture = await setup({
+			contentType: 'text/html',
+			content:
+				'<html><a href="https://links.example.test/accepted">link</a></html>',
+			reputation: {
+				enabled: true,
+				submit: () =>
+					Effect.promise(() => {
+						submitting.resolve();
+						return resume.promise;
+					}).pipe(Effect.as('accepted')),
+				result: () => Effect.die('Stale submission must not enqueue a poll')
+			}
+		});
+		const scanning = fixture.run();
+		try {
+			await Promise.race([
+				submitting.promise,
+				scanning.then(() => {
+					throw new Error('Scan did not reach the controlled submission');
+				})
+			]);
+			await fixture.control.query(
+				"UPDATE file_versions SET scan_next_run_at = now() + interval '30 minutes' WHERE file_id = $1",
+				[fixture.fileId]
+			);
+			await fixture.control.query(
+				`INSERT INTO scan_verdicts (file_id, org_id, version, source, verdict)
+				VALUES ($1, $2, 1, 'urlscan-submit', 'suspicious')`,
+				[fixture.fileId, fixture.orgId]
+			);
+			resume.resolve();
+			expect(await scanning).toEqual({ _tag: 'Skipped', reason: 'stale' });
+			expect(
+				(
+					await fixture.control.query(
+						"SELECT verdict FROM scan_verdicts WHERE file_id = $1 AND source = 'urlscan-submit'",
+						[fixture.fileId]
+					)
+				).rows
+			).toEqual([{ verdict: 'suspicious' }]);
+			expect(fixture.sent).toEqual([]);
+		} finally {
+			resume.resolve();
+			await scanning.catch(() => {});
+			await fixture.close();
+		}
+	});
+
+	it.each(['clean', 'malicious'] as const)(
 		'polls successful submissions after a partial failure and preserves the %s result',
 		async (verdict) => {
 			const submissions: string[] = [];
@@ -242,6 +467,7 @@ describe('scanner publication and delivery recovery', () => {
 					const retried = fixture.sent[0];
 					if (!retried || retried.kind !== 'scan')
 						throw new Error('Expected retried scan continuation');
+					expect(retried.urlScan?.requestedAt).toBeTypeOf('string');
 					expect(await fixture.run(retried)).toEqual({
 						_tag: 'Settled',
 						verdict: 'clean'
