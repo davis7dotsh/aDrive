@@ -10,6 +10,7 @@ export const load: LayoutServerLoad = ({ locals, setHeaders, url }) => {
 			auth && auth.via === 'session'
 				? {
 						user: { email: auth.email },
+						role: auth.role,
 						org: { name: auth.orgName, slug: auth.orgSlug }
 					}
 				: null,

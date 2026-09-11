@@ -80,8 +80,10 @@
 	//      (docs/release.md, "Queues").
 	//   4. Point DNS at the Worker: the dashboard custom domain, plus one
 	//      proxied wildcard record (`AAAA *.<CONTENT_DOMAIN> 100::`) for
-	//      tenant content (routes below). Universal SSL covers a
-	//      first-level wildcard, so slugs stay one label deep.
+	//      tenant content (routes below). Confirm TLS covers that wildcard:
+	//      Universal SSL covers only the zone apex and first-level hosts.
+	//      `*.files.davis7.space` needs explicit certificate coverage on the
+	//      davis7.space zone, or use a dedicated content-domain zone apex.
 	//   5. `wrangler secret put` MAINTENANCE_SECRET, WORKOS_API_KEY,
 	//      WORKOS_CLIENT_ID, WORKOS_COOKIE_PASSWORD, WORKOS_WEBHOOK_SECRET
 	//      (all `--env production`)
@@ -93,10 +95,11 @@
 			// Cache API.
 			"placement": { "mode": "smart" },
 			// Content lives on a wildcard under CONTENT_DOMAIN: one proxied
-			// `*.files.davis7.space` DNS record and the route below. The bare
-			// custom domain stays until the throwaway content domain replaces
-			// files.davis7.space; tenant content is never served from the
-			// brand domain.
+			// `*.files.davis7.space` DNS record and the route below. Provision a
+			// certificate covering that wildcard (for example, an Advanced
+			// Certificate); the bare custom domain's certificate does not cover
+			// tenant hosts. A dedicated content-domain zone apex replaces this
+			// example before launch; update CONTENT_DOMAIN and routes together.
 			"routes": [
 				{ "pattern": "drive.davis7.space", "custom_domain": true },
 				{ "pattern": "files.davis7.space", "custom_domain": true },

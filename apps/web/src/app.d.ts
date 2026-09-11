@@ -8,6 +8,7 @@ declare global {
 		interface PageData {
 			session?: {
 				readonly user: { readonly email: string };
+				readonly role: AuthContext['role'];
 				readonly org: { readonly name: string; readonly slug: string };
 			} | null;
 		}

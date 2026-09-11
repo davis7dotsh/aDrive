@@ -6,6 +6,7 @@ import { PgSql } from '../pg';
 import { CurrentOrg } from './current-org';
 import {
 	mintPrivateGrant,
+	PRIVATE_GRANT_TTL_SECONDS,
 	verifyPrivateGrant,
 	type MintPrivateGrantOptions,
 	type PrivateGrant,
@@ -122,10 +123,48 @@ const makeGrantSecrets = Effect.gen(function* () {
 		}),
 		verify: Effect.fn('GrantSecrets.verify')(function* (input) {
 			const contentOrigin = config.contentOriginFor(org.slug);
+			if (input.requestOrigin !== contentOrigin || input.orgId !== org.id) {
+				return false;
+			}
 			const key = yield* signingKey;
-			return yield* Effect.promise(() =>
-				verifyPrivateGrant({ ...input, contentOrigin, signingKey: key })
+			const now = input.now ?? new Date();
+			const granted = yield* Effect.promise(() =>
+				verifyPrivateGrant({ ...input, contentOrigin, signingKey: key, now })
 			);
+			if (granted) return true;
+
+			// A rename redirects old links to this authorized current host. Keep
+			// their signatures valid for the remainder of their original lifetime,
+			// considering only signing origins this same org recently released.
+			const cutoff = new Date(
+				now.getTime() - PRIVATE_GRANT_TTL_SECONDS * 1_000
+			).toISOString();
+			const previous = yield* sql<{ slug: string }>`
+				SELECT slug FROM org_slug_history
+				WHERE org_id = ${org.id}
+					AND released_at >= ${cutoff} AND released_at <= ${now.toISOString()}
+			`.pipe(
+				Effect.mapError(
+					(cause) =>
+						new StorageError({ operation: 'load grant signing origins', cause })
+				)
+			);
+			for (const { slug } of previous) {
+				const signedOrigin = config.contentOriginFor(slug);
+				const valid = yield* Effect.promise(() =>
+					verifyPrivateGrant({
+						...input,
+						contentOrigin: signedOrigin,
+						// The actual request host was authorized above; the primitive now
+						// checks the original signed scope without changing its rules.
+						requestOrigin: signedOrigin,
+						signingKey: key,
+						now
+					})
+				);
+				if (valid) return true;
+			}
+			return false;
 		})
 	});
 });

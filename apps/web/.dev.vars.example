@@ -19,14 +19,16 @@ WORKOS_WEBHOOK_SECRET="replace"
 # these credentials. Wrangler points the HYPERDRIVE binding at it.
 CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE="postgres://adrive:adrive@127.0.0.1:5432/adrive"
 
-# Optional: develop from other devices (e.g. over Tailscale). The dev
-# server binds 0.0.0.0, so any hostname that reaches this machine works —
-# set both values to how the BROWSER will address it. Content is served
-# from `<org slug>.<CONTENT_DOMAIN>` (no scheme; it follows the dashboard),
-# so the browser must resolve `<slug>.<CONTENT_DOMAIN>` to this machine:
-# `*.localhost` does so out of the box, other domains need a wildcard DNS
-# entry. With Tailscale MagicDNS that's your machine name plus your
-# tailnet domain, e.g.:
-#   DASHBOARD_ORIGIN="http://<machine>.<tailnet>.ts.net:5173"
-#   CONTENT_DOMAIN="<machine>.<tailnet>.ts.net:5174"
-# (find yours with `tailscale status`; omit these lines for localhost-only)
+# Optional: develop over Tailscale. Both dev servers bind 0.0.0.0.
+# MagicDNS resolves the dashboard machine name, but not tenant subdomains.
+# On Siva, use nip.io to resolve each tenant host to the Tailscale IP:
+#   DASHBOARD_ORIGIN="http://siva.otter-hawksbill.ts.net:5173"
+#   CONTENT_DOMAIN="100.100.40.20.nip.io:5174"
+# Content is served from `<slug>.<CONTENT_DOMAIN>` over the dashboard's
+# scheme. For another machine, replace the dashboard hostname and the IP
+# (`tailscale ip -4`), or use your own wildcard DNS record. Verify a sample
+# tenant hostname resolves on the browser device; its DNS policy may block
+# these answers. Omit the overrides for localhost development.
+# Vite's allowlist is a SHELL setting, not a Worker variable. Start with:
+#   __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS="siva.otter-hawksbill.ts.net,.100.100.40.20.nip.io" bun --filter @adrive/web dev
+# Adjust both allowlist entries to match your dashboard/content hostnames.

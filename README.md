@@ -90,23 +90,35 @@ page shows your org's content origin.
 
 ### Developing over Tailscale (or another network hostname)
 
-The dev server binds `0.0.0.0`, so other devices can use it — phones,
-tablets, or a laptop pointed at a beefier dev box. Set both values in
-`apps/web/.dev.vars` to the hostname the _browser_ will use. With
-Tailscale MagicDNS that's your machine name plus tailnet domain (see
-`tailscale status`):
+The dev server binds `0.0.0.0`, so other devices on your tailnet can reach
+it. MagicDNS resolves the dashboard's machine name, but does not resolve
+tenant subdomains beneath that name. For Siva, set these values in
+`apps/web/.dev.vars`:
 
 ```bash
-DASHBOARD_ORIGIN="http://<machine>.<tailnet>.ts.net:5173"
-CONTENT_DOMAIN="<machine>.<tailnet>.ts.net:5174"
+DASHBOARD_ORIGIN="http://siva.otter-hawksbill.ts.net:5173"
+CONTENT_DOMAIN="100.100.40.20.nip.io:5174"
 ```
 
-`CONTENT_DOMAIN` has no scheme (it follows the dashboard) and content is
-served from `<org slug>.<CONTENT_DOMAIN>`, so the browser also has to
-resolve that wildcard to the machine: `*.localhost` does out of the box,
-any other domain needs a wildcard DNS entry. The values just have to match
-how the browser addresses the machine, since the Worker enforces its
-host-routing rules even in dev.
+`CONTENT_DOMAIN` has no scheme; it follows the dashboard. An org's content
+URL is then `http://<slug>.100.100.40.20.nip.io:5174/`. The `nip.io` service
+resolves these tenant hosts to Siva's Tailscale IP while each tenant keeps
+its own hostname. For another machine, use its MagicDNS name and Tailscale
+IP (`tailscale ip -4`). Alternatively, use a domain whose wildcard DNS
+record points to that IP. Verify a sample tenant hostname resolves on the
+device running the browser; its resolver may block public DNS answers
+that point to private networks.
+
+Vite also needs to allow the dashboard hostname and content-domain suffix.
+Set this in the shell when starting development, separately from
+`.dev.vars`, and adjust both entries if you changed the domains:
+
+```bash
+__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS="siva.otter-hawksbill.ts.net,.100.100.40.20.nip.io" bun --filter @adrive/web dev
+```
+
+The content proxy preserves the tenant Host header, so the Worker still
+enforces its host-routing rules in development.
 
 Production passcode login creates a seven-day, host-only
 `__Host-adrive-session` cookie. That cookie is always `Secure`, `HttpOnly`, and
