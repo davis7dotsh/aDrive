@@ -114,6 +114,10 @@ const main = () => {
 			? process.argv[envFlag + 1]
 			: 'production';
 	const placeholdersOnly = process.argv.includes('--placeholders-only');
+	// Source checks can run before resources are provisioned. Deployment
+	// preflight always checks ids, even if both flags are supplied.
+	const allowPlaceholders =
+		process.argv.includes('--allow-placeholders') && !placeholdersOnly;
 	const config = JSON.parse(stripComments(readFileSync(configPath, 'utf8')));
 	const prod = config.env?.[envName];
 	if (!prod || typeof prod !== 'object' || Array.isArray(prod)) {
@@ -123,7 +127,7 @@ const main = () => {
 	}
 	const drift = [];
 
-	placeholderIds(prod, `env.${envName}`, drift);
+	if (!allowPlaceholders) placeholderIds(prod, `env.${envName}`, drift);
 
 	if (!placeholdersOnly) {
 		const ENV_ONLY_VARS = new Set([
