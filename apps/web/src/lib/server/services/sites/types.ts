@@ -23,7 +23,8 @@ export const StagedAssetRow = Schema.Struct({
 export const ExistingSiteRow = Schema.Struct({
 	id: Schema.String,
 	display_name: Schema.String,
-	current_version: Schema.Int
+	current_version: Schema.Int,
+	size_bytes: Schema.Int
 });
 
 export const SiteFileRow = Schema.Struct({

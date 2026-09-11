@@ -96,17 +96,24 @@ export const postFailedJobAlert = (
 		readonly orgIds: ReadonlyArray<string>;
 	}
 ) =>
-	Effect.tryPromise(() =>
-		fetch(url, {
+	Effect.tryPromise(async () => {
+		const response = await fetch(url, {
 			method: 'POST',
+			signal: AbortSignal.timeout(5_000),
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify({
 				text: `adrive: ${summary.recorded} job(s) dead-lettered on ${summary.queue}`,
 				...summary
 			})
-		})
-	).pipe(
-		Effect.asVoid,
+		});
+		await response.body?.cancel();
+		return response;
+	}).pipe(
+		Effect.flatMap((response) =>
+			response.ok
+				? Effect.void
+				: Effect.fail(`Alert webhook returned HTTP ${response.status}`)
+		),
 		Effect.catchCause((cause) =>
 			Effect.sync(() => {
 				console.error(

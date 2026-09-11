@@ -186,6 +186,7 @@ export const purgeOps = (
 					)
 				ORDER BY COALESCE(purge_at, expires_at), id
 				LIMIT ${bounded}
+				FOR UPDATE SKIP LOCKED
 			) AND org_id = ${org.id}
 			RETURNING id`.pipe(Effect.mapError(storage('list stuck file purges')));
 		for (const row of rows) yield* sendPurgeJob(row.id, now.toISOString());
