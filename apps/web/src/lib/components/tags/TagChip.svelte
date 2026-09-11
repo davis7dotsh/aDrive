@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Tag } from '@adrive/shared';
+	import { tagForeground } from '$lib/dashboard/tag-foreground';
 
 	let {
 		tag,
@@ -23,6 +24,7 @@
 		type="button"
 		aria-pressed={selected}
 		style:--tag-color={tag.color ?? undefined}
+		style:--tag-foreground={tagForeground(tag.color)}
 		class="tag-chip inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm font-medium transition {selected
 			? 'border-accent-500 bg-accent-50 text-accent-700 ring-1 ring-accent-500'
 			: 'border-zinc-200 bg-zinc-50 text-zinc-700 hover:border-zinc-300 hover:bg-white'}"

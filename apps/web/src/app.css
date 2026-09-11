@@ -416,14 +416,14 @@
 [data-theme='b'] .tag-chip[aria-pressed='true'] {
 	background: var(--tag-color, var(--color-accent-500));
 	border-color: var(--tag-color, var(--color-accent-500));
-	color: #fff;
+	color: var(--tag-foreground, #fff);
 	box-shadow: none;
 }
 [data-theme='b'] .tag-chip[aria-pressed='true'] .tag-dot {
-	background: #fff !important;
+	background: var(--tag-foreground, #fff) !important;
 }
 [data-theme='b'] .tag-chip[aria-pressed='true'] .tag-count {
-	color: rgb(255 255 255 / 0.75);
+	color: var(--tag-foreground, #fff);
 }
 
 /* C · Terminal — amber, square corners, mono names, ls-style type color. */
