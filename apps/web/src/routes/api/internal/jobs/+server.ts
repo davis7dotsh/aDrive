@@ -5,6 +5,7 @@ import { verifyJobsRequest } from '$lib/server/cron-auth';
 import { runEdge } from '$lib/server/edge';
 import { InvalidRequest, Unauthorized } from '$lib/server/errors';
 import { consumeBatch, runJob } from '$lib/server/jobs/consumer';
+import { readBoundedText } from '$lib/server/request-json';
 
 // The Worker facade (scripts/cloudflare-adapter.mjs) receives queue
 // batches and forwards them here in-process, because the consumer has to
@@ -30,17 +31,11 @@ export const POST: RequestHandler = ({ request }) =>
 	runEdge(
 		Effect.gen(function* () {
 			const config = yield* AppConfig;
-			const text = yield* Effect.tryPromise({
-				try: () => request.text(),
-				catch: () =>
-					new InvalidRequest({ status: 400, message: 'Queue batch is invalid' })
+			const text = yield* readBoundedText(request, {
+				maxBytes: MAX_BATCH_BYTES,
+				invalidLengthMessage: 'Queue batch is too large',
+				invalidTextMessage: 'Queue batch is invalid'
 			});
-			if (text.length > MAX_BATCH_BYTES) {
-				return yield* new InvalidRequest({
-					status: 413,
-					message: 'Queue batch is too large'
-				});
-			}
 			const authorized = yield* Effect.tryPromise({
 				try: () =>
 					verifyJobsRequest(
