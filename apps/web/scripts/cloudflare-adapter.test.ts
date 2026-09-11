@@ -1,5 +1,25 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { verifyJobsRequest } from '../src/lib/server/cron-auth';
 import { facadeSource } from './cloudflare-adapter.mjs';
+
+const generatedQueue = (
+	fetch: (request: Request, env: object, ctx: object) => Promise<Response>
+) => {
+	const executable = facadeSource('_sveltekit.js')
+		.replace('import sveltekit from "./_sveltekit.js";', '')
+		.replace('export * from "./_sveltekit.js";', '')
+		.replace('export default', 'return');
+	const facade: unknown = new Function('sveltekit', executable)({ fetch });
+	if (
+		typeof facade !== 'object' ||
+		facade === null ||
+		!('queue' in facade) ||
+		typeof facade.queue !== 'function'
+	) {
+		throw new Error('Generated facade does not expose a queue handler');
+	}
+	return facade.queue;
+};
 
 describe('Cloudflare Worker facade', () => {
 	it('delegates fetch and exports a signed scheduled handler', () => {
@@ -23,4 +43,90 @@ describe('Cloudflare Worker facade', () => {
 			.replace('export default', 'return');
 		expect(() => new Function(executable)).not.toThrow();
 	});
+
+	it('signs the forwarded batch and applies explicit and missing decisions', async () => {
+		const env = {
+			DASHBOARD_ORIGIN: 'https://dashboard.test',
+			PASSCODE: 'facade-signature-test-passcode'
+		};
+		const ctx = { waitUntil: vi.fn() };
+		const messages = ['acknowledged', 'retrying', 'undecided'].map((id) => ({
+			id,
+			attempts: 2,
+			body: { kind: 'purge', fileId: `file-${id}` },
+			ack: vi.fn(),
+			retry: vi.fn()
+		}));
+		const batch = { queue: 'adrive-jobs', messages };
+		const fetch = vi.fn(
+			async (request: Request, receivedEnv: object, receivedCtx: object) => {
+				expect(request.url).toBe('https://dashboard.test/api/internal/jobs');
+				expect(request.method).toBe('POST');
+				expect(request.headers.get('content-type')).toBe('application/json');
+				expect(receivedEnv).toBe(env);
+				expect(receivedCtx).toBe(ctx);
+				const body = await request.text();
+				expect(body).toBe(
+					JSON.stringify({
+						queue: batch.queue,
+						messages: messages.map(({ id, attempts, body }) => ({
+							id,
+							attempts,
+							body
+						}))
+					})
+				);
+				await expect(
+					verifyJobsRequest(
+						env.PASSCODE,
+						request.headers.get('x-adrive-jobs-time'),
+						body,
+						request.headers.get('x-adrive-jobs-signature')
+					)
+				).resolves.toBe(true);
+				return Response.json({
+					decisions: [
+						{ id: 'acknowledged', action: 'ack' },
+						{ id: 'retrying', action: 'retry' }
+					]
+				});
+			}
+		);
+		await generatedQueue(fetch)(batch, env, ctx);
+		expect(fetch).toHaveBeenCalledOnce();
+		for (const message of messages) {
+			expect(message.ack).toHaveBeenCalledTimes(
+				message.id === 'acknowledged' ? 1 : 0
+			);
+			expect(message.retry).toHaveBeenCalledTimes(
+				message.id === 'acknowledged' ? 0 : 1
+			);
+		}
+	});
+
+	it.each([401, 503])(
+		'throws on endpoint status %s so Cloudflare retries the batch',
+		async (status) => {
+			const message = {
+				id: 'unacknowledged',
+				attempts: 1,
+				body: { kind: 'purge', fileId: 'file-1' },
+				ack: vi.fn(),
+				retry: vi.fn()
+			};
+			const fetch = vi.fn(async () => new Response(null, { status }));
+			await expect(
+				generatedQueue(fetch)(
+					{ queue: 'adrive-jobs', messages: [message] },
+					{
+						DASHBOARD_ORIGIN: 'https://dashboard.test',
+						PASSCODE: 'facade-signature-test-passcode'
+					},
+					{}
+				)
+			).rejects.toThrow(`Queue consumer failed with status ${status}`);
+			expect(message.ack).not.toHaveBeenCalled();
+			expect(message.retry).not.toHaveBeenCalled();
+		}
+	);
 });

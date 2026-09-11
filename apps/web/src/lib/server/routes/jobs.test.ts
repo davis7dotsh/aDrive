@@ -16,13 +16,18 @@ describe('queue consumer endpoint', () => {
 		const { POST } =
 			await import('../../../routes/api/internal/jobs/+server.js');
 		const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-		const body = JSON.stringify({
-			queue: 'adrive-jobs',
-			messages: [
-				{ id: 'a', attempts: 1, body: { kind: 'purge', fileId: 'file-1' } },
-				{ id: 'b', attempts: 1, body: { kind: 'nope' } }
-			]
-		});
+		const body =
+			JSON.stringify(
+				{
+					queue: 'adrive-jobs',
+					messages: [
+						{ id: 'a', attempts: 1, body: { kind: 'purge', fileId: 'file-1' } },
+						{ id: 'b', attempts: 1, body: { kind: 'nope' } }
+					]
+				},
+				null,
+				2
+			) + '\n';
 		const timestamp = String(Date.now());
 		const signature = await signJobsRequest(ctx.env.PASSCODE, timestamp, body);
 		const response = await call(
@@ -63,5 +68,24 @@ describe('queue consumer endpoint', () => {
 				})
 			)
 		).rejects.toMatchObject({ status: 401 });
+	});
+
+	it('rejects oversized unauthenticated UTF-8 bodies before signature verification', async () => {
+		const ctx = await createRouteContext();
+		const { POST } =
+			await import('../../../routes/api/internal/jobs/+server.js');
+		// JavaScript's character count fits the limit, while encoded bytes do not.
+		const body = '😀'.repeat(256 * 1024 + 1);
+		await expect(
+			call(
+				POST,
+				ctx.event({
+					method: 'POST',
+					path: '/api/internal/jobs',
+					body,
+					headers: { 'content-length': '1' }
+				})
+			)
+		).rejects.toMatchObject({ status: 413 });
 	});
 });
