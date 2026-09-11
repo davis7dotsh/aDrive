@@ -25,7 +25,7 @@ export const GET: RequestHandler = ({ cookies, url }) =>
 			const state = url.searchParams.get('state');
 			const pending = new URLSearchParams(cookies.get(names.state) ?? '');
 			const expectedState = pending.get('state');
-			cookies.delete(names.state, { path: '/' });
+			cookies.delete(names.state, { path: '/', secure: names.secure });
 			if (!state || !expectedState || state !== expectedState) {
 				return yield* new InvalidRequest({
 					status: 400,

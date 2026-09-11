@@ -20,12 +20,12 @@ export const POST: RequestHandler = ({ cookies, request, url }) =>
 			}
 			const auth = yield* Auth;
 			const config = yield* AppConfig;
-			const sessionCookie = cookieNames(config.dashboardOrigin).session;
+			const names = cookieNames(config.dashboardOrigin);
 			const location = yield* auth.logoutUrl(
-				cookies.get(sessionCookie),
+				cookies.get(names.session),
 				`${config.dashboardOrigin}/`
 			);
-			cookies.delete(sessionCookie, { path: '/' });
+			cookies.delete(names.session, { path: '/', secure: names.secure });
 			return new Response(null, {
 				status: 303,
 				headers: { 'Cache-Control': 'private, no-store', Location: location }
