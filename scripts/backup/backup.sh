@@ -128,14 +128,12 @@ if (( PREVIOUS_COUNT > 0 && CURRENT_COUNT + SHRINK_TOLERANCE < PREVIOUS_COUNT ))
 fi
 
 # --- 2. Postgres dump -------------------------------------------------------
-# Plain SQL so a restore is `psql -f`. The dump excludes the derived
-# search_documents and file_chunks tables: both rebuild from the copied
-# rows (scripts/pg-rebuild-search.mjs and the indexing sweep).
+# Plain SQL so a restore is `psql -f`. Include search documents and vectors
+# so files marked ready remain searchable immediately after restore.
 PG_EXPORT="${PG_DIR}/adrive-${STAMP_DAY}.sql.gz"
 PG_TMP="$(mktemp "${PG_DIR}/.export-XXXXXX")"
 CLEANUP_FILES+=("${PG_TMP}")
 pg_dump "${DATABASE_URL}" --no-owner --no-privileges \
-	--exclude-table-data=search_documents --exclude-table-data=file_chunks \
 	| gzip >"${PG_TMP}" || fail "pg-dump"
 gzip -t "${PG_TMP}" || fail "pg-corrupt-dump"
 [[ -s "${PG_TMP}" ]] || fail "pg-empty-dump"
@@ -187,7 +185,7 @@ find "${BACKUP_ROOT}/r2-deleted" -mindepth 1 -maxdepth 1 -type d \
 find "${PG_MONTHLY_DIR}" -name '*.sql.gz' -mtime +366 -delete
 
 # --- 5. Status --------------------------------------------------------------
-printf '{"status":"ok","at":"%s","objects":%s,"d1Export":"%s"}\n' \
+printf '{"status":"ok","at":"%s","objects":%s,"postgresDump":"%s"}\n' \
 	"${NOW_ISO}" "${CURRENT_COUNT}" "$(basename "${PG_EXPORT}")" \
 	>"${STATUS_FILE}"
 log "backup run complete"

@@ -161,6 +161,47 @@ describe('lease-guarded indexing SQL on postgres', () => {
 		});
 	});
 
+	it('stores NUL-containing text and completes semantic indexing', async () => {
+		const fileId = `ix-${crypto.randomUUID()}`;
+		const held = lease(fileId, 1, 1, 'N');
+		const result = await run(
+			Effect.gen(function* () {
+				const sql = yield* PgSql;
+				yield* seedVersion(fileId, 1);
+				yield* claim(held);
+				const stored = yield* storeExtractedText(
+					sql,
+					held,
+					'\u0000Quarterly re\u0000port\nCafé 😀\u0000'
+				);
+				const [version] = yield* sql<{ text_content: string }>`
+					SELECT text_content FROM file_versions WHERE file_id = ${fileId}`;
+				const [document] = yield* sql<{ body: string; hit: boolean }>`
+					SELECT body, tsv @@ websearch_to_tsquery('english', 'quarterly report') AS hit
+					FROM search_documents WHERE file_id = ${fileId}`;
+				const committed = yield* semanticCommit(sql, held, chunksFor(held, 1));
+				return {
+					stored,
+					version,
+					document,
+					committed,
+					state: yield* fileState(fileId)
+				};
+			})
+		);
+		expect(result.stored).toBe(true);
+		expect(result.version?.text_content).toBe('Quarterly report\nCafé 😀');
+		expect(result.document).toEqual({
+			body: 'Quarterly report\nCafé 😀',
+			hit: true
+		});
+		expect(result.committed).toBe(true);
+		expect(result.state).toMatchObject({
+			index_state: 'ready',
+			index_lease_token: null
+		});
+	});
+
 	it('keeps v2 authoritative when a stale v1 commit arrives late', async () => {
 		const fileId = `ix-${crypto.randomUUID()}`;
 		const v1 = lease(fileId, 1, 1, 'E');

@@ -189,6 +189,13 @@ export const createInternals = ({ sql, blobs, config }: CoreDeps) => {
 		yield* sql
 			.withTransaction(
 				Effect.gen(function* () {
+					// Claim cleanup before reading keys. A concurrent publisher owns
+					// this row until commit; after it completes, its blobs are live.
+					const claimed = yield* sql<{ id: string }>`
+						UPDATE site_upload_sessions SET status = ${status}
+						WHERE id = ${session.id} AND status IN ('open', 'committing')
+						RETURNING id`;
+					if (claimed.length === 0) return;
 					yield* sql`
 						INSERT INTO pending_site_asset_deletes (
 							r2_key, file_id, version, queued_at
@@ -197,9 +204,6 @@ export const createInternals = ({ sql, blobs, config }: CoreDeps) => {
 						FROM staged_site_assets
 						WHERE session_id = ${session.id} AND r2_key IS NOT NULL
 						ON CONFLICT (r2_key) DO NOTHING`;
-					yield* sql`
-						UPDATE site_upload_sessions SET status = ${status}
-						WHERE id = ${session.id} AND status IN ('open', 'committing')`;
 					yield* sql`
 						DELETE FROM staged_site_assets WHERE session_id = ${session.id}`;
 				})

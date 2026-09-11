@@ -1,4 +1,8 @@
 import { Effect } from 'effect';
+import {
+	CurrentTransformer,
+	type Statement
+} from 'effect/unstable/sql/Statement';
 import { describe, expect, it } from 'vitest';
 import { PgSql } from './pg';
 import {
@@ -22,11 +26,11 @@ interface Seed {
 	readonly expiresAt?: string;
 }
 
-const seedTag = (id: string) =>
+const seedTag = (id: string, name = id) =>
 	Effect.gen(function* () {
 		const sql = yield* PgSql;
 		yield* sql`INSERT INTO tags (id, name, normalized_name, created_at)
-			VALUES (${id}, ${id}, ${id}, ${NOW})`;
+			VALUES (${id}, ${name}, ${name}, ${NOW})`;
 	});
 
 const seedFile = (id: string, seed: Seed) =>
@@ -67,6 +71,75 @@ const search = (
 	});
 
 describe('postgres search candidates', () => {
+	it('normalizes mixed fields while preserving phrase, OR, NOT and literal queries', async () => {
+		const prefix = `sc-normalization-${crypto.randomUUID()}`;
+		const tagId = `${prefix}-tag`;
+		const [mixed, phrase, separated, confidential, literal] = [
+			`${prefix}-mixed`,
+			`${prefix}-phrase`,
+			`${prefix}-separated`,
+			`${prefix}-confidential`,
+			`${prefix}-literal`
+		];
+		const ids = [mixed, phrase, separated, confidential, literal];
+		const result = await run(
+			Effect.gen(function* () {
+				yield* seedTag(tagId, `${prefix} quarterly`);
+				yield* seedFile(mixed, {
+					name: 'Memo.txt',
+					tagId,
+					body: 'Annual reports are attached'
+				});
+				yield* seedFile(phrase, { name: 'Quarterly report' });
+				yield* seedFile(separated, {
+					name: 'Quarterly financial reports summary.txt'
+				});
+				yield* seedFile(confidential, {
+					name: 'Quarterly report summary.txt',
+					body: 'Confidential documents'
+				});
+				yield* seedFile(literal, { name: 'The document.txt' });
+				return {
+					mixed: onlyMine(yield* search('fullText', 'quarterly reports'), ids),
+					phrase: onlyMine(
+						yield* search('fullText', '"quarterly reports"'),
+						ids
+					),
+					reversedPhrase: onlyMine(
+						yield* search('fullText', '"report quarterly"'),
+						ids
+					),
+					or: onlyMine(
+						yield* search('fullText', '"quarterly reports" OR attachments'),
+						ids
+					),
+					not: onlyMine(
+						yield* search('fullText', 'quarterly -confidential'),
+						ids
+					),
+					excludedBody: onlyMine(
+						yield* search('fullText', 'quarterly -reports'),
+						ids
+					),
+					literal: onlyMine(yield* search('fullText', 'the'), ids)
+				};
+			})
+		);
+		expect(result.mixed.toSorted()).toEqual(
+			[mixed, phrase, separated, confidential].toSorted()
+		);
+		expect(result.phrase.toSorted()).toEqual([phrase, confidential].toSorted());
+		expect(result.reversedPhrase).toEqual([]);
+		expect(result.or.toSorted()).toEqual(
+			[mixed, phrase, confidential].toSorted()
+		);
+		expect(result.not.toSorted()).toEqual(
+			[mixed, phrase, separated].toSorted()
+		);
+		expect(result.excludedBody).toEqual([]);
+		expect(result.literal).toEqual([literal]);
+	});
+
 	it('ranks a name match above a body match and stems body terms', async () => {
 		const prefix = `sc-${crypto.randomUUID()}`;
 		const named = `${prefix}-named`;
@@ -172,5 +245,61 @@ describe('postgres search candidates', () => {
 		);
 		expect(result.typo).toEqual([report]);
 		expect(result.fullText).toEqual([]);
+	});
+
+	it('uses the trigram index with the configured cutoff', async () => {
+		const id = `sc-index-${crypto.randomUUID()}`;
+		const result = await run(
+			Effect.gen(function* () {
+				const sql = yield* PgSql;
+				yield* seedFile(id, { name: 'Quarterly report.pdf' });
+				const unrelated = Array.from({ length: 2_000 }, (_, index) => ({
+					id: `${id}-unrelated-${index}`,
+					display_name: `Unrelated photograph ${index}`,
+					content_type: 'image/jpeg',
+					size_bytes: 1,
+					created_at: NOW,
+					updated_at: NOW
+				}));
+				yield* sql`INSERT INTO files ${sql.insert(unrelated)}`;
+				yield* sql`INSERT INTO search_documents ${sql.insert(
+					unrelated.map((file) => ({
+						file_id: file.id,
+						name: file.display_name
+					}))
+				)}`;
+				// Flush GIN's bulk-insert pending list before measuring its plan.
+				yield* sql`VACUUM ANALYZE search_documents`;
+				yield* sql`ANALYZE files`;
+				return yield* sql.withTransaction(
+					Effect.gen(function* () {
+						// The unrelated corpus and fresh statistics make this an
+						// index-eligibility check, independent of tiny-table costs.
+						yield* sql`SET LOCAL enable_seqscan = off`;
+						yield* sql`SET LOCAL pg_trgm.word_similarity_threshold = 0.9`;
+						let compiled: ReturnType<Statement<unknown>['compile']> | undefined;
+						const rows = yield* trigramCandidates(sql, 'reprot', {
+							now: NOW,
+							tagIds: []
+						}).pipe(
+							Effect.provideService(CurrentTransformer, (statement) => {
+								const query = statement.compile();
+								if (query[0].includes('word_similarity(')) compiled = query;
+								return Effect.succeed(statement);
+							})
+						);
+						if (!compiled)
+							throw new Error('The candidate query was not captured');
+						const plan = yield* sql.unsafe(
+							`EXPLAIN (FORMAT JSON) ${compiled[0]}`,
+							compiled[1]
+						);
+						return { rows, plan: JSON.stringify(plan) };
+					})
+				);
+			})
+		);
+		expect(result.rows.some((row) => row.file_id === id)).toBe(true);
+		expect(result.plan).toContain('search_documents_name_trgm_idx');
 	});
 });

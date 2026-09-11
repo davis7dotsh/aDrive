@@ -256,17 +256,15 @@ const makeTags = Effect.gen(function* () {
 			forgetTagListCache();
 		}),
 		setFileTags: Effect.fn('Tags.setFileTags')(function* (fileId, names) {
-			const file = yield* sql`
-				SELECT id FROM files WHERE id = ${fileId} LIMIT 1`.pipe(
-				Effect.mapError(
-					(cause) => new StorageError({ operation: 'find tagged file', cause })
-				)
-			);
-			if (file.length === 0) return yield* new NotFound({ id: fileId });
-			const resolved = yield* resolveNames(names);
 			yield* sql
 				.withTransaction(
 					Effect.gen(function* () {
+						// Replacements must serialize even when the file has no tags.
+						// Locking only existing file_tags rows leaves that case unprotected.
+						const file = yield* sql`
+							SELECT id FROM files WHERE id = ${fileId} FOR UPDATE`;
+						if (file.length === 0) return yield* new NotFound({ id: fileId });
+						const resolved = yield* resolveNames(names);
 						yield* sql`DELETE FROM file_tags WHERE file_id = ${fileId}`;
 						if (resolved.length > 0) {
 							yield* sql`
@@ -278,8 +276,8 @@ const makeTags = Effect.gen(function* () {
 					})
 				)
 				.pipe(
-					Effect.mapError(
-						(cause) => new StorageError({ operation: 'set file tags', cause })
+					Effect.catchTag('SqlError', (cause) =>
+						Effect.fail(new StorageError({ operation: 'set file tags', cause }))
 					)
 				);
 			forgetTagListCache();
