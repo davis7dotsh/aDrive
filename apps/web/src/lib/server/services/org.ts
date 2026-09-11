@@ -32,8 +32,8 @@ export interface OrgSettings {
 export interface OrgShape {
 	readonly settings: Effect.Effect<OrgSettings, StorageError>;
 	// Renames the org's content host. The old slug redirects to the new one
-	// for 30 days and cannot be claimed meanwhile; both cache entries are
-	// dropped so the change is live before they would have expired.
+	// for 30 days and cannot be claimed meanwhile. Cache purges are best
+	// effort; failed invalidation recovers through the existing short TTLs.
 	readonly changeSlug: (
 		slug: string
 	) => Effect.Effect<OrgSettings, InvalidRequest | StorageError>;
@@ -174,11 +174,26 @@ const makeOrg = Effect.gen(function* () {
 					)
 				);
 			if (changed.previousSlug === null) return changed.settings;
-			yield* Effect.all(
-				[
-					forgetContentSlug(changed.previousSlug),
-					forgetContentSlug(validated.slug)
-				],
+			// The rename has committed. Try both keys independently; a KV
+			// failure must not report a failed mutation to the owner. Positive
+			// entries expire within five minutes and negative entries in one.
+			yield* Effect.forEach(
+				[changed.previousSlug, validated.slug],
+				(slug) =>
+					forgetContentSlug(slug).pipe(
+						Effect.catchTag('StorageError', (failure) =>
+							Effect.sync(() => {
+								console.error(
+									JSON.stringify({
+										message: 'slug cache could not be purged',
+										orgId: org.id,
+										slug,
+										cause: String(failure.cause)
+									})
+								);
+							})
+						)
+					),
 				{ concurrency: 'unbounded' }
 			).pipe(Effect.provideService(AuthGuardStore, store));
 			// A session pins the slug it signed in with; it is refreshed on

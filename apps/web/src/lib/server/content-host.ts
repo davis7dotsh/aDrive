@@ -23,8 +23,8 @@ export type ContentHostResolution =
 // in the AUTH_GUARD KV namespace: `org-slug:<slug>` holds the org id and
 // trust for five minutes; a miss is remembered for one minute so a burst
 // of requests for a random host does not fan out to Postgres. Suspending
-// an org or changing its slug must delete the key (forgetContentSlug) so
-// the change lands before the entry expires.
+// an org or changing its slug purges the key (forgetContentSlug) to speed
+// propagation; the TTL bounds recovery when a purge cannot be delivered.
 export const contentSlugCacheKey = (slug: string) => `org-slug:${slug}`;
 const CACHE_TTL_SECONDS = 300;
 const NEGATIVE_CACHE_TTL_SECONDS = 60;

@@ -63,9 +63,8 @@ export const ensureTenant = (sql: PgClient.PgClient, tenant: TenantRows) =>
 		})
 	);
 
-// First-login org naming. Stack C owns the real slug rules; until then the
-// slug is the email's local part plus a short random suffix so two people
-// named `sam` never collide.
+// First-login org naming keeps a readable email prefix and 64 random bits
+// so common local parts have ample space without exceeding the slug limit.
 export const slugify = (value: string) =>
 	value
 		.normalize('NFKD')
@@ -84,10 +83,11 @@ const randomHex = (bytes: number) => {
 
 export const personalOrgFor = (email: string) => {
 	const local = email.split('@')[0] ?? email;
+	const suffix = randomHex(8);
 	return {
 		name: `${local}'s drive`,
 		slug: `${slugify(local)
-			.slice(0, SLUG_MAX_LENGTH - 5)
-			.replace(/-+$/, '')}-${randomHex(2)}`
+			.slice(0, SLUG_MAX_LENGTH - suffix.length - 1)
+			.replace(/-+$/, '')}-${suffix}`
 	};
 };
