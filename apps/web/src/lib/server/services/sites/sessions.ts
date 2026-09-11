@@ -43,21 +43,19 @@ export const sessionOps = (
 								message: 'Site manifest is invalid'
 							})
 			});
-			// Declared manifest sizes gate the whole publish before any asset
-			// bytes are accepted; per-asset uploads re-verify actual lengths.
 			const declaredBytes = prepared.assets.reduce(
 				(total, asset) => total + asset.sizeBytes,
 				0
 			);
-			yield* ensureStorageHeadroom(sql, org.id, declaredBytes);
 
 			let fileId: string = crypto.randomUUID();
 			let version = 1;
 			let displayName = prepared.displayName;
+			let previousBytes = 0;
 			if (input.fileId !== undefined) {
 				const rows = yield* all(
 					sql`
-						SELECT id, display_name, current_version
+						SELECT id, display_name, current_version, size_bytes
 						FROM files
 						WHERE id = ${input.fileId} AND org_id = ${org.id}
 							AND is_site = true AND deleted_at IS NULL
@@ -70,7 +68,12 @@ export const sessionOps = (
 				fileId = current.id;
 				version = current.current_version + 1;
 				displayName = current.display_name;
+				previousBytes = current.size_bytes;
 			}
+			// A republish replaces the previous assets, so preflight the same
+			// byte delta the commit will charge. Actual asset lengths and the
+			// authoritative reservation are still checked during publication.
+			yield* ensureStorageHeadroom(sql, org.id, declaredBytes - previousBytes);
 
 			const id = crypto.randomUUID();
 			const createdAt = new Date().toISOString();

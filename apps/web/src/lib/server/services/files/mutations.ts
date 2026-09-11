@@ -87,12 +87,17 @@ export const mutationOps = (
 		restore: Effect.fn('Files.restore')(function* (id) {
 			const current = yield* findDashboardFile(id);
 			const updatedAt = new Date().toISOString();
+			// A failed purge may already have deleted originals before a later
+			// blob or thumbnail operation failed. Once deletion has started,
+			// keep the row in trash until cleanup finishes; resetting its state
+			// through another trash action must not make it restorable either.
 			const rows = yield* sql<{ id: string }>`
 				UPDATE files
 				SET deleted_at = NULL, purge_at = NULL, purge_state = 'none',
 					purge_error = NULL, purge_next_run_at = NULL,
 					updated_at = ${updatedAt}
-				WHERE id = ${id} AND org_id = ${org.id} AND purge_state <> 'pending'
+				WHERE id = ${id} AND org_id = ${org.id}
+					AND purge_state = 'none' AND purge_attempts = 0
 				RETURNING id
 			`.pipe(
 				Effect.mapError(
@@ -102,7 +107,7 @@ export const mutationOps = (
 			if (rows.length !== 1) {
 				return yield* new InvalidRequest({
 					status: 409,
-					message: 'This file is already being purged'
+					message: 'This file has already started permanent deletion'
 				});
 			}
 			return {

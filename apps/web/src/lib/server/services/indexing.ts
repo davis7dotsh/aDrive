@@ -302,7 +302,8 @@ const makeIndexing = Effect.gen(function* () {
 	// send); they get a fresh job. Stamping index_next_run_at throttles
 	// the re-send to once per stuck window and keeps a lapsed `running`
 	// lease claimable. Disabled rows are re-sent once semantic search is
-	// switched on so they gain embeddings.
+	// switched on so they gain embeddings. Lock candidates before updating
+	// them; a consumer claiming a row concurrently keeps its fresh lease.
 	const runDue = Effect.fn('Indexing.runDue')(function* (limit: number) {
 		const bounded = Math.max(1, Math.min(limit, 10));
 		const now = new Date();
@@ -324,9 +325,10 @@ const makeIndexing = Effect.gen(function* () {
 						OR (index_state = 'disabled' AND ${includeDisabled}::boolean
 							AND COALESCE(index_next_run_at, updated_at) <= ${cutoff})
 					)
-				ORDER BY COALESCE(index_next_run_at, updated_at), id
-				LIMIT ${bounded}
-			) AND org_id = ${org.id}
+					ORDER BY COALESCE(index_next_run_at, updated_at), id
+					LIMIT ${bounded}
+					FOR UPDATE SKIP LOCKED
+				) AND org_id = ${org.id}
 			RETURNING id, current_version`.pipe(
 			Effect.mapError(storage('list stuck indexing jobs'))
 		);

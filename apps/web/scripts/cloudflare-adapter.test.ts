@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { verifyJobsRequest } from '../src/lib/server/cron-auth';
+import type { JobDecision } from '../src/lib/server/jobs/consumer';
 import { facadeSource } from './cloudflare-adapter.mjs';
 
 const generatedQueue = (
@@ -92,9 +93,9 @@ describe('Cloudflare Worker facade', () => {
 				).resolves.toBe(true);
 				return Response.json({
 					decisions: [
-						{ id: 'acknowledged', action: 'ack' },
-						{ id: 'retrying', action: 'retry' }
-					]
+						{ id: 'acknowledged', ack: true },
+						{ id: 'retrying', retry: true, delaySeconds: 120 }
+					] satisfies ReadonlyArray<JobDecision>
 				});
 			}
 		);
@@ -107,6 +108,11 @@ describe('Cloudflare Worker facade', () => {
 			expect(message.retry).toHaveBeenCalledTimes(
 				message.id === 'acknowledged' ? 0 : 1
 			);
+			if (message.id === 'retrying') {
+				expect(message.retry).toHaveBeenCalledWith({ delaySeconds: 120 });
+			} else if (message.id === 'undecided') {
+				expect(message.retry).toHaveBeenCalledWith();
+			}
 		}
 	});
 
