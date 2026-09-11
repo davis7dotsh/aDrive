@@ -135,7 +135,6 @@ export const createInternals = (deps: CoreDeps) => {
 							)`;
 					yield* refreshSearchDocument(sql, current.id, org.id);
 					yield* reserveBytes(org.id, size);
-
 				})
 			)
 			.pipe(

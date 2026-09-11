@@ -1,9 +1,9 @@
+import { dev } from '$app/environment';
 import { Context, Layer } from 'effect';
 import { normalizeOrigins } from './host-gate';
 
-// WorkOS credentials. apiKey is null when the deployment runs the in-memory
-// fake (local development and tests): WORKOS_API_KEY unset, empty, or
-// starting with `fake:`. See services/workos.ts.
+// A null API key is reserved for the explicitly enabled development fake.
+// Production always requires real WorkOS credentials.
 export interface WorkOSConfig {
 	readonly apiKey: string | null;
 	readonly clientId: string;
@@ -42,16 +42,21 @@ const semanticMode = (value: string) => {
 const optionalString = (value: unknown) =>
 	typeof value === 'string' ? value : '';
 
-export const isFakeWorkOSKey = (apiKey: string) =>
+const isFakeWorkOSKey = (apiKey: string) =>
 	apiKey === '' || apiKey.startsWith('fake:');
 
 const workosFromEnv = (env: Env): WorkOSConfig => {
-	const rawApiKey = optionalString(env.WORKOS_API_KEY);
+	const rawApiKey = optionalString(env.WORKOS_API_KEY).trim();
 	const clientId = optionalString(env.WORKOS_CLIENT_ID);
 	const cookiePassword = optionalString(env.WORKOS_COOKIE_PASSWORD);
 	const webhookSecret = optionalString(env.WORKOS_WEBHOOK_SECRET);
 	if (isFakeWorkOSKey(rawApiKey)) {
-		return { apiKey: null, clientId, cookiePassword, webhookSecret };
+		if (dev && env.WORKOS_DEV_FAKE === 'true') {
+			return { apiKey: null, clientId, cookiePassword, webhookSecret };
+		}
+		throw new Error(
+			'WORKOS_API_KEY is required; fake authentication requires WORKOS_DEV_FAKE=true in development'
+		);
 	}
 	if (!clientId) {
 		throw new Error('WORKOS_CLIENT_ID is required alongside WORKOS_API_KEY');

@@ -147,7 +147,7 @@ try {
 	await client.query('BEGIN');
 	if (wipe) {
 		await client.query(
-			'TRUNCATE files, tags, api_keys, device_codes, dashboard_sessions, credential_state, site_upload_sessions, pending_site_asset_deletes, instance_secrets CASCADE'
+			'TRUNCATE files, tags, api_keys, device_codes, site_upload_sessions, pending_site_asset_deletes, instance_secrets CASCADE'
 		);
 	}
 	await client.query(
@@ -317,7 +317,10 @@ try {
 	await client.query(
 		`UPDATE org_usage u SET stored_bytes = COALESCE((
 			SELECT SUM(CASE
-				WHEN f.is_site THEN f.size_bytes
+				WHEN f.is_site THEN f.size_bytes + (
+					SELECT COALESCE(SUM(v.thumbnail_size_bytes), 0)
+					FROM file_versions v WHERE v.file_id = f.id
+				)
 				ELSE (SELECT COALESCE(SUM(v.size_bytes + v.thumbnail_size_bytes), 0)
 					FROM file_versions v WHERE v.file_id = f.id)
 			END)

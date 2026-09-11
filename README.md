@@ -69,9 +69,12 @@ commands, including an explicitly requested `--reset`, keep their existing
 database selection behavior. Migration runs serialize through a Postgres
 advisory lock and wait at most 30 seconds to acquire it.
 
-Leave `WORKOS_API_KEY` empty to use the in-memory WorkOS fake: the sign-in
-button then signs you in as `user_local` with no credentials. Copy the API key
-printed by the final command, then start both local origins:
+Set `WORKOS_DEV_FAKE=true` and leave `WORKOS_API_KEY` empty to use the
+in-memory WorkOS fake in the SvelteKit development server, as configured by
+`.dev.vars.example`. The sign-in button then signs you in as `user_local`
+with no credentials. Production requires real WorkOS credentials even when
+the fake flag is set. Copy the API key printed by the final command, then
+start both local origins:
 
 ```bash
 bun --filter @adrive/web dev

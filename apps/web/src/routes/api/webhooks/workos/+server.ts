@@ -1,7 +1,8 @@
 import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
 import { runEdge } from '$lib/server/edge';
-import { InvalidRequest, Unauthorized } from '$lib/server/errors';
+import { Unauthorized } from '$lib/server/errors';
+import { readBoundedText } from '$lib/server/request-json';
 import { Auth } from '$lib/server/services/auth';
 import { WorkOSClient } from '$lib/server/services/workos';
 
@@ -15,17 +16,11 @@ export const POST: RequestHandler = ({ request }) =>
 		Effect.gen(function* () {
 			const workos = yield* WorkOSClient;
 			const auth = yield* Auth;
-			const payload = yield* Effect.tryPromise({
-				try: () => request.text(),
-				catch: () =>
-					new InvalidRequest({ status: 400, message: 'Webhook is invalid' })
+			const payload = yield* readBoundedText(request, {
+				maxBytes: MAX_PAYLOAD_BYTES,
+				invalidLengthMessage: 'Webhook payload is too large',
+				invalidTextMessage: 'Webhook is invalid'
 			});
-			if (payload.length > MAX_PAYLOAD_BYTES) {
-				return yield* new InvalidRequest({
-					status: 413,
-					message: 'Webhook payload is too large'
-				});
-			}
 			const signature = request.headers.get('workos-signature');
 			if (!signature) {
 				return yield* new Unauthorized({

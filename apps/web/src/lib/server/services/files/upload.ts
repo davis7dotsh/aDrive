@@ -87,7 +87,6 @@ export const uploadOps = (
 						}
 						yield* refreshSearchDocument(sql, id, org.id);
 						yield* reserveBytes(org.id, stored.size);
-
 					})
 				)
 				.pipe(

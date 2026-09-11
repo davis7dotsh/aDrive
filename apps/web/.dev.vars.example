@@ -4,10 +4,12 @@
 # random string; production sets it with `wrangler secret put`.
 MAINTENANCE_SECRET="replace-with-at-least-12-characters"
 
-# WorkOS AuthKit. Leave WORKOS_API_KEY empty (or set it to any value
-# starting with `fake:`) to run the in-memory WorkOS fake: /auth/sign-in
-# then signs you in as `user_local` with no credentials or network. With a
-# real key, all four are required; the cookie password must be 32+ chars.
+# WorkOS AuthKit. WORKOS_DEV_FAKE=true explicitly enables the fake in the
+# SvelteKit development server when the API key is empty or starts with
+# `fake:`. /auth/sign-in then signs in as `user_local` without credentials.
+# Production rejects missing/fake keys even with this flag. To use real
+# WorkOS, supply all four credentials; the cookie password must be 32+ chars.
+WORKOS_DEV_FAKE="true"
 WORKOS_API_KEY=""
 WORKOS_CLIENT_ID="client_replace"
 WORKOS_COOKIE_PASSWORD="replace-with-at-least-32-characters-of-random-text"
