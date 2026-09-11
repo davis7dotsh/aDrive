@@ -16,15 +16,18 @@
 		"adrive": "bun --filter @adrive/cli adrive",
 		"check": "bun run --filter '@adrive/*' --if-present check && bun run check:forbidden && bun run check:wrangler-drift",
 		"check:forbidden": "bun scripts/check-forbidden.mjs",
-		"check:wrangler-drift": "bun scripts/check-wrangler-drift.mjs",
+		"check:wrangler-drift": "bun scripts/check-wrangler-drift.mjs --allow-placeholders",
 		"db:migrate:local": "cd apps/web && bun x wrangler d1 migrations apply DB --local",
+		"db:pg:up": "docker compose up -d",
+		"db:pg:migrate:local": "bun apps/web/scripts/pg-migrate.mjs",
 		"format": "prettier --write .",
 		"format:check": "prettier --check .",
 		"key:create:local": "bun scripts/create-local-key.mjs",
 		"postinstall": "find node_modules -path '*/@effect/tsgo*/lib/tsc' -exec chmod +x {} +",
 		"release": "bash scripts/release.sh",
 		"search:rebuild:local": "bun --filter @adrive/web search:rebuild:local",
-		"test": "bun run --filter '@adrive/*' --if-present test && bun --filter @adrive/web test:runes && bun --filter @adrive/web test:routes"
+		"test": "bun run test:tooling && bun run --filter '@adrive/*' --if-present test && bun --filter @adrive/web test:runes && bun --filter @adrive/web test:routes",
+		"test:tooling": "vitest run scripts/check-wrangler-drift.test.mjs"
 	},
 	"devDependencies": {
 		"prettier": "^3.9.6",

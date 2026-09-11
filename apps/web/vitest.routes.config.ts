@@ -9,7 +9,10 @@ export default defineConfig({
 	test: {
 		globalSetup: ['./src/lib/server/routes/global-setup.ts'],
 		setupFiles: ['./src/lib/server/test/setup.ts'],
-		include: ['src/lib/server/routes/**/*.test.ts'],
+		include: [
+			'src/lib/server/routes/**/*.test.ts',
+			'src/lib/server/**/*.pg.test.ts'
+		],
 		fileParallelism: false,
 		testTimeout: 30_000
 	}

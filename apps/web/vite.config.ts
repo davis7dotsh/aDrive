@@ -10,6 +10,7 @@ export default defineConfig({
 		exclude: [
 			'**/node_modules/**',
 			'src/lib/server/routes/**',
+			'**/*.pg.test.ts',
 			'**/*.svelte.test.ts'
 		]
 	}

@@ -17,6 +17,7 @@ import {
 	type AppError
 } from './errors';
 import { requestLayer } from './layer';
+import type { PgSql } from './pg';
 import type { AppConfig } from './config';
 import type { AuthGuard } from './services/auth-guard';
 import type { Auth } from './services/auth';
@@ -32,6 +33,7 @@ import type { GrantSecrets } from './services/grant-secrets';
 
 export type AppServices =
 	| SqlClient.SqlClient
+	| PgSql
 	| AppConfig
 	| AuthGuard
 	| Auth

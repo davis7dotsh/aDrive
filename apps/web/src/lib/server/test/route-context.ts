@@ -63,10 +63,14 @@ export const createRouteContext = async (): Promise<RouteTestContext> => {
 	const { getTestPlatform } = await import('./platform');
 	const proxy = await getTestPlatform();
 	const platformEnv = proxy.env as Env;
+	// Origins are pinned so a developer's .dev.vars overrides (for example
+	// a Tailscale hostname) do not change what the suite asserts.
 	const env = {
 		...platformEnv,
+		DASHBOARD_ORIGIN,
+		CONTENT_ORIGIN: 'http://localhost:5174',
 		PASSCODE: platformEnv.PASSCODE ?? 'adrive-route-test-passcode'
-	};
+	} as Env;
 	const cookies = new TestCookieStore();
 
 	const build = ({

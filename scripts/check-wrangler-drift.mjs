@@ -98,6 +98,13 @@ const placeholderIds = (block, label, drift) => {
 			);
 		}
 	}
+	for (const entry of block.hyperdrive ?? []) {
+		if (String(entry.id ?? '').includes('replace-with-')) {
+			drift.push(
+				`${label} Hyperdrive ${entry.binding ?? 'HYPERDRIVE'}: still has a placeholder id`
+			);
+		}
+	}
 };
 
 const main = () => {
@@ -107,6 +114,10 @@ const main = () => {
 			? process.argv[envFlag + 1]
 			: 'production';
 	const placeholdersOnly = process.argv.includes('--placeholders-only');
+	// Source checks can run before resources are provisioned. Deployment
+	// preflight always checks ids, even if both flags are supplied.
+	const allowPlaceholders =
+		process.argv.includes('--allow-placeholders') && !placeholdersOnly;
 	const config = JSON.parse(stripComments(readFileSync(configPath, 'utf8')));
 	const prod = config.env?.[envName];
 	if (!prod || typeof prod !== 'object' || Array.isArray(prod)) {
@@ -116,7 +127,7 @@ const main = () => {
 	}
 	const drift = [];
 
-	placeholderIds(prod, `env.${envName}`, drift);
+	if (!allowPlaceholders) placeholderIds(prod, `env.${envName}`, drift);
 
 	if (!placeholdersOnly) {
 		const ENV_ONLY_VARS = new Set([
@@ -170,7 +181,12 @@ const main = () => {
 
 		const bindingNames = (entries) =>
 			(entries ?? []).map((entry) => entry.binding).sort();
-		for (const key of ['d1_databases', 'r2_buckets', 'kv_namespaces']) {
+		for (const key of [
+			'd1_databases',
+			'r2_buckets',
+			'kv_namespaces',
+			'hyperdrive'
+		]) {
 			if (!sameJson(bindingNames(config[key]), bindingNames(prod[key]))) {
 				drift.push(
 					`${key} bindings: local=${JSON.stringify(bindingNames(config[key]))} production=${JSON.stringify(bindingNames(prod[key]))}`
