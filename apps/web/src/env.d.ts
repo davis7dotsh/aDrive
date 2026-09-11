@@ -5,6 +5,7 @@ declare global {
 	interface Env {
 		MAINTENANCE_SECRET: string;
 		WORKOS_API_KEY?: string;
+		WORKOS_DEV_FAKE?: string;
 		WORKOS_CLIENT_ID?: string;
 		WORKOS_COOKIE_PASSWORD?: string;
 		WORKOS_WEBHOOK_SECRET?: string;
@@ -14,6 +15,7 @@ declare global {
 		interface Env {
 			MAINTENANCE_SECRET: string;
 			WORKOS_API_KEY?: string;
+			WORKOS_DEV_FAKE?: string;
 			WORKOS_CLIENT_ID?: string;
 			WORKOS_COOKIE_PASSWORD?: string;
 			WORKOS_WEBHOOK_SECRET?: string;

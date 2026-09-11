@@ -27,13 +27,30 @@ const createMoveContext = async () => {
 	const url = new URL(TEST_DATABASE_URL);
 	url.searchParams.set('options', `-csearch_path=${schema},public`);
 	await migrate({ url: url.href, log: () => undefined });
+	await client.query(`
+  INSERT INTO orgs (id, slug, name) VALUES ('org_import', 'import', 'Import');
+  INSERT INTO users (id, email) VALUES ('user_import', 'import@example.test');
+ `);
 	const source = createD1Export(dump);
 	return {
 		client,
 		dump,
 		source,
 		move: (destination = url.href) =>
-			run('bun', [mover, '--dump', dump, '--url', destination, '--wipe']),
+			run('bun', [
+				mover,
+				'--dump',
+				dump,
+				'--url',
+				destination,
+				'--org',
+				'org_import',
+				'--user',
+				'user_import',
+				'--email',
+				'import@example.test',
+				'--wipe'
+			]),
 		addFile: (id: string, body: string, extra = {}) => {
 			source.insert('files', {
 				id,
@@ -81,8 +98,8 @@ const createMoveContext = async () => {
 		},
 		seedDestination: () =>
 			client.query(`INSERT INTO files
-				(id, display_name, content_type, size_bytes, created_at, updated_at)
-				VALUES ('existing', 'Keep me', 'text/plain', 1, now(), now())`),
+				(org_id, id, display_name, content_type, size_bytes, created_at, updated_at)
+				VALUES ('org_import', 'existing', 'Keep me', 'text/plain', 1, now(), now())`),
 		close: async () => {
 			try {
 				await client.query(`DROP SCHEMA ${schema} CASCADE`);
@@ -265,6 +282,35 @@ describe('D1 data move', () => {
 		).toEqual([]);
 	});
 
+	it('counts site assets and retained thumbnails in imported storage usage', async () => {
+		context.source.insert('files', {
+			id: 'site-quota',
+			display_name: 'Site',
+			content_type: 'text/html',
+			is_site: 1,
+			size_bytes: 12,
+			created_at: sourceTimestamp,
+			updated_at: sourceTimestamp
+		});
+		context.source.insert('file_versions', {
+			file_id: 'site-quota',
+			version: 1,
+			r2_key: 'site-quota/1',
+			size_bytes: 12,
+			content_type: 'text/html',
+			thumbnail_size_bytes: 7,
+			created_at: sourceTimestamp
+		});
+		await context.move();
+		expect(
+			(
+				await context.client.query(
+					"SELECT stored_bytes FROM org_usage WHERE org_id = 'org_import'"
+				)
+			).rows
+		).toEqual([{ stored_bytes: '19' }]);
+	});
+
 	it('rejects stored staged assets whose upload session is missing before wiping', async () => {
 		await context.seedDestination();
 		context.source.insert('staged_site_assets', {
@@ -287,19 +333,15 @@ describe('D1 data move', () => {
 		]);
 	});
 
-	it('clears existing sign-in state while importing persistent API keys', async () => {
+	it('clears existing device approvals while importing tenant-owned API keys', async () => {
 		await context.client.query(`
-			INSERT INTO api_keys (id, name, prefix, secret_hash, created_at)
-			VALUES ('old-key', 'Old key', 'old-prefix', 'old-hash', now());
+			INSERT INTO api_keys (org_id, user_id, id, name, prefix, secret_hash, created_at)
+			VALUES ('org_import', 'user_import', 'old-key', 'Old key', 'old-prefix', 'old-hash', now());
 			INSERT INTO device_codes
 				(device_code_hash, user_code, status, interval_seconds, expires_at,
 				 created_at, api_key_id)
 			VALUES ('old-device', 'OLD-CODE', 'consumed', 5, now() + interval '1 day',
 				now(), 'old-key');
-			INSERT INTO dashboard_sessions (token_hash, created_at, expires_at, last_used_at)
-			VALUES ('old-session', now(), now() + interval '1 day', now());
-			INSERT INTO credential_state (id, passcode_hash, rotated_at)
-			VALUES (1, repeat('a', 64), now());
 		`);
 		context.source.insert('api_keys', {
 			id: 'moved-key',
@@ -311,19 +353,23 @@ describe('D1 data move', () => {
 		});
 		await context.move();
 		expect(
-			(await context.client.query('SELECT token_hash FROM dashboard_sessions'))
-				.rows
-		).toEqual([]);
-		expect(
-			(await context.client.query('SELECT id FROM credential_state')).rows
-		).toEqual([]);
-		expect(
 			(await context.client.query('SELECT device_code_hash FROM device_codes'))
 				.rows
 		).toEqual([]);
 		expect(
-			(await context.client.query('SELECT id, scope FROM api_keys')).rows
-		).toEqual([{ id: 'moved-key', scope: 'read-only' }]);
+			(
+				await context.client.query(
+					'SELECT id, scope, org_id, user_id FROM api_keys'
+				)
+			).rows
+		).toEqual([
+			{
+				id: 'moved-key',
+				scope: 'read-only',
+				org_id: 'org_import',
+				user_id: 'user_import'
+			}
+		]);
 	});
 
 	it('rejects missing canonical tables before connecting or wiping Postgres', async () => {

@@ -290,6 +290,7 @@ describe('postgres search candidates', () => {
 						yield* sql`SET LOCAL pg_trgm.word_similarity_threshold = 0.9`;
 						let compiled: ReturnType<Statement<unknown>['compile']> | undefined;
 						const rows = yield* trigramCandidates(sql, 'reprot', {
+							orgId: TEST_ORG_ID,
 							now: NOW,
 							tagIds: []
 						}).pipe(

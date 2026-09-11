@@ -13,27 +13,31 @@ export interface TenantRows {
 
 // Upserts the four rows a tenant needs before any tenant-scoped row can
 // reference it: the org, the user, the membership, and the usage counter.
+// Keep them atomic so a failed first sign-in cannot leave a membership
+// that makes a retry skip the missing usage counter.
 // Idempotent, and never rewinds a row that already exists (a later sign-in
 // must not rename an org the owner renamed).
 export const ensureTenant = (sql: PgClient.PgClient, tenant: TenantRows) =>
-	Effect.gen(function* () {
-		yield* sql`
+	sql.withTransaction(
+		Effect.gen(function* () {
+			yield* sql`
 			INSERT INTO orgs (id, slug, name)
 			VALUES (${tenant.orgId}, ${tenant.slug}, ${tenant.name})
 			ON CONFLICT (id) DO NOTHING`;
-		yield* sql`
+			yield* sql`
 			INSERT INTO users (id, email, email_verified)
 			VALUES (${tenant.userId}, ${tenant.email}, ${tenant.emailVerified ?? false})
 			ON CONFLICT (id) DO UPDATE
 			SET email = EXCLUDED.email, email_verified = EXCLUDED.email_verified`;
-		yield* sql`
+			yield* sql`
 			INSERT INTO memberships (org_id, user_id, role)
 			VALUES (${tenant.orgId}, ${tenant.userId}, ${tenant.role ?? 'owner'})
 			ON CONFLICT (org_id, user_id) DO NOTHING`;
-		yield* sql`
+			yield* sql`
 			INSERT INTO org_usage (org_id) VALUES (${tenant.orgId})
 			ON CONFLICT (org_id) DO NOTHING`;
-	}).pipe(Effect.asVoid);
+		})
+	);
 
 // First-login org naming. Stack C owns the real slug rules; until then the
 // slug is the email's local part plus a short random suffix so two people

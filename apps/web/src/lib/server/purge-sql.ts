@@ -22,17 +22,18 @@ export const completePurge = (
 					SET purge_state = 'done', purge_error = NULL, purge_next_run_at = NULL
 					WHERE id = ${fileId} AND org_id = ${orgId} AND purge_state = 'pending'
 					RETURNING id`;
-				// A site's row carries its asset total; a file's versions carry
-				// their own bytes plus thumbnails.
+				// A site's row carries its asset total; file versions carry
+				// their own bytes. Both kinds charge thumbnails per version.
 				const held = yield* sql<{ bytes: number }>`
-					SELECT CASE
-						WHEN f.is_site THEN f.size_bytes
-						ELSE COALESCE((
-							SELECT SUM(v.size_bytes + v.thumbnail_size_bytes)
+					SELECT (CASE WHEN f.is_site THEN f.size_bytes ELSE 0 END)
+						+ COALESCE((
+							SELECT SUM(
+								(CASE WHEN f.is_site THEN 0 ELSE v.size_bytes END)
+								+ v.thumbnail_size_bytes
+							)
 							FROM file_versions v
-							WHERE v.file_id = f.id
-						), 0)
-					END AS bytes
+							WHERE v.file_id = f.id AND v.org_id = ${orgId}
+						), 0) AS bytes
 					FROM files f
 					WHERE f.id = ${fileId} AND f.org_id = ${orgId}`;
 				yield* releaseStoredBytes(sql, orgId, held[0]?.bytes ?? 0);

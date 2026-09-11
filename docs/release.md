@@ -1,22 +1,56 @@
 # Releases, deployment, and rollback
 
+## Hosted bootstrap and existing data
+
+The hosted product starts with a **separate, empty Postgres database**.
+Migration `0004_tenancy.sql` rejects any populated single-tenant database
+before changing its tables. Keep the existing drive and its backups;
+do not use `--reset` to get past that guard.
+
+The supported import below copies D1 metadata into the new hosted target
+after the owner signs up with WorkOS. An existing single-tenant Postgres
+drive needs a separate migration with explicit owner/org mapping; this
+release does not provide that importer or an in-place backfill. Keep using
+that drive until its migration is prepared and verified. A Postgres dump
+alone restores the old schema, so it cannot replace the tenancy import.
+
+Use a separate Worker and temporary dashboard/content origins to verify
+the hosted target before moving production routes. Keep source writes
+paused from the final export through verification and cutover. Imports
+retain R2 keys: for an isolated rehearsal copy the referenced objects to
+the target bucket; using the source bucket allows hosted cleanup to affect
+the old drive. Before cutover, verify imported counts, owner access, file
+downloads, search, and cleanup ownership. Retain the source deployment and
+database for rollback; a hosted Worker rollback does not migrate data back
+into the old schema.
+
 ## First-time setup (once)
 
 App Worker commands run from `apps/web`. Landing-site commands run from
 `apps/site` (no `--env`). `bun release` and the backup installer run from
 the repository root.
 
-1. Create a PlanetScale Postgres 17+ database (region close to most users)
-   with `vector` 0.8 or newer and the `pg_trgm` extension available, then a Hyperdrive
-   config pointing at its direct port 5432 with caching disabled:
+1. Create a new PlanetScale Postgres 17+ database (region close to most users)
+   with `vector` 0.8 or newer and the `pg_trgm` extension available. Set
+   `DATABASE_URL` to its migration-admin connection string and apply the
+   schema from `apps/web`:
 
    ```
-   wrangler hyperdrive create adrive-production --connection-string="postgres://..." --caching-disabled
+   bun scripts/pg-migrate.mjs --url "$DATABASE_URL"
+   ```
+
+   Provision and verify the restricted runtime login under **Database roles**
+   below. Set `ADRIVE_RUNTIME_DATABASE_URL` to that login's connection string
+   for the same database, then create Hyperdrive on the direct port 5432
+   with caching disabled:
+
+   ```
+   wrangler hyperdrive create adrive-production --connection-string="$ADRIVE_RUNTIME_DATABASE_URL" --caching-disabled
    ```
 
    Paste the id into `wrangler.jsonc` `env.production.hyperdrive[0].id`.
-   Export the same connection string as `DATABASE_URL` when releasing;
-   `bun release` runs `apps/web/scripts/pg-migrate.mjs` against it.
+   Keep `DATABASE_URL` on the separate migration-admin credentials when
+   releasing; `bun release` applies migrations with that role.
 
 2. From `apps/web`: `wrangler r2 bucket create adrive-production`
 3. From `apps/web`: `wrangler kv namespace create AUTH_GUARD --env production`
@@ -66,6 +100,44 @@ Semantic search notes for the first deploy:
   with the database. Files whose embeddings are missing after a partial
   restore regenerate on reindex.
 
+## Database roles
+
+Migrations run with the schema-owning administrator. The Worker connects
+through Hyperdrive with a separate, non-owner login that is neither a
+superuser nor allowed to bypass row-level security. Migration 0004 creates
+the `adrive_app` permission role without login and grants it application
+table access. If the provider prevents role creation and the migration
+prints an insufficient-privilege notice, have the database administrator
+create `adrive_app` and apply the grants at the end of that migration before
+continuing.
+
+As the database administrator, provision a login using the provider's role
+tools or equivalent SQL:
+
+```sql
+CREATE ROLE adrive_runtime LOGIN INHERIT
+  NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+GRANT adrive_app TO adrive_runtime;
+```
+
+Set its password through the provider or `\password adrive_runtime` in
+`psql`. Connect using `ADRIVE_RUNTIME_DATABASE_URL` and verify:
+
+```sql
+SELECT current_user, rolsuper, rolbypassrls,
+       pg_has_role(current_user, 'adrive_app', 'USAGE') AS inherits_app
+FROM pg_roles WHERE rolname = current_user;
+
+SELECT tablename FROM pg_tables
+WHERE schemaname = 'public' AND tableowner = current_user;
+```
+
+Require `rolsuper = false`, `rolbypassrls = false`, `inherits_app = true`,
+and no owned application tables. Do not grant the migration-admin role to
+this login. Tenant-pinned transactions enforce RLS; ordinary statements
+still rely on their explicit tenant predicates. Role setup alone is not a
+live tenant-isolation test.
+
 ## Queues
 
 The `JOBS` binding provides one Cloudflare Queue per environment for
@@ -108,11 +180,16 @@ storage, authentication, upload, routing, or migration change.
 
 ## Migration compatibility rule
 
-Migrations apply before the new Worker deploys, and rollback re-runs the
-previous Worker against the migrated schema. Therefore every migration
+For later releases of an existing hosted instance, migrations apply before
+the new Worker deploys, and rollback re-runs the previous hosted Worker
+against the migrated schema. Therefore every subsequent migration
 must be backwards-compatible for at least one release: additive tables
 and columns (with defaults) only; never drop, rename, or repurpose a
 column until the release _after_ the last code that used it is gone.
+
+The initial tenancy bootstrap replaces the old authentication schema and
+adds mandatory tenant columns. It therefore runs only on the fresh target
+described above. Do not apply it to the database serving an older Worker.
 
 ## Rollback
 
@@ -164,15 +241,16 @@ visible via `wrangler deployments list --env production`.
 
 ## One-off move from D1
 
-The single existing instance moves its metadata from D1 to Postgres once.
-R2 does not move. Sessions, device codes, and the passcode hash are not
+The existing D1 instance copies its metadata into the separate hosted
+Postgres target once. R2 keys are preserved; configure the verified target
+bucket as described above. Sessions, device codes, and the passcode hash are not
 carried over; sign in again afterwards. Semantic vectors are not carried
 over either; every file is left `pending` and re-embeds through the
 indexing sweep.
 
 `wrangler d1 export` refuses databases that contain FTS5 virtual tables,
 so export one table at a time from a checkout that still has the D1
-binding (the commit before this one):
+binding (a checkout from before the Postgres port):
 
 ```
 cd apps/web
@@ -184,19 +262,30 @@ for t in files file_versions tags file_tags site_assets api_keys \
 done
 ```
 
-Then from this checkout:
+First finish hosted bootstrap on the separate target and sign in once
+with the real owner's WorkOS account. Read that account's user and personal
+org IDs from WorkOS or the target's `users`, `memberships`, and `orgs`
+tables. Confirm the mapping before copying the old owner's files and API
+keys. The target should contain only those identity rows, with no uploaded
+content or unrelated tenants.
+
+Then from this checkout, with `DATABASE_URL` pointing at the target using
+migration-admin credentials:
 
 ```
 cd apps/web
-export DATABASE_URL=postgres://...
 bun scripts/pg-migrate.mjs --url "$DATABASE_URL"
-bun scripts/d1-to-postgres.mjs --dump /tmp/adrive-d1 --url "$DATABASE_URL"
+bun scripts/d1-to-postgres.mjs --dump /tmp/adrive-d1 --url "$DATABASE_URL" \
+  --org org_WORKOS_OWNER_ORG --user user_WORKOS_OWNER \
+  --email owner@example.com --slug owner-slug
 ```
 
 The script prints per-table counts and the Postgres totals at the end.
-Compare them with the row counts in the exports before flipping DNS. Run
-it with `--wipe` to truncate and retry. Tested against the local D1 state
-on 2026-09-09.
+Compare them with the row counts in the exports before cutover. If a
+rehearsal needs to restart, recreate only its disposable target and repeat
+bootstrap/import. Never use `--wipe` against the source drive or a hosted
+database containing other users' data. Local importer checks do not prove
+the live WorkOS identity mapping or production cutover.
 
 All listed tables must be exported, including empty ones. Unfinished site
 uploads are not resumed: their stored assets enter the cleanup queue unless

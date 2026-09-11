@@ -2,7 +2,8 @@ import type { PgClient } from '@effect/sql-pg';
 import { ensureTenant, type TenantRows } from '../tenants';
 
 export const TEST_ORG_ID = 'org_test';
-export const TEST_USER_ID = 'user_test';
+// Keep direct SQL fixtures separate from route tests that create a personal org.
+export const TEST_USER_ID = 'user_pg_test';
 
 export const testTenant = (
 	orgId = TEST_ORG_ID,

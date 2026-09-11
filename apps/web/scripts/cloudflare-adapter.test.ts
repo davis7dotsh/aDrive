@@ -48,7 +48,7 @@ describe('Cloudflare Worker facade', () => {
 	it('signs the forwarded batch and applies explicit and missing decisions', async () => {
 		const env = {
 			DASHBOARD_ORIGIN: 'https://dashboard.test',
-			PASSCODE: 'facade-signature-test-passcode'
+			MAINTENANCE_SECRET: 'facade-signature-test-secret'
 		};
 		const ctx = { waitUntil: vi.fn() };
 		const messages = ['acknowledged', 'retrying', 'undecided'].map((id) => ({
@@ -79,7 +79,7 @@ describe('Cloudflare Worker facade', () => {
 				);
 				await expect(
 					verifyJobsRequest(
-						env.PASSCODE,
+						env.MAINTENANCE_SECRET,
 						request.headers.get('x-adrive-jobs-time'),
 						body,
 						request.headers.get('x-adrive-jobs-signature')
@@ -121,7 +121,7 @@ describe('Cloudflare Worker facade', () => {
 					{ queue: 'adrive-jobs', messages: [message] },
 					{
 						DASHBOARD_ORIGIN: 'https://dashboard.test',
-						PASSCODE: 'facade-signature-test-passcode'
+						MAINTENANCE_SECRET: 'facade-signature-test-secret'
 					},
 					{}
 				)

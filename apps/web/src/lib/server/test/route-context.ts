@@ -86,6 +86,7 @@ export const createRouteContext = async (): Promise<RouteTestContext> => {
 		MAINTENANCE_SECRET:
 			platformEnv.MAINTENANCE_SECRET ?? 'adrive-route-test-maintenance',
 		WORKOS_API_KEY: 'fake:route-tests',
+		WORKOS_DEV_FAKE: 'true',
 		WORKOS_CLIENT_ID: 'client_test',
 		WORKOS_COOKIE_PASSWORD: 'route-test-cookie-password-of-32-characters!',
 		WORKOS_WEBHOOK_SECRET: 'route-test-webhook'

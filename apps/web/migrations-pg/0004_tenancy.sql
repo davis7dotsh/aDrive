@@ -3,8 +3,8 @@
 -- and land in a personal org. This migration runs against a fresh
 -- database (the one-off import from the old drive creates its org first,
 -- then copies rows), so the org_id columns are added NOT NULL directly
--- with no backfill. Local databases with rows from before this migration
--- must be recreated: `bun db:pg:migrate --reset`.
+-- with no backfill. Existing single-tenant databases stay untouched;
+-- provision a separate target and follow docs/release.md for cutover.
 --
 -- Row level security is the second line of defence, never the first.
 -- Every query carries its own `org_id = $1` predicate. Inside a
@@ -14,9 +14,39 @@
 -- absent (Hyperdrive pools in transaction mode, so session settings are
 -- not reliable) and the policies allow the row: those statements rely on
 -- their WHERE clause alone. The docker development role is a superuser
--- and bypasses RLS entirely; production connects as `adrive_app`, which
--- is created here without LOGIN so an operator attaches the password
--- and Hyperdrive credentials out of band.
+-- and bypasses RLS entirely. Production uses a restricted runtime login
+-- granted the NOLOGIN adrive_app role; migration credentials stay separate.
+
+-- Block writes while checking so even a newly created session cannot be
+-- lost between the empty-target check and the authentication table drops.
+LOCK TABLE files, file_versions, file_chunks, search_documents, tags,
+	file_tags, site_assets, api_keys, device_codes, dashboard_sessions,
+	site_upload_sessions, staged_site_assets, pending_site_asset_deletes,
+	instance_secrets, credential_state IN ACCESS EXCLUSIVE MODE;
+
+DO $$
+BEGIN
+	IF EXISTS (SELECT 1 FROM files)
+		OR EXISTS (SELECT 1 FROM file_versions)
+		OR EXISTS (SELECT 1 FROM file_chunks)
+		OR EXISTS (SELECT 1 FROM search_documents)
+		OR EXISTS (SELECT 1 FROM tags)
+		OR EXISTS (SELECT 1 FROM file_tags)
+		OR EXISTS (SELECT 1 FROM site_assets)
+		OR EXISTS (SELECT 1 FROM api_keys)
+		OR EXISTS (SELECT 1 FROM device_codes)
+		OR EXISTS (SELECT 1 FROM dashboard_sessions)
+		OR EXISTS (SELECT 1 FROM site_upload_sessions)
+		OR EXISTS (SELECT 1 FROM staged_site_assets)
+		OR EXISTS (SELECT 1 FROM pending_site_asset_deletes)
+		OR EXISTS (SELECT 1 FROM instance_secrets)
+		OR EXISTS (SELECT 1 FROM credential_state)
+	THEN
+		RAISE EXCEPTION 'Tenancy bootstrap requires an empty target database'
+			USING ERRCODE = '55000',
+			HINT = 'Keep the existing drive database. Create a separate hosted target, then follow the supported import and cutover procedure in docs/release.md. Do not use --reset on existing drive data.';
+	END IF;
+END $$;
 
 CREATE TABLE orgs (
 	id text PRIMARY KEY,

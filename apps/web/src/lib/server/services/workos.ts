@@ -4,8 +4,8 @@ import { AppConfig, type WorkOSConfig } from '../config';
 import { StorageError, Unauthorized } from '../errors';
 
 // The slice of WorkOS the app depends on. Routes and tests program against
-// this shape; the SDK is confined to workOSLive below and WorkOSFake stands
-// in whenever no API key is configured.
+// this shape; the SDK is confined to workOSLive below and WorkOSFake is
+// selected only by explicit development configuration or test injection.
 
 export interface ExchangedCode {
 	readonly sealedSession: string;
@@ -16,6 +16,7 @@ export interface ExchangedCode {
 		readonly emailVerified: boolean;
 	};
 	readonly organizationId: string | null;
+	readonly role: string | null;
 }
 
 export type LoadedSession =
@@ -47,6 +48,7 @@ export interface WorkOSClientShape {
 	) => Effect.Effect<LoadedSession, StorageError>;
 	// Returns the new sealed session, or null when the session cannot be
 	// refreshed (revoked, expired, or a terminal WorkOS failure).
+	// Temporary provider failures remain errors so callers retain the cookie.
 	readonly refresh: (
 		cookie: string,
 		orgId?: string
@@ -158,15 +160,21 @@ const workOSLive = (
 							try: () => session(result.sealedSession ?? '').authenticate(),
 							catch: failure('read exchanged WorkOS session')
 						});
+						if (!loaded.authenticated) {
+							return yield* new Unauthorized({
+								message: 'WorkOS returned an invalid session'
+							});
+						}
 						return {
 							sealedSession: result.sealedSession,
-							sessionId: loaded.authenticated ? loaded.sessionId : '',
+							sessionId: loaded.sessionId,
 							user: {
 								id: result.user.id,
 								email: result.user.email,
 								emailVerified: result.user.emailVerified
 							},
-							organizationId: result.organizationId ?? null
+							organizationId: result.organizationId ?? null,
+							role: loaded.role ?? null
 						};
 					})
 				)
@@ -200,9 +208,20 @@ const workOSLive = (
 					}),
 				catch: failure('refresh WorkOS session')
 			}).pipe(
-				Effect.map((result) =>
-					result.authenticated ? (result.sealedSession ?? null) : null
-				)
+				Effect.flatMap((result) => {
+					if (result.authenticated) {
+						return Effect.succeed(result.sealedSession ?? null);
+					}
+					if (result.retryable) {
+						return Effect.fail(
+							new StorageError({
+								operation: 'refresh WorkOS session',
+								cause: result.reason
+							})
+						);
+					}
+					return Effect.succeed(null);
+				})
 			),
 		logoutUrl: (sessionId, returnTo) =>
 			Effect.sync(() =>
@@ -235,7 +254,7 @@ const workOSLive = (
 // Local development and tests. Identities are plain strings so a test can
 // sign in as anyone: the authorization code and the session cookie are
 // both `fake:<userId>[:<orgId>]`. No secrets are checked, which is why the
-// fake is only ever selected when WORKOS_API_KEY is absent.
+// fake requires explicit development opt-in in configFromEnv.
 export const FAKE_SESSION_PREFIX = 'fake:';
 export const FAKE_DEV_USER = 'user_local';
 
@@ -270,7 +289,8 @@ export const workOSFake: WorkOSClientShape = {
 						email: fakeEmail(parsed.userId),
 						emailVerified: true
 					},
-					organizationId: parsed.orgId
+					organizationId: parsed.orgId,
+					role: 'owner'
 				})
 			: Effect.fail(
 					new Unauthorized({ message: 'Authorization code is invalid' })

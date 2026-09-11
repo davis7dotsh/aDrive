@@ -1,7 +1,10 @@
 import { Effect, Layer } from 'effect';
 import Pg from 'pg';
 import { expect, it } from 'vitest';
-import { pgLayer } from '../pg';
+import { PgSql, pgLayer } from '../pg';
+import { ensureTestOrg, TEST_ORG_ID } from '../test/org';
+import { testPgLayer } from '../test/pg';
+import { CurrentOrg } from './current-org';
 import { TEST_DATABASE_URL } from '../test/database';
 import { Tags, TagsLive } from './tags';
 
@@ -9,13 +12,21 @@ const tagRunner = (applicationName: string) => {
 	const url = new URL(TEST_DATABASE_URL);
 	url.searchParams.set('application_name', applicationName);
 	const layer = TagsLive.pipe(
-		Layer.provide(pgLayer({ connectionString: url.href }))
+		Layer.provide(
+			Layer.merge(
+				pgLayer({ connectionString: url.href }),
+				Layer.succeed(CurrentOrg, { id: TEST_ORG_ID })
+			)
+		)
 	);
 	return <A, E>(effect: Effect.Effect<A, E, Tags>) =>
 		Effect.runPromise(effect.pipe(Effect.provide(layer)));
 };
 
 it('serializes overlapping replacements on a file with no existing tags', async () => {
+	await Effect.runPromise(
+		Effect.flatMap(PgSql, ensureTestOrg).pipe(Effect.provide(testPgLayer()))
+	);
 	const suffix = crypto.randomUUID().replaceAll('-', '');
 	const fileId = `tag-race-${suffix}`;
 	const firstTag = `first-${suffix}`;
@@ -30,14 +41,14 @@ it('serializes overlapping replacements on a file with no existing tags', async 
 	await control.connect();
 	try {
 		await control.query(
-			`INSERT INTO files (id, display_name, content_type, size_bytes, created_at, updated_at)
-			VALUES ($1, 'Tag replacement fixture', 'text/plain', 0, now(), now())`,
-			[fileId]
+			`INSERT INTO files (org_id, id, display_name, content_type, size_bytes, created_at, updated_at)
+			VALUES ($2, $1, 'Tag replacement fixture', 'text/plain', 0, now(), now())`,
+			[fileId, TEST_ORG_ID]
 		);
 		await control.query(
-			`INSERT INTO file_versions (file_id, version, r2_key, size_bytes, content_type, created_at)
-			VALUES ($1, 1, $1, 0, 'text/plain', now())`,
-			[fileId]
+			`INSERT INTO file_versions (org_id, file_id, version, r2_key, size_bytes, content_type, created_at)
+			VALUES ($2, $1, 1, $1, 0, 'text/plain', now())`,
+			[fileId, TEST_ORG_ID]
 		);
 		// Hold the first write after DELETE and before INSERT. Without the
 		// parent lock both replacements delete an empty set, then their

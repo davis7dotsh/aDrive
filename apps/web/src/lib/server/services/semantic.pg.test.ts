@@ -175,6 +175,7 @@ describe('pgvector index', () => {
 						let compiled: ReturnType<Statement<unknown>['compile']> | undefined;
 						const rows = yield* index
 							.search(unitVector(0), {
+								orgId: TEST_ORG_ID,
 								now: NOW,
 								tagIds: [tagId]
 							})

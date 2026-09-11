@@ -7,6 +7,7 @@ import { PgSql } from '../../pg';
 import { TEST_DATABASE_URL } from '../../test/database';
 import { createRouteContext } from '../../test/route-context';
 import { Blobs } from '../blobs';
+import { ensureTestOrg, TEST_ORG_ID, TEST_USER_ID } from '../../test/org';
 import { createInternals } from './internals';
 
 describe('site cleanup competing with publication', () => {
@@ -14,6 +15,7 @@ describe('site cleanup competing with publication', () => {
 		'rechecks the session after a blocked publisher commits=%s',
 		async (commits) => {
 			const ctx = await createRouteContext();
+			await runWorkerProgram(ctx.env, Effect.flatMap(PgSql, ensureTestOrg));
 			const publisher = new Client({ connectionString: TEST_DATABASE_URL });
 			await publisher.connect();
 			const session = {
@@ -27,8 +29,8 @@ describe('site cleanup competing with publication', () => {
 			try {
 				await publisher.query(
 					`INSERT INTO site_upload_sessions
-						(id, file_id, display_name, version, status, created_at, expires_at)
-					 VALUES ($1, $2, 'site', 1, 'open', now(), now() + interval '1 hour')`,
+						(org_id, id, file_id, display_name, version, status, created_at, expires_at)
+					 VALUES ('${TEST_ORG_ID}', $1, $2, 'site', 1, 'open', now(), now() + interval '1 hour')`,
 					[session.id, session.fileId]
 				);
 				await publisher.query(
@@ -52,6 +54,7 @@ describe('site cleanup competing with publication', () => {
 						const config = yield* AppConfig;
 						const blobs = yield* Blobs;
 						const internals = createInternals({
+							org: { id: TEST_ORG_ID },
 							sql,
 							config,
 							blobs: {
@@ -63,7 +66,8 @@ describe('site cleanup competing with publication', () => {
 							}
 						});
 						yield* internals.cleanupStaged(session, 'aborted');
-					})
+					}),
+					{ orgId: TEST_ORG_ID, userId: TEST_USER_ID }
 				);
 				await vi.waitFor(
 					async () => {

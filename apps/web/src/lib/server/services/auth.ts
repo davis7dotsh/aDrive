@@ -382,52 +382,90 @@ const makeAuth = Effect.gen(function* () {
 			// the webhook, or a session that predates the org bootstrap) has
 			// to go through the callback again.
 			if (!membership) return yield* invalidCredential();
+			// Organization-bearing sessions carry the verified provider role.
+			// Keep the mirror current so API keys follow the same permissions.
+			const role =
+				loaded.orgId === null ? membership.role : (loaded.role ?? 'member');
+			if (role !== membership.role) {
+				yield* sql`UPDATE memberships SET role = ${role}
+					WHERE org_id = ${membership.org_id} AND user_id = ${membership.user_id}`.pipe(
+					storageError('update organization role')
+				);
+			}
 			return {
-				auth: sessionContext(loaded.sessionId, membership),
+				auth: sessionContext(loaded.sessionId, { ...membership, role }),
 				refreshedSession
 			};
 		}),
 		completeSignIn: Effect.fn('Auth.completeSignIn')(function* (code) {
 			const exchanged = yield* workos.exchangeCode(code);
-			const existing = yield* findMembership(
-				exchanged.user.id,
-				exchanged.organizationId
-			);
-			if (existing) {
-				yield* sql`
+			const orgId = yield* sql
+				.withTransaction(
+					Effect.gen(function* () {
+						// Serialize first callbacks for one user before checking membership.
+						// The separate statement gives a waiter a fresh snapshot after the
+						// previous bootstrap commits. Namespace is ASCII "sign".
+						yield* sql`SELECT pg_advisory_xact_lock(1936287598, hashtext(${exchanged.user.id}))`;
+						const existing = yield* findMembership(
+							exchanged.user.id,
+							exchanged.organizationId
+						);
+						const role =
+							exchanged.organizationId === null
+								? (existing?.role ?? 'owner')
+								: (exchanged.role ?? 'member');
+						if (existing) {
+							if (role !== existing.role) {
+								yield* sql`UPDATE memberships SET role = ${role}
+						WHERE org_id = ${existing.org_id} AND user_id = ${existing.user_id}`.pipe(
+									storageError('update signed-in organization role')
+								);
+							}
+							yield* sql`
 					UPDATE users
 					SET email = ${exchanged.user.email},
 						email_verified = ${exchanged.user.emailVerified}
 					WHERE id = ${exchanged.user.id}
 				`.pipe(storageError('update signed-in user'));
-			}
-			const orgId =
-				existing?.org_id ??
-				exchanged.organizationId ??
-				(yield* Effect.gen(function* () {
-					// First sign-in: WorkOS does not create a personal org, so
-					// mint one there first, then mirror it. The membership is
-					// created WorkOS-side so the session can be pinned to it.
-					const personal = personalOrgFor(exchanged.user.email);
-					const created = yield* workos.createOrganization(personal.name);
-					yield* workos.createOrganizationMembership({
-						organizationId: created.id,
-						userId: exchanged.user.id,
-						roleSlug: 'owner'
-					});
-					return created.id;
-				}));
-			if (!existing) {
-				const personal = personalOrgFor(exchanged.user.email);
-				yield* ensureTenant(sql, {
-					orgId,
-					userId: exchanged.user.id,
-					slug: personal.slug,
-					name: personal.name,
-					email: exchanged.user.email,
-					emailVerified: exchanged.user.emailVerified
-				}).pipe(storageError('create tenant rows'));
-			}
+						}
+						const orgId =
+							existing?.org_id ??
+							exchanged.organizationId ??
+							(yield* Effect.gen(function* () {
+								// First sign-in: WorkOS does not create a personal org, so
+								// mint one there first, then mirror it. The membership is
+								// created WorkOS-side so the session can be pinned to it.
+								const personal = personalOrgFor(exchanged.user.email);
+								const created = yield* workos.createOrganization(personal.name);
+								yield* workos.createOrganizationMembership({
+									organizationId: created.id,
+									userId: exchanged.user.id,
+									roleSlug: 'owner'
+								});
+								return created.id;
+							}));
+						if (!existing) {
+							const personal = personalOrgFor(exchanged.user.email);
+							yield* ensureTenant(sql, {
+								orgId,
+								userId: exchanged.user.id,
+								slug: personal.slug,
+								name: personal.name,
+								email: exchanged.user.email,
+								emailVerified: exchanged.user.emailVerified,
+								role
+							}).pipe(storageError('create tenant rows'));
+						}
+						return orgId;
+					})
+				)
+				.pipe(
+					Effect.catchTag('SqlError', (cause) =>
+						Effect.fail(
+							new StorageError({ operation: 'complete sign-in', cause })
+						)
+					)
+				);
 			// Pin the org on the session so every later request carries it.
 			const pinned =
 				exchanged.organizationId === orgId
@@ -447,7 +485,7 @@ const makeAuth = Effect.gen(function* () {
 					Effect.gen(function* () {
 						yield* sql`
 							UPDATE device_codes
-							SET status = 'denied', api_key_id = NULL
+							SET status = 'denied', api_key_id = NULL, user_id = NULL
 							WHERE user_id = ${userId}
 								OR api_key_id IN (SELECT id FROM api_keys WHERE user_id = ${userId})`;
 						yield* sql`DELETE FROM api_keys WHERE user_id = ${userId}`;

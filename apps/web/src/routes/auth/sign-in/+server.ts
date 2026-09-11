@@ -1,5 +1,6 @@
 import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
+import { deviceApprovalParams } from '$lib/device-approval';
 import { STATE_COOKIE, stateCookieOptions } from '$lib/server/auth-policy';
 import { AppConfig } from '$lib/server/config';
 import { runEdge } from '$lib/server/edge';
@@ -15,13 +16,15 @@ const randomState = () => {
 
 // Starts the AuthKit flow. The state travels in a short-lived cookie so
 // the callback can tell this browser's sign-in from a forged redirect.
-export const GET: RequestHandler = ({ cookies }) =>
+export const GET: RequestHandler = ({ cookies, url }) =>
 	runEdge(
 		Effect.gen(function* () {
 			const config = yield* AppConfig;
 			const workos = yield* WorkOSClient;
 			const state = randomState();
-			cookies.set(STATE_COOKIE, state, stateCookieOptions);
+			const pending = deviceApprovalParams(url.searchParams);
+			pending.set('state', state);
+			cookies.set(STATE_COOKIE, pending.toString(), stateCookieOptions);
 			return new Response(null, {
 				status: 302,
 				headers: {

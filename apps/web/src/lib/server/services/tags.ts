@@ -260,7 +260,6 @@ const makeTags = Effect.gen(function* () {
 			forgetTagListCache(org.id);
 		}),
 		setFileTags: Effect.fn('Tags.setFileTags')(function* (fileId, names) {
-
 			yield* sql
 				.withTransaction(
 					Effect.gen(function* () {

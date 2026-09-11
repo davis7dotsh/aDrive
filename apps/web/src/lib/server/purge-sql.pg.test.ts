@@ -2,43 +2,48 @@ import { Effect } from 'effect';
 import { describe, expect, it } from 'vitest';
 import { PgSql } from './pg';
 import { completePurge } from './purge-sql';
-import { ensureTestOrg, TEST_ORG_ID } from './test/org';
+import { ensureTenant } from './tenants';
+import { testTenant, TEST_ORG_ID } from './test/org';
 import { testPgLayer } from './test/pg';
 
 const run = <A, E>(effect: Effect.Effect<A, E, PgSql>) =>
 	Effect.runPromise(effect.pipe(Effect.provide(testPgLayer())));
 
-const seedPurgingFile = (fileId: string, kind: 'file' | 'site') =>
+const seedPurgingFile = (
+	fileId: string,
+	kind: 'file' | 'site',
+	orgId = TEST_ORG_ID
+) =>
 	Effect.gen(function* () {
 		const sql = yield* PgSql;
 		const now = '2026-07-27T00:00:00.000Z';
 		const isSite = kind === 'site';
-		yield* ensureTestOrg(sql);
+		yield* ensureTenant(sql, testTenant(orgId));
 		yield* sql`
 			INSERT INTO files (
 				id, org_id, display_name, content_type, kind, current_version, size_bytes,
 				public, is_site, created_at, updated_at, deleted_at, purge_at, purge_state
 			) VALUES (
-				${fileId}, ${TEST_ORG_ID}, ${`${kind}-name`}, ${isSite ? 'text/html' : 'text/plain'},
+				${fileId}, ${orgId}, ${`${kind}-name`}, ${isSite ? 'text/html' : 'text/plain'},
 				${kind}, 1, 42, true, ${isSite}, ${now}, ${now}, ${now}, ${now}, 'pending'
 			)`;
 		yield* sql`
 			INSERT INTO file_versions (
 				file_id, org_id, version, r2_key, size_bytes, content_type, created_at, text_content
 			) VALUES (
-				${fileId}, ${TEST_ORG_ID}, 1, ${isSite ? `site-version/${fileId}/1` : `v/${fileId}/1`},
+				${fileId}, ${orgId}, 1, ${isSite ? `site-version/${fileId}/1` : `v/${fileId}/1`},
 				42, ${isSite ? 'text/html' : 'text/plain'}, ${now}, 'purge body'
 			)`;
 		yield* sql`
 			INSERT INTO tags (id, org_id, name, normalized_name, created_at)
-			VALUES (${`tag-${fileId}`}, ${TEST_ORG_ID}, 'purge-tag', ${`purge-tag-${fileId}`}, ${now})`;
+			VALUES (${`tag-${fileId}`}, ${orgId}, 'purge-tag', ${`purge-tag-${fileId}`}, ${now})`;
 		yield* sql`INSERT INTO file_tags (file_id, tag_id) VALUES (${fileId}, ${`tag-${fileId}`})`;
 		yield* sql`
 			INSERT INTO search_documents (file_id, org_id, chunk_no, name, tags, body)
-			VALUES (${fileId}, ${TEST_ORG_ID}, 0, ${`${kind}-name`}, 'purge-tag', 'purge body')`;
+			VALUES (${fileId}, ${orgId}, 0, ${`${kind}-name`}, 'purge-tag', 'purge body')`;
 		yield* sql`
 			INSERT INTO file_chunks (file_id, org_id, version, ordinal, char_start, char_end)
-			VALUES (${fileId}, ${TEST_ORG_ID}, 1, 0, 0, 10), (${fileId}, ${TEST_ORG_ID}, 1, 1, 8, 18)`;
+			VALUES (${fileId}, ${orgId}, 1, 0, 0, 10), (${fileId}, ${orgId}, 1, 1, 8, 18)`;
 		if (isSite) {
 			yield* sql`
 				INSERT INTO site_assets (file_id, version, path, r2_key, content_type, size_bytes)
@@ -100,6 +105,35 @@ describe('purge completion on postgres', () => {
 			});
 		}
 	);
+
+	it('releases site assets and every version thumbnail while keeping unrelated usage', async () => {
+		const fileId = `purge-site-quota-${crypto.randomUUID()}`;
+		const orgId = `org_${fileId}`;
+		const result = await run(
+			Effect.gen(function* () {
+				const sql = yield* PgSql;
+				yield* seedPurgingFile(fileId, 'site', orgId);
+				yield* sql`UPDATE file_versions
+					SET thumbnail_r2_key = ${`thumb/${fileId}/1`}, thumbnail_size_bytes = 7
+					WHERE file_id = ${fileId} AND version = 1`;
+				yield* sql`INSERT INTO file_versions (
+					file_id, org_id, version, r2_key, size_bytes, content_type, created_at,
+					thumbnail_r2_key, thumbnail_size_bytes
+				) VALUES (${fileId}, ${orgId}, 2, ${`site-version/${fileId}/2`}, 99,
+					'text/html', now(), ${`thumb/${fileId}/2`}, 11)`;
+				// Site asset bytes are 42, thumbnails add 18, and another file
+				// accounts for 23. Site-version metadata sizes are not charged.
+				yield* sql`UPDATE org_usage SET stored_bytes = 83 WHERE org_id = ${orgId}`;
+				yield* completePurge(sql, orgId, fileId);
+				const usage = yield* sql<{ stored_bytes: number }>`
+					SELECT stored_bytes FROM org_usage WHERE org_id = ${orgId}`;
+				return { usage: usage[0]?.stored_bytes, after: yield* counts(fileId) };
+			})
+		);
+		expect(result.usage).toBe(23);
+		expect(result.after?.files).toBe(0);
+		expect(result.after?.versions).toBe(0);
+	});
 
 	it('fails and keeps every row when purge ownership is no longer pending', async () => {
 		const fileId = `purge-stale-${crypto.randomUUID()}`;

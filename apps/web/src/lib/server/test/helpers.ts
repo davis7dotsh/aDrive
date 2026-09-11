@@ -21,7 +21,7 @@ export const loginAs = async (
 	const { STATE_COOKIE } = await import('../auth-policy');
 	const { GET } = await import('../../../routes/auth/callback/+server.js');
 	ctx.cookies.delete(SESSION_COOKIE);
-	ctx.cookies.set(STATE_COOKIE, 'test-state');
+	ctx.cookies.set(STATE_COOKIE, 'state=test-state');
 	const code = fakeSession(identity.userId, identity.orgId ?? null);
 	const response = await call(
 		GET,

@@ -1,5 +1,6 @@
 import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
+import { deviceApprovalParams } from '$lib/device-approval';
 import {
 	SESSION_COOKIE,
 	STATE_COOKIE,
@@ -9,10 +10,13 @@ import { runEdge } from '$lib/server/edge';
 import { InvalidRequest } from '$lib/server/errors';
 import { Auth } from '$lib/server/services/auth';
 
-const redirectHome = () =>
+const redirectHome = (params: URLSearchParams) =>
 	new Response(null, {
 		status: 302,
-		headers: { 'Cache-Control': 'private, no-store', Location: '/' }
+		headers: {
+			'Cache-Control': 'private, no-store',
+			Location: `/${params.size ? `?${params}` : ''}`
+		}
 	});
 
 export const GET: RequestHandler = ({ cookies, url }) =>
@@ -20,7 +24,8 @@ export const GET: RequestHandler = ({ cookies, url }) =>
 		Effect.gen(function* () {
 			const auth = yield* Auth;
 			const state = url.searchParams.get('state');
-			const expectedState = cookies.get(STATE_COOKIE);
+			const pending = new URLSearchParams(cookies.get(STATE_COOKIE) ?? '');
+			const expectedState = pending.get('state');
 			cookies.delete(STATE_COOKIE, { path: '/' });
 			if (!state || !expectedState || state !== expectedState) {
 				return yield* new InvalidRequest({
@@ -37,6 +42,6 @@ export const GET: RequestHandler = ({ cookies, url }) =>
 			}
 			const { sealedSession } = yield* auth.completeSignIn(code);
 			cookies.set(SESSION_COOKIE, sealedSession, sessionCookieOptions);
-			return redirectHome();
+			return redirectHome(deviceApprovalParams(pending));
 		})
 	);

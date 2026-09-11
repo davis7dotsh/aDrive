@@ -41,7 +41,7 @@ export class PgSql extends Context.Service<PgSql, PgClient.PgClient>()(
 
 // Row level security keys on the transaction-local `app.current_org`
 // setting. When a CurrentOrg is in context, every transaction pins it
-// right after BEGIN so the policies in 0003_tenancy.sql refuse rows from
+// right after BEGIN so the policies in 0004_tenancy.sql refuse rows from
 // other orgs even if a query forgets its predicate. Plain statements
 // outside a transaction do not pin (Hyperdrive pools per transaction, so
 // a session-level setting could leak between requests); they rely on
