@@ -133,6 +133,41 @@ describe('queue purge ownership and recovery', () => {
 		}
 	});
 
+	it('durably schedules all trash but bounds immediate sends', async () => {
+		const { ctx, control, tenant, fileId, run, cleanup } = await setup();
+		try {
+			await control.query(
+				`
+				INSERT INTO files (id, org_id, display_name, content_type, kind,
+					current_version, size_bytes, created_at, updated_at, deleted_at, purge_at)
+				SELECT $1 || '-' || n, $2, 'trash.txt', 'text/plain', 'file', 1, 1,
+					now(), now(), now(), now() + interval '1 day'
+				FROM generate_series(1, 30) n
+			`,
+				[fileId, tenant.orgId]
+			);
+			ctx.jobs.length = 0;
+			const count = await run(
+				Effect.flatMap(fileOps(), (files) => files.scheduleAllPurgesNow)
+			);
+			expect(count).toBe(31);
+			expect(ctx.jobs).toHaveLength(20);
+			expect(
+				ctx.jobs.every(
+					(job) => job.body.kind === 'purge' && job.body.orgId === tenant.orgId
+				)
+			).toBe(true);
+			const rows = await control.query(
+				`SELECT id FROM files WHERE org_id = $1
+				AND purge_at <= now() AND purge_state = 'none'`,
+				[tenant.orgId]
+			);
+			expect(rows.rows).toHaveLength(31);
+		} finally {
+			await cleanup();
+		}
+	});
+
 	it('refuses restoration after originals were deleted and retains quota until retry completes', async () => {
 		const { ctx, control, tenant, fileId, key, run, cleanup } = await setup();
 		let failThumbnails = true;

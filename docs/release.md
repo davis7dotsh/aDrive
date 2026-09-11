@@ -62,58 +62,62 @@ the repository root.
    loudly if the `AI` binding is missing. Embeddings run within the
    Workers Paid plan's included neuron allocation at personal scale.
 
-5. From `apps/web`: create the job queue and its dead-letter queue:
+5. From `apps/web`: create the job, dead-letter, and parked queues:
 
    ```
    wrangler queues create adrive-jobs-production
    wrangler queues create adrive-jobs-production-dlq
    ```
 
+wrangler queues create adrive-jobs-production-parked --message-retention-period-secs 1209600
+
+````
+
 6. In the Cloudflare dashboard, open **Images → Transformations**, select
-   the zone that owns `CONTENT_DOMAIN` (`davis7.space` for
-   `files.davis7.space`), and enable transformations. Dashboard thumbnails
-   require this zone-level setting.
+the zone that owns `CONTENT_DOMAIN` (`davis7.space` for
+`files.davis7.space`), and enable transformations. Dashboard thumbnails
+require this zone-level setting.
 7. From `apps/web`, set each secret with `wrangler secret put <NAME> --env production`:
-   `MAINTENANCE_SECRET` (12+ characters), `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`,
-   `WORKOS_COOKIE_PASSWORD` (32+ characters), `WORKOS_WEBHOOK_SECRET`. Point the
-   WorkOS redirect URI at `<DASHBOARD_ORIGIN>/auth/callback` and the webhook at
-   `<DASHBOARD_ORIGIN>/api/webhooks/workos` (events `user.deleted`,
-   `organization_membership.deleted`).
+`MAINTENANCE_SECRET` (12+ characters), `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`,
+`WORKOS_COOKIE_PASSWORD` (32+ characters), `WORKOS_WEBHOOK_SECRET`. Point the
+WorkOS redirect URI at `<DASHBOARD_ORIGIN>/auth/callback` and the webhook at
+`<DASHBOARD_ORIGIN>/api/webhooks/workos` (events `user.deleted`,
+`organization_membership.deleted`).
 8. Activate the zones for the hosted target's dashboard and content domains
-   in Cloudflare. The `custom_domain` routes create DNS records for their
-   exact hostnames; they do not create the tenant wildcard. Create a proxied
-   `AAAA *.<CONTENT_DOMAIN> 100::` record and configure its matching Worker
-   route. With the checked-in example, those are `*.files.davis7.space` and
-   `*.files.davis7.space/*` in the `davis7.space` zone.
+in Cloudflare. The `custom_domain` routes create DNS records for their
+exact hostnames; they do not create the tenant wildcard. Create a proxied
+`AAAA *.<CONTENT_DOMAIN> 100::` record and configure its matching Worker
+route. With the checked-in example, those are `*.files.davis7.space` and
+`*.files.davis7.space/*` in the `davis7.space` zone.
 
-   Confirm the edge certificate covers `*.<CONTENT_DOMAIN>`. Universal SSL
-   covers the zone apex and first-level hosts, so its `*.davis7.space`
-   certificate does not cover `example.files.davis7.space`. Provision
-   explicit coverage for `*.files.davis7.space` (for example, through
-   Advanced Certificate Manager), or use a separate content-domain zone's
-   apex as `CONTENT_DOMAIN`. Update the domain and Worker routes together.
-   Verify DNS and HTTPS for an actual tenant hostname before cutover.
+Confirm the edge certificate covers `*.<CONTENT_DOMAIN>`. Universal SSL
+covers the zone apex and first-level hosts, so its `*.davis7.space`
+certificate does not cover `example.files.davis7.space`. Provision
+explicit coverage for `*.files.davis7.space` (for example, through
+Advanced Certificate Manager), or use a separate content-domain zone's
+apex as `CONTENT_DOMAIN`. Update the domain and Worker routes together.
+Verify DNS and HTTPS for an actual tenant hostname before cutover.
 
-   Use temporary origins for the separate hosted target described above;
-   preserve existing production records until cutover. Resolve conflicting
-   records when assigning the intended custom domains. The checked-in
-   `adrive.davis7.space` custom domain serves the static landing page
-   (`apps/site`, an assets-only Worker with no build step).
+Use temporary origins for the separate hosted target described above;
+preserve existing production records until cutover. Resolve conflicting
+records when assigning the intended custom domains. The checked-in
+`adrive.davis7.space` custom domain serves the static landing page
+(`apps/site`, an assets-only Worker with no build step).
 
 9. From the repo root: `bun release`
 10. From the repo root: set up backups on your backup host
-    (`scripts/backup/install-backup-host.sh`) and complete the restore drill
-    in `docs/backup-restore.md`.
+ (`scripts/backup/install-backup-host.sh`) and complete the restore drill
+ in `docs/backup-restore.md`.
 
 Semantic search notes for the first deploy:
 
 - Files uploaded before the index existed (or while bindings were absent)
-  sit in `index_state = 'disabled'` and are backfilled by the maintenance
-  cron at 5 files per 5 minutes. A large pre-existing corpus takes hours;
-  the settings page's "indexed chunks" count shows progress.
+sit in `index_state = 'disabled'` and are backfilled by the maintenance
+cron at 5 files per 5 minutes. A large pre-existing corpus takes hours;
+the settings page's "indexed chunks" count shows progress.
 - Embeddings live in Postgres beside the file rows, so they are restored
-  with the database. Files whose embeddings are missing after a partial
-  restore regenerate on reindex.
+with the database. Files whose embeddings are missing after a partial
+restore regenerate on reindex.
 
 ## Database roles
 
@@ -131,9 +135,9 @@ tools or equivalent SQL:
 
 ```sql
 CREATE ROLE adrive_runtime LOGIN INHERIT
-  NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
 GRANT adrive_app TO adrive_runtime;
-```
+````
 
 Set its password through the provider or `\password adrive_runtime` in
 `psql`. Connect using `ADRIVE_RUNTIME_DATABASE_URL` and verify:
@@ -162,6 +166,7 @@ the Worker as its consumer; the queue itself is created once:
 ```
 wrangler queues create adrive-jobs-production
 wrangler queues create adrive-jobs-production-dlq
+wrangler queues create adrive-jobs-production-parked --message-retention-period-secs 1209600
 ```
 
 - The consumer retries a failed message up to `max_retries` (5) times,
@@ -174,7 +179,18 @@ wrangler queues create adrive-jobs-production-dlq
   secret to have a JSON summary POSTed whenever a batch dead-letters.
   Re-send a job only after fixing the cause, since it will otherwise
   fail again.
-- Local development uses the `adrive-jobs` / `adrive-jobs-dlq` names and
+- If Postgres remains unavailable through the DLQ consumer's three retries,
+  Cloudflare moves the message to `adrive-jobs-production-parked`. This queue
+  deliberately has no automatic consumer, so an outage cannot exhaust another
+  retry chain. Its retention is 14 days, not indefinite: alert on nonzero backlog
+  and recover before expiry. Once Postgres is healthy, use the Queues HTTP pull
+  API to pull parked messages and republish their original bodies to
+  `adrive-jobs-production-dlq`; acknowledge parked messages only after successful
+  publication. The DLQ consumer records them in `failed_jobs` for review.
+- Emptying trash records every requested deletion in Postgres but sends at most
+  20 immediate queue messages within a five-second budget. Cron reconciliation
+  continues the rest in bounded batches.
+- Local development uses the `adrive-jobs` / `adrive-jobs-dlq` / `adrive-jobs-parked` names and
   needs no provisioning; `wrangler dev` simulates the queue.
 
 ## Releasing
