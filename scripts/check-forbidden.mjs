@@ -2,8 +2,9 @@ import { readFile, readdir } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 
 const roots = ['apps', 'packages'];
+// withTransaction is fine on the Postgres client; the D1 driver never
+// supported it, so the guard now only covers query streams.
 const forbidden = [
-	{ label: 'D1 transactions', pattern: '.withTransaction(' },
 	{ label: 'D1 query streams', pattern: '.stream(' },
 	{ label: 'unsafe FTS maintenance', pattern: "'integrity-check'" }
 ];
@@ -46,5 +47,5 @@ if (violations.length > 0) {
 	console.error(violations.join('\n'));
 	process.exitCode = 1;
 } else {
-	console.log('No unsupported D1 transaction or query-stream calls found.');
+	console.log('No unsupported D1 query-stream calls found.');
 }

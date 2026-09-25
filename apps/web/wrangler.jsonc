@@ -23,6 +23,13 @@
 	"triggers": {
 		"crons": ["*/5 * * * *"]
 	},
+	"hyperdrive": [
+		{
+			"binding": "HYPERDRIVE",
+			"id": "replace-with-your-hyperdrive-id",
+			"localConnectionString": "postgres://adrive:adrive@127.0.0.1:5432/adrive"
+		}
+	],
 	"d1_databases": [
 		{
 			"binding": "DB",
@@ -60,6 +67,8 @@
 	// environments do not inherit bindings, so everything is redeclared.
 	// Before the first deploy (see docs/release.md):
 	//   1. Create the production D1 database and paste its id below.
+	//   1b. Create a Hyperdrive config pointing at PlanetScale Postgres
+	//       (direct port 5432, caching disabled) and paste its id below.
 	//   2. Create the production R2 bucket and KV namespace; paste the KV id.
 	//   3. Create the Vectorize index and its metadata indexes (docs/release.md).
 	//   4. Point DNS for both hostnames at the Worker (routes below).
@@ -99,6 +108,12 @@
 			"triggers": {
 				"crons": ["*/5 * * * *"]
 			},
+			"hyperdrive": [
+				{
+					"binding": "HYPERDRIVE",
+					"id": "replace-with-production-hyperdrive-id"
+				}
+			],
 			"d1_databases": [
 				{
 					"binding": "DB",

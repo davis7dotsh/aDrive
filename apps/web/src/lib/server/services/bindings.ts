@@ -2,6 +2,10 @@ import { Context } from 'effect';
 
 export class Db extends Context.Service<Db, D1Database>()('app/Db') {}
 
+// Hyperdrive binding. Only the connection string is used; the pool itself
+// is built per request in pg.ts.
+export class Pg extends Context.Service<Pg, Hyperdrive>()('app/Pg') {}
+
 export class Bucket extends Context.Service<Bucket, R2Bucket>()('app/Bucket') {}
 
 export interface AuthGuardStoreShape {
