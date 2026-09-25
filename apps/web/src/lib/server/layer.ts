@@ -3,9 +3,14 @@ import { ConfigLive } from './config';
 import { OrgMissing, StorageError } from './errors';
 import type { ProgramTenant } from './identity';
 import { PgSql } from './pg';
-import { AuthGuardLive } from './services/auth-guard';
 import { AuthLive } from './services/auth';
-import { AuthGuardStore, Bucket, Jobs, Pg } from './services/bindings';
+import {
+	AuthGuardStore,
+	Bucket,
+	Jobs,
+	Pg,
+	RateLimiters
+} from './services/bindings';
 import { pgLayer } from './pg';
 import { BlobsLive } from './services/blobs';
 import {
@@ -24,6 +29,11 @@ import { LifecycleLive } from './services/lifecycle';
 import { GrantSecretsLive } from './services/grant-secrets';
 import { JobQueueLive } from './services/jobs';
 import { OrgLive } from './services/org';
+import { RateLimitsLive } from './services/rate-limits';
+import { AdminLive } from './services/admin';
+import { CloudflareCachePurgeLive } from './services/cache-purge';
+import { ScannerLive } from './services/scanner';
+import { UrlReputationLive } from './services/url-reputation';
 import { WorkOSLive } from './services/workos';
 
 export const PgLive = Layer.unwrap(
@@ -74,6 +84,12 @@ export const requestLayer = (env: Env, tenant: ProgramTenant | null) => {
 		Layer.succeed(Bucket, env.BUCKET),
 		Layer.succeed(AuthGuardStore, env.AUTH_GUARD),
 		Layer.succeed(Jobs, env.JOBS),
+		Layer.succeed(RateLimiters, {
+			upload: env.RL_UPLOAD,
+			publish: env.RL_PUBLISH,
+			auth: env.RL_AUTH,
+			anonymous: env.RL_ANON
+		}),
 		Layer.succeed(
 			CurrentUser,
 			tenant?.userId ? { id: tenant.userId } : anonymousUser
@@ -94,7 +110,15 @@ export const requestLayer = (env: Env, tenant: ProgramTenant | null) => {
 	const auth = AuthLive.pipe(
 		Layer.provide(Layer.merge(infrastructure, workos))
 	);
-	const authGuard = AuthGuardLive().pipe(Layer.provide(bindings));
+	const rateLimits = RateLimitsLive.pipe(Layer.provide(bindings));
+	const urlReputation = UrlReputationLive.pipe(Layer.provide(bindings));
+	const cachePurge = CloudflareCachePurgeLive.pipe(Layer.provide(bindings));
+	const scanner = ScannerLive.pipe(
+		Layer.provide(Layer.mergeAll(infrastructure, urlReputation, cachePurge))
+	);
+	const admin = AdminLive.pipe(
+		Layer.provide(Layer.mergeAll(infrastructure, cachePurge))
+	);
 	const orgService = OrgLive.pipe(Layer.provide(infrastructure));
 	const grantSecrets = GrantSecretsLive.pipe(Layer.provide(infrastructure));
 	const tags = TagsLive.pipe(Layer.provide(infrastructure));
@@ -117,7 +141,11 @@ export const requestLayer = (env: Env, tenant: ProgramTenant | null) => {
 		semantic,
 		workos,
 		auth,
-		authGuard,
+		rateLimits,
+		urlReputation,
+		cachePurge,
+		scanner,
+		admin,
 		orgService,
 		grantSecrets,
 		tags,

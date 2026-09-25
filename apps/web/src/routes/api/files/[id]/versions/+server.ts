@@ -1,27 +1,21 @@
 import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
-import { authRateLimitResponse } from '$lib/server/auth-rate-limit-response';
+import { rateLimitResponse } from '$lib/server/auth-rate-limit-response';
 import { runEdge } from '$lib/server/edge';
 import { requireWrite } from '$lib/server/request-auth';
-import { AuthGuard } from '$lib/server/services/auth-guard';
+import { RateLimits } from '$lib/server/services/rate-limits';
 import { Files } from '$lib/server/services/files';
 
 export const PUT: RequestHandler = (event) => {
 	const { params, request } = event;
 	return runEdge(
 		Effect.gen(function* () {
-			const authGuard = yield* AuthGuard;
+			const rateLimits = yield* RateLimits;
 			const files = yield* Files;
 			const credential = yield* requireWrite(event);
-			const rateLimit = yield* authGuard.consume(
-				'upload',
-				credential.credentialId
-			);
+			const rateLimit = yield* rateLimits.upload(credential.orgId);
 			if (!rateLimit.allowed) {
-				return authRateLimitResponse(
-					rateLimit,
-					'Too many uploads. Try again later.'
-				);
+				return rateLimitResponse('Too many uploads. Try again later.');
 			}
 			const result = yield* files.uploadVersion({
 				id: params.id,

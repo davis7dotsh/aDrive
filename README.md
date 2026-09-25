@@ -120,22 +120,14 @@ __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS="siva.otter-hawksbill.ts.net,.100.100.40.
 The content proxy preserves the tenant Host header, so the Worker still
 enforces its host-routing rules in development.
 
-Production passcode login creates a seven-day, host-only
-`__Host-adrive-session` cookie. That cookie is always `Secure`, `HttpOnly`, and
-`SameSite=Strict`, so browsers correctly refuse it on plain-HTTP non-localhost
-dev URLs (like a Tailscale hostname). Use the generated API key in the
-dashboard's “Local HTTP fallback” there. Passcode login works on
-`http://localhost` and on any HTTPS dashboard origin.
-
-Authentication bootstrap endpoints are protected by the `AUTH_GUARD` Workers
-KV namespace. Login is limited to ten attempts per client every five minutes,
-and five incorrect passcodes within fifteen minutes lock that client out for
-thirty minutes. Device authorization creation is limited to five requests per
-client every ten minutes, while device polling permits 150 requests per client
-every ten minutes so the documented five-second polling interval remains valid.
-Rate-limit and lockout responses use HTTP 429 with `Retry-After`. KV is
-eventually consistent, so these controls are abuse mitigation rather than an
-atomic global security boundary.
+The dashboard signs in through WorkOS. Device authorization creation and token
+polling share the `RL_AUTH` Workers rate limit: 30 requests per client address
+in a 60-second window. A device polls every five seconds, leaving room for
+creation and another device behind the same address. Refused token polls return
+HTTP 429 with `{ "status": "slow_down" }` and `Retry-After: 60`; the CLI waits
+for that delay before polling again. Creation remains rate limited and returns
+the usual error response. These counters are approximate and scoped to each
+Cloudflare location. `AUTH_GUARD` KV now supports caches, not auth counters.
 
 In another shell, configure and exercise the CLI:
 

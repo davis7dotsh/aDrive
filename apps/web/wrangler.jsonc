@@ -47,6 +47,31 @@
 			"id": "419a52adcd9649e0a24e5c47c2748477"
 		}
 	],
+	// Abuse brakes (services/rate-limits.ts). Per-colo and approximate:
+	// fine for stopping a runaway client, not for billing.
+	"ratelimits": [
+		{
+			"name": "RL_UPLOAD",
+			"namespace_id": "1001",
+			"simple": { "limit": 60, "period": 60 }
+		},
+		{
+			"name": "RL_PUBLISH",
+			"namespace_id": "1002",
+			"simple": { "limit": 10, "period": 60 }
+		},
+		{
+			"name": "RL_AUTH",
+			"namespace_id": "1003",
+			// Shared creation + polling budget; a device polls 12 times/minute.
+			"simple": { "limit": 30, "period": 60 }
+		},
+		{
+			"name": "RL_ANON",
+			"namespace_id": "1004",
+			"simple": { "limit": 300, "period": 60 }
+		}
+	],
 	"queues": {
 		"producers": [{ "queue": "adrive-jobs", "binding": "JOBS" }],
 		"consumers": [
@@ -96,8 +121,9 @@
 	//      `*.files.davis7.space` needs explicit certificate coverage on the
 	//      davis7.space zone, or use a dedicated content-domain zone apex.
 	//   5. `wrangler secret put` MAINTENANCE_SECRET, WORKOS_API_KEY,
-	//      WORKOS_CLIENT_ID, WORKOS_COOKIE_PASSWORD, WORKOS_WEBHOOK_SECRET
-	//      (all `--env production`)
+	//      WORKOS_CLIENT_ID, WORKOS_COOKIE_PASSWORD, WORKOS_WEBHOOK_SECRET,
+	//      ADMIN_USER_IDS; optionally URLSCAN_API_KEY + CF_ACCOUNT_ID and
+	//      CF_API_TOKEN + CF_ZONE_ID (docs/abuse.md) (all `--env production`)
 	//   6. `DATABASE_URL=postgres://... bun db:pg:migrate` (see docs/release.md)
 	"env": {
 		"production": {
@@ -153,6 +179,28 @@
 				{
 					"binding": "AUTH_GUARD",
 					"id": "09b884a95e5e40389d8554b3cd690d3f"
+				}
+			],
+			"ratelimits": [
+				{
+					"name": "RL_UPLOAD",
+					"namespace_id": "2001",
+					"simple": { "limit": 60, "period": 60 }
+				},
+				{
+					"name": "RL_PUBLISH",
+					"namespace_id": "2002",
+					"simple": { "limit": 10, "period": 60 }
+				},
+				{
+					"name": "RL_AUTH",
+					"namespace_id": "2003",
+					"simple": { "limit": 30, "period": 60 }
+				},
+				{
+					"name": "RL_ANON",
+					"namespace_id": "2004",
+					"simple": { "limit": 300, "period": 60 }
 				}
 			],
 			"queues": {

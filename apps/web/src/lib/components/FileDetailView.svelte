@@ -130,7 +130,13 @@
 					return false;
 				}
 			}
-			toasts.success(result.forcedPublic ? 'HTML files stay public' : success);
+			toasts.success(
+				mutation.action === 'visibility' && result.file.publishPending
+					? 'Pending review before public sharing'
+					: result.forcedPublic
+						? 'HTML files stay public'
+						: success
+			);
 			return true;
 		} catch (cause) {
 			if (
@@ -155,7 +161,10 @@
 
 	const linkFor = async (version?: number) => {
 		const current = detail.current;
-		if (!current) return { url: '', expiresAt: null };
+		if (!current) return { url: '', expiresAt: null, public: false };
+		if (current.file.quarantined) {
+			throw new Error('Sharing is unavailable while this file is quarantined');
+		}
 		const fileId = current.file.id;
 		const expirationTime = current.file.expiresAt
 			? new Date(current.file.expiresAt).getTime()
@@ -163,9 +172,13 @@
 		const unavailable =
 			current.file.deletedAt !== null ||
 			(Number.isFinite(expirationTime) && expirationTime <= Date.now());
+		// Historical bytes have their own scan clearance. Resolve those
+		// through the API so an owner grant can cover an unreviewed version.
+		const currentVersion =
+			version === undefined || version === current.file.version;
 		const link =
-			current.file.public && !unavailable
-				? { url: fileUrl(version), expiresAt: null }
+			current.file.public && !unavailable && currentVersion
+				? { url: fileUrl(version), expiresAt: null, public: true }
 				: getContentLink(
 						session.token,
 						current.file.id,
@@ -189,7 +202,7 @@
 			const fileId = current.file.id;
 			const link = await linkFor(version);
 			if (detail.current?.file.id !== fileId) return;
-			if (current.file.public) {
+			if (link.public || current.file.kind === 'site') {
 				window.open(link.url, '_blank', 'noopener');
 			} else {
 				const anchor = document.createElement('a');
@@ -274,7 +287,7 @@
 
 	const putVersion = async (file: File) => {
 		const current = detail.current;
-		if (!current || busy) return;
+		if (!current || busy || current.file.quarantined) return;
 		const fileId = current.file.id;
 		const currentOperation = ++operation;
 		if (file.size > current.maxUploadBytes) {
@@ -347,27 +360,50 @@
 				<Icon name="arrow-left" />
 				Files
 			</a>
-			<FileName
-				file={detail.current.file}
-				{busy}
-				onrename={(displayName) =>
-					void update({ action: 'rename', displayName }, 'File renamed')}
-			/>
+			{#if detail.current.file.quarantined}
+				<h1
+					class="min-w-0 truncate px-2 py-1 text-xl font-semibold tracking-tight text-zinc-950"
+				>
+					{detail.current.file.displayName}
+				</h1>
+			{:else}
+				<FileName
+					file={detail.current.file}
+					{busy}
+					onrename={(displayName) =>
+						void update({ action: 'rename', displayName }, 'File renamed')}
+				/>
+			{/if}
 			{#if detail.current.file.deletedAt}
 				<span class="rounded-full bg-amber-50 px-2 py-1 text-xs text-amber-700">
 					In trash
 				</span>
 			{/if}
-			<CopyButton variant="ghost" resolve={() => resolveLink()} />
+			<CopyButton
+				variant="ghost"
+				resolve={() => resolveLink()}
+				disabled={detail.current.file.quarantined}
+			/>
 		</header>
 
 		<div class="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
-			<FilePreview
-				file={detail.current.file}
-				token={session.token}
-				contentOrigin={detail.current.contentOrigin}
-				ondownload={() => void openLink()}
-			/>
+			{#if detail.current.file.quarantined}
+				<section
+					class="flex min-h-[28rem] items-center justify-center overflow-hidden rounded-xl border border-zinc-200 bg-white p-8 text-center"
+					aria-label="File preview"
+				>
+					<p class="text-sm text-zinc-500">
+						Preview unavailable while this file is quarantined.
+					</p>
+				</section>
+			{:else}
+				<FilePreview
+					file={detail.current.file}
+					token={session.token}
+					contentOrigin={detail.current.contentOrigin}
+					ondownload={() => void openLink()}
+				/>
+			{/if}
 			<FileSidebar
 				file={detail.current.file}
 				versions={detail.current.versions}

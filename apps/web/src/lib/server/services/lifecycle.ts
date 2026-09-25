@@ -1,13 +1,19 @@
 import { Context, Effect, Layer } from 'effect';
+import { PgSql } from '../pg';
+import { recoverScanJobs } from '../scan-jobs';
+import { promoteEstablished } from '../trust';
 import { Auth } from './auth';
 import { Files } from './files';
 import { Indexing } from './indexing';
 import { Sites } from './sites';
+import { CurrentOrg } from './current-org';
+import { JobQueue } from './jobs';
 
 export interface LifecycleSummary {
 	readonly authentication: number;
 	readonly sites: number;
 	readonly indexing: number;
+	readonly scans: number;
 	readonly files: number;
 }
 
@@ -18,6 +24,9 @@ export const ORG_SWEEP_LIMIT = 2;
 export interface LifecycleShape {
 	// Work that is not tenant-scoped (device codes); runs once per tick.
 	readonly global: Effect.Effect<number>;
+	// Promotes verified orgs that have paid for 14 days to established
+	// (trust-policy.ts). Returns how many moved.
+	readonly trust: Effect.Effect<number>;
 	// One org's share of purges, indexing, and site cleanup; runAcrossOrgs
 	// in edge.ts runs it once per randomly chosen live org.
 	readonly org: Effect.Effect<LifecycleSummary>;
@@ -31,6 +40,7 @@ export interface LifecycleTasks {
 	readonly authentication: Effect.Effect<number, unknown>;
 	readonly sites: Effect.Effect<number, unknown>;
 	readonly indexing: Effect.Effect<number, unknown>;
+	readonly scans: Effect.Effect<number, unknown>;
 	readonly files: Effect.Effect<number, unknown>;
 }
 
@@ -63,8 +73,9 @@ export const runLifecycleTasks = (tasks: LifecycleTasks) =>
 		);
 		const sites = yield* recover('sites', tasks.sites, 0);
 		const indexing = yield* recover('indexing', tasks.indexing, 0);
+		const scans = yield* recover('scans', tasks.scans, 0);
 		const files = yield* recover('files', tasks.files, 0);
-		return { authentication, sites, indexing, files };
+		return { authentication, sites, indexing, scans, files };
 	});
 
 export const summarize = (
@@ -76,29 +87,41 @@ export const summarize = (
 			authentication: total.authentication,
 			sites: total.sites + summary.sites,
 			indexing: total.indexing + summary.indexing,
+			scans: total.scans + summary.scans,
 			files: total.files + summary.files
 		}),
-		{ authentication, sites: 0, indexing: 0, files: 0 }
+		{ authentication, sites: 0, indexing: 0, scans: 0, files: 0 }
 	);
 
 const makeLifecycle = Effect.gen(function* () {
+	const sql = yield* PgSql;
 	const auth = yield* Auth;
 	const files = yield* Files;
 	const indexing = yield* Indexing;
 	const sites = yield* Sites;
+	const jobs = yield* JobQueue;
+	const currentOrg = yield* CurrentOrg;
 
 	const global = recover('authentication', auth.sweepExpired(100), 0).pipe(
 		Effect.withSpan('Lifecycle.global')
 	);
+	const trust = recover(
+		'trust',
+		Effect.suspend(() => promoteEstablished(sql, new Date())),
+		0
+	).pipe(Effect.withSpan('Lifecycle.trust'));
 
 	const org = runLifecycleTasks({
 		authentication: Effect.succeed(0),
 		sites: sites.sweepLifecycle(ORG_SWEEP_LIMIT),
 		indexing: indexing.runDue(ORG_SWEEP_LIMIT),
+		scans: Effect.suspend(() =>
+			recoverScanJobs(sql, jobs, currentOrg.id, ORG_SWEEP_LIMIT)
+		),
 		files: files.sweepPurges(ORG_SWEEP_LIMIT)
 	}).pipe(Effect.withSpan('Lifecycle.org'));
 
-	return Lifecycle.of({ global, org });
+	return Lifecycle.of({ global, trust, org });
 });
 
 export const LifecycleLive = Layer.effect(Lifecycle, makeLifecycle);
