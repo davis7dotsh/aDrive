@@ -1,6 +1,6 @@
 import { Effect, Layer } from 'effect';
 import { ConfigLive } from './config';
-import { StorageError } from './errors';
+import { OrgMissing, StorageError } from './errors';
 import type { ProgramTenant } from './identity';
 import { PgSql } from './pg';
 import { AuthGuardLive } from './services/auth-guard';
@@ -53,10 +53,11 @@ const currentOrgLayer = <E>(
 				SELECT slug FROM orgs WHERE id = ${orgId} LIMIT 1
 			`;
 			const row = rows[0];
-			if (!row) return yield* Effect.fail(`Org ${orgId} does not exist`);
+			if (!row) return yield* new OrgMissing({ orgId });
 			return { id: orgId, slug: row.slug };
 		}).pipe(
-			Effect.mapError(
+			Effect.catchTag(
+				'SqlError',
 				(cause) => new StorageError({ operation: 'resolve org slug', cause })
 			)
 		)

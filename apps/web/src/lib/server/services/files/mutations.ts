@@ -26,7 +26,7 @@ export const mutationOps = (
 	| 'recordDownload'
 > => {
 	const { sql, org } = internals;
-	const { findDashboardFile } = internals;
+	const { findDashboardFile, sendIndexJob, sendPurgeJob } = internals;
 	return {
 		setVisibility: Effect.fn('Files.setVisibility')(function* (id, isPublic) {
 			const current = yield* findDashboardFile(id);
@@ -78,6 +78,7 @@ export const mutationOps = (
 			if (rows.length !== 1) {
 				return yield* new NotFound({ id });
 			}
+			yield* sendPurgeJob(id, purgeAt);
 			return {
 				file: { ...current, deletedAt, updatedAt: deletedAt },
 				forcedPublic: false
@@ -86,12 +87,17 @@ export const mutationOps = (
 		restore: Effect.fn('Files.restore')(function* (id) {
 			const current = yield* findDashboardFile(id);
 			const updatedAt = new Date().toISOString();
+			// A failed purge may already have deleted originals before a later
+			// blob or thumbnail operation failed. Once deletion has started,
+			// keep the row in trash until cleanup finishes; resetting its state
+			// through another trash action must not make it restorable either.
 			const rows = yield* sql<{ id: string }>`
 				UPDATE files
 				SET deleted_at = NULL, purge_at = NULL, purge_state = 'none',
 					purge_error = NULL, purge_next_run_at = NULL,
 					updated_at = ${updatedAt}
-				WHERE id = ${id} AND org_id = ${org.id} AND purge_state <> 'pending'
+				WHERE id = ${id} AND org_id = ${org.id}
+					AND purge_state = 'none' AND purge_attempts = 0
 				RETURNING id
 			`.pipe(
 				Effect.mapError(
@@ -101,7 +107,7 @@ export const mutationOps = (
 			if (rows.length !== 1) {
 				return yield* new InvalidRequest({
 					status: 409,
-					message: 'This file is already being purged'
+					message: 'This file has already started permanent deletion'
 				});
 			}
 			return {
@@ -122,6 +128,7 @@ export const mutationOps = (
 						new StorageError({ operation: 'update file expiration', cause })
 				)
 			);
+			if (expiresAt !== null) yield* sendPurgeJob(id, expiresAt);
 			return {
 				file: { ...current, expiresAt, updatedAt },
 				forcedPublic: false
@@ -145,22 +152,28 @@ export const mutationOps = (
 				current.public
 			);
 			const updatedAt = new Date().toISOString();
-			yield* sql
+			const rows = yield* sql
 				.withTransaction(
-					sql`
+					sql<{ current_version: number }>`
 						UPDATE files
 						SET display_name = ${displayName}, public = ${visibility.public},
 							updated_at = ${updatedAt}, index_state = 'pending',
 							index_cursor = 0, index_attempts = 0, index_error = NULL,
 							index_next_run_at = NULL, index_lease_token = NULL
 						WHERE id = ${id} AND org_id = ${org.id}
-					`.pipe(Effect.andThen(refreshSearchDocument(sql, id, org.id)))
+						RETURNING current_version
+					`.pipe(Effect.tap(() => refreshSearchDocument(sql, id, org.id)))
 				)
 				.pipe(
 					Effect.mapError(
 						(cause) => new StorageError({ operation: 'rename file', cause })
 					)
 				);
+			const renamed = rows[0];
+			if (!renamed) return yield* new NotFound({ id });
+			// A version upload may have committed after the initial dashboard
+			// read. Index the version whose state this rename actually reset.
+			yield* sendIndexJob(id, renamed.current_version);
 			return {
 				file: {
 					...current,
@@ -203,27 +216,42 @@ export const mutationOps = (
 					message: 'This file is already being purged'
 				});
 			}
+			yield* sendPurgeJob(id, EPOCH);
 			return { file: current, forcedPublic: false };
 		}),
-		// Suspended so the org is read when the effect runs, not when the
+		// A generator body reads the org when the effect runs, not when the
 		// layer is built (content routes build the layer with no tenant).
-		scheduleAllPurgesNow: Effect.suspend(
-			() => sql<{ id: string }>`
-				UPDATE files
-				SET purge_at = ${EPOCH}, purge_state = 'none', purge_error = NULL,
-					purge_next_run_at = NULL
-				WHERE org_id = ${org.id} AND deleted_at IS NOT NULL
-					AND purge_state <> 'pending'
-				RETURNING id
-			`
-		).pipe(
-			Effect.map((rows) => rows.length),
-			Effect.mapError(
-				(cause) =>
-					new StorageError({ operation: 'schedule empty trash', cause })
-			),
-			Effect.withSpan('Files.scheduleAllPurgesNow')
-		),
+		scheduleAllPurgesNow: Effect.gen(function* () {
+			const rows = yield* sql<{ count: number; ids: string[] }>`
+				WITH scheduled AS (
+					UPDATE files
+					SET purge_at = ${EPOCH}, purge_state = 'none', purge_error = NULL,
+						purge_next_run_at = NULL
+					WHERE org_id = ${org.id} AND deleted_at IS NOT NULL
+						AND purge_state <> 'pending'
+					RETURNING id
+				)
+				SELECT count(*)::int AS count,
+					ARRAY(SELECT id FROM scheduled LIMIT 20) AS ids
+				FROM scheduled
+			`.pipe(
+				Effect.mapError(
+					(cause) =>
+						new StorageError({ operation: 'schedule empty trash', cause })
+				)
+			);
+			// All work is durable in Postgres. Kick a small batch now; the
+			// bounded reconciliation sweep picks up the rest or a slow send.
+			yield* Effect.forEach(
+				rows[0]?.ids ?? [],
+				(id) => sendPurgeJob(id, EPOCH),
+				{
+					concurrency: 5,
+					discard: true
+				}
+			).pipe(Effect.timeoutOption('5 seconds'));
+			return rows[0]?.count ?? 0;
+		}).pipe(Effect.withSpan('Files.scheduleAllPurgesNow')),
 		recordDownload: Effect.fn('Files.recordDownload')(function* (id) {
 			const now = new Date().toISOString();
 			// Content routes have no tenant; the file id alone identifies it.

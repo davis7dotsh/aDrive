@@ -1,6 +1,6 @@
 import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
-import { runEdge, runEdgeWithEvent, runWorkerProgram } from '$lib/server/edge';
+import { runEdge } from '$lib/server/edge';
 import { requireAuth, requireWrite } from '$lib/server/request-auth';
 import { AppConfig } from '$lib/server/config';
 import { validateExpiration } from '$lib/server/auth-policy';
@@ -116,10 +116,9 @@ export const GET: RequestHandler = (event) => {
 	);
 };
 
-export const PUT: RequestHandler = async (event) => {
+export const PUT: RequestHandler = (event) => {
 	const { request, url } = event;
-	const output = await runEdgeWithEvent(
-		event,
+	return runEdge(
 		Effect.gen(function* () {
 			const authGuard = yield* AuthGuard;
 			const files = yield* Files;
@@ -129,13 +128,10 @@ export const PUT: RequestHandler = async (event) => {
 				credential.credentialId
 			);
 			if (!rateLimit.allowed) {
-				return {
-					fileId: null,
-					response: authRateLimitResponse(
-						rateLimit,
-						'Too many uploads. Try again later.'
-					)
-				};
+				return authRateLimitResponse(
+					rateLimit,
+					'Too many uploads. Try again later.'
+				);
 			}
 			const displayName = yield* Effect.try({
 				try: () => decodeName(request.headers.get('x-adrive-file-name')),
@@ -186,39 +182,21 @@ export const PUT: RequestHandler = async (event) => {
 								})
 				})
 			});
-			return {
-				fileId: result.file.id,
-				response: Response.json(
-					{
-						file: result.file,
-						url: `${yield* currentContentOrigin}/f/${result.file.id}`,
-						forcedPublic: result.forcedPublic
-					},
-					{ status: 201 }
-				)
-			};
+			return Response.json(
+				{
+					file: result.file,
+					url: `${yield* currentContentOrigin}/f/${result.file.id}`,
+					forcedPublic: result.forcedPublic
+				},
+				{ status: 201 }
+			);
 		})
 	);
-	const uploadedFileId = output.fileId;
-	if (uploadedFileId !== null && event.platform) {
-		event.platform.ctx.waitUntil(
-			runWorkerProgram(
-				event.platform.env,
-				Effect.gen(function* () {
-					const indexing = yield* Indexing;
-					yield* indexing.process(uploadedFileId);
-				}),
-				event.locals.auth
-			)
-		);
-	}
-	return output.response;
 };
 
-export const DELETE: RequestHandler = async (event) => {
-	const { request, url } = event;
-	const output = await runEdgeWithEvent(
-		event,
+export const DELETE: RequestHandler = (event) => {
+	const { url } = event;
+	return runEdge(
 		Effect.gen(function* () {
 			const files = yield* Files;
 			yield* requireWrite(event);
@@ -228,23 +206,8 @@ export const DELETE: RequestHandler = async (event) => {
 					message: 'Only trash can be emptied'
 				});
 			}
-			return {
-				count: yield* files.scheduleAllPurgesNow,
-				response: Response.json({ ok: true as const })
-			};
+			yield* files.scheduleAllPurgesNow;
+			return Response.json({ ok: true as const });
 		})
 	);
-	if (output.count > 0 && event.platform) {
-		event.platform.ctx.waitUntil(
-			runWorkerProgram(
-				event.platform.env,
-				Effect.gen(function* () {
-					const files = yield* Files;
-					yield* files.sweepPurges(10);
-				}),
-				event.locals.auth
-			)
-		);
-	}
-	return output.response;
 };

@@ -57,6 +57,17 @@
 				"max_retries": 5,
 				"max_concurrency": 10,
 				"dead_letter_queue": "adrive-jobs-dlq"
+			},
+			// Dead letters land in failed_jobs (see /api/internal/jobs/dead).
+			// Five 128 KiB messages leave JSON-envelope headroom under the
+			// internal 1 MiB request cap. Keep production batches aligned.
+			{
+				"queue": "adrive-jobs-dlq",
+				"max_batch_size": 5,
+				"max_batch_timeout": 30,
+				"max_retries": 3,
+				"max_concurrency": 1,
+				"dead_letter_queue": "adrive-jobs-parked"
 			}
 		]
 	},
@@ -154,6 +165,14 @@
 						"max_retries": 5,
 						"max_concurrency": 10,
 						"dead_letter_queue": "adrive-jobs-production-dlq"
+					},
+					{
+						"queue": "adrive-jobs-production-dlq",
+						"max_batch_size": 5,
+						"max_batch_timeout": 30,
+						"max_retries": 3,
+						"max_concurrency": 1,
+						"dead_letter_queue": "adrive-jobs-production-parked"
 					}
 				]
 			},

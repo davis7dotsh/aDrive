@@ -1,6 +1,7 @@
 import { normalizeSitePath } from '@adrive/shared';
 import { Effect } from 'effect';
 import { InvalidRequest, NotFound, StorageError } from '../../errors';
+import { delaySecondsUntil } from '../../job-policy';
 import { refreshSearchDocument } from '../../search-index';
 import { ensureStorageHeadroom, reserveWithinPlan } from '../../storage-quota';
 import {
@@ -23,27 +24,15 @@ export const sessionOps = (
 		compensateStagedBlob,
 		cleanupStaged,
 		drainDeletes,
-		sweepExpiredSessions,
 		sql,
 		blobs,
 		config,
-		org
+		org,
+		jobs
 	} = internals;
 
 	return {
 		createSession: Effect.fn('Sites.createSession')(function* (input) {
-			yield* sweepExpiredSessions().pipe(
-				Effect.catchCause((cause) =>
-					Effect.sync(() => {
-						console.error(
-							JSON.stringify({
-								message: 'expired site session sweep failed',
-								cause: String(cause)
-							})
-						);
-					})
-				)
-			);
 			const prepared = yield* Effect.try({
 				try: () => prepareSiteManifest(input, config.maxUploadBytes),
 				catch: (cause) =>
@@ -54,21 +43,19 @@ export const sessionOps = (
 								message: 'Site manifest is invalid'
 							})
 			});
-			// Declared manifest sizes gate the whole publish before any asset
-			// bytes are accepted; per-asset uploads re-verify actual lengths.
 			const declaredBytes = prepared.assets.reduce(
 				(total, asset) => total + asset.sizeBytes,
 				0
 			);
-			yield* ensureStorageHeadroom(sql, org.id, declaredBytes);
 
 			let fileId: string = crypto.randomUUID();
 			let version = 1;
 			let displayName = prepared.displayName;
+			let previousBytes = 0;
 			if (input.fileId !== undefined) {
 				const rows = yield* all(
 					sql`
-						SELECT id, display_name, current_version
+						SELECT id, display_name, current_version, size_bytes
 						FROM files
 						WHERE id = ${input.fileId} AND org_id = ${org.id}
 							AND is_site = true AND deleted_at IS NULL
@@ -81,7 +68,12 @@ export const sessionOps = (
 				fileId = current.id;
 				version = current.current_version + 1;
 				displayName = current.display_name;
+				previousBytes = current.size_bytes;
 			}
+			// A republish replaces the previous assets, so preflight the same
+			// byte delta the commit will charge. Actual asset lengths and the
+			// authoritative reservation are still checked during publication.
+			yield* ensureStorageHeadroom(sql, org.id, declaredBytes - previousBytes);
 
 			const id = crypto.randomUUID();
 			const createdAt = new Date().toISOString();
@@ -118,6 +110,11 @@ export const sessionOps = (
 							})
 					)
 				);
+			// Abandoned sessions are cleaned when the TTL is up.
+			yield* jobs.trySend(
+				{ kind: 'site-cleanup', orgId: org.id, sessionId: id },
+				{ delaySeconds: delaySecondsUntil(expiresAt) }
+			);
 			yield* drainDeletes(fileId).pipe(
 				Effect.catchCause((cause) =>
 					Effect.sync(() => {
@@ -426,6 +423,12 @@ export const sessionOps = (
 				)
 			);
 
+			yield* jobs.trySend({
+				kind: 'index',
+				orgId: org.id,
+				fileId: session.fileId,
+				version: session.version
+			});
 			const cleanupPending = yield* drainDeletes(session.fileId).pipe(
 				Effect.catchCause((cause) =>
 					Effect.sync(() => {

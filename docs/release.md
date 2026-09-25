@@ -62,11 +62,12 @@ the repository root.
    loudly if the `AI` binding is missing. Embeddings run within the
    Workers Paid plan's included neuron allocation at personal scale.
 
-5. From `apps/web`: create the job queue and its dead-letter queue:
+5. From `apps/web`: create the job, dead-letter, and parked queues:
 
    ```
    wrangler queues create adrive-jobs-production
    wrangler queues create adrive-jobs-production-dlq
+   wrangler queues create adrive-jobs-production-parked --message-retention-period-secs 1209600
    ```
 
 6. In the Cloudflare dashboard, open **Images → Transformations**, select
@@ -162,16 +163,31 @@ the Worker as its consumer; the queue itself is created once:
 ```
 wrangler queues create adrive-jobs-production
 wrangler queues create adrive-jobs-production-dlq
+wrangler queues create adrive-jobs-production-parked --message-retention-period-secs 1209600
 ```
 
 - The consumer retries a failed message up to `max_retries` (5) times,
   then moves it to `adrive-jobs-production-dlq`. Messages whose body does
   not decode as a job are acked and logged, never retried.
-- Inspect the dead-letter queue with
-  `wrangler queues consumer` tooling or the dashboard; nothing drains it
-  automatically. Re-send a message from the DLQ only after fixing the
-  cause, since the same job will otherwise fail again.
-- Local development uses the `adrive-jobs` / `adrive-jobs-dlq` names and
+- The Worker also consumes the dead-letter queue: each message is
+  written to the `failed_jobs` table (org, kind, payload, error,
+  attempts) and acked. Owners see their org's rows at
+  `GET /api/admin/failed-jobs`. Set the optional `ALERT_WEBHOOK_URL`
+  secret to have a JSON summary POSTed whenever a batch dead-letters.
+  Re-send a job only after fixing the cause, since it will otherwise
+  fail again.
+- If Postgres remains unavailable through the DLQ consumer's three retries,
+  Cloudflare moves the message to `adrive-jobs-production-parked`. This queue
+  deliberately has no automatic consumer, so an outage cannot exhaust another
+  retry chain. Its retention is 14 days, not indefinite: alert on nonzero backlog
+  and recover before expiry. Once Postgres is healthy, use the Queues HTTP pull
+  API to pull parked messages and republish their original bodies to
+  `adrive-jobs-production-dlq`; acknowledge parked messages only after successful
+  publication. The DLQ consumer records them in `failed_jobs` for review.
+- Emptying trash records every requested deletion in Postgres but sends at most
+  20 immediate queue messages within a five-second budget. Cron reconciliation
+  continues the rest in bounded batches.
+- Local development uses the `adrive-jobs` / `adrive-jobs-dlq` / `adrive-jobs-parked` names and
   needs no provisioning; `wrangler dev` simulates the queue.
 
 ## Releasing

@@ -3,14 +3,10 @@ import { Effect } from 'effect';
 import { runEdge } from '$lib/server/edge';
 import { InvalidRequest } from '$lib/server/errors';
 import { readSignedBatch } from '$lib/server/jobs/batch-request';
-import { consumeBatch, runJobForOrg } from '$lib/server/jobs/consumer';
+import { consumeDeadLetters } from '$lib/server/jobs/dead-letters';
 
-// The Worker facade (scripts/cloudflare-adapter.mjs) receives queue
-// batches and forwards them here in-process, because the consumer has to
-// run inside the SvelteKit bundle to reach $lib. The response tells the
-// facade which messages to ack and which to retry (and after how long).
-// The request itself carries no tenant; every job builds its own layer
-// for the org named in its body.
+// Dead-letter queue deliveries from the Worker facade: each message is
+// written to failed_jobs and acked.
 export const POST: RequestHandler = ({ request, platform }) =>
 	runEdge(
 		Effect.gen(function* () {
@@ -22,7 +18,7 @@ export const POST: RequestHandler = ({ request, platform }) =>
 				});
 			}
 			const batch = yield* readSignedBatch(request);
-			const decisions = yield* consumeBatch(batch, runJobForOrg(env));
+			const decisions = yield* consumeDeadLetters(env, batch);
 			return Response.json({ decisions });
 		})
 	);

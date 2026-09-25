@@ -17,9 +17,11 @@ import {
 } from '../semantic-policy';
 import { isSearchableText, searchTextLimit } from '../search-text';
 import { createTtlCache } from '../isolate-cache';
+import { stuckBefore } from '../job-policy';
 import { PgSql } from '../pg';
 import { Blobs } from './blobs';
 import { CurrentOrg } from './current-org';
+import { JobQueue } from './jobs';
 import { Embedder, VectorIndex } from './semantic';
 
 const INDEX_LEASE_MS = 5 * 60 * 1_000;
@@ -58,9 +60,24 @@ export interface SemanticStatus {
 	readonly costNotice: string;
 }
 
+// What one indexing attempt did. `retry` is the only outcome that asks
+// the queue to deliver the job again; a permanent failure is already
+// recorded on the row and a skipped job has nothing left to do.
+export type IndexOutcome = 'indexed' | 'skipped' | 'retry' | 'failed';
+
 export interface IndexingShape {
+	// Resets the row and sends an index job for its current version.
 	readonly enqueue: (fileId: string) => Effect.Effect<void, StorageError>;
+	// One attempt for the current version, errors recorded on the row.
 	readonly process: (fileId: string) => Effect.Effect<void, StorageError>;
+	// The queue consumer's entry point: skips when `version` is no longer
+	// current so a stale delivery never overwrites a newer index.
+	readonly runOne: (job: {
+		readonly fileId: string;
+		readonly version: number;
+	}) => Effect.Effect<IndexOutcome, StorageError>;
+	// Reconciliation: re-sends jobs for rows stuck past their lease or
+	// retry time, never indexes inline. Returns how many were re-sent.
 	readonly runDue: (limit: number) => Effect.Effect<number, StorageError>;
 	readonly status: Effect.Effect<SemanticStatus, StorageError>;
 }
@@ -75,6 +92,7 @@ const makeIndexing = Effect.gen(function* () {
 	const blobs = yield* Blobs;
 	const embedder = yield* Embedder;
 	const vectors = yield* VectorIndex;
+	const jobs = yield* JobQueue;
 
 	const storage = (operation: string) => (cause: unknown) =>
 		new StorageError({ operation, cause });
@@ -117,11 +135,32 @@ const makeIndexing = Effect.gen(function* () {
 				error
 			})
 		);
+		if (!stateChanged) return 'skipped' as const;
+		return disposition.state === 'failed'
+			? ('failed' as const)
+			: ('retry' as const);
 	});
 
-	const perform = Effect.fn('Indexing.perform')(function* (fileId: string) {
+	const perform = Effect.fn('Indexing.perform')(function* (
+		fileId: string,
+		expectedVersion: number | null
+	) {
 		const initial = yield* findJob(fileId);
-		if (!initial) return;
+		if (!initial) return 'skipped' as const;
+		if (
+			expectedVersion !== null &&
+			initial.current_version !== expectedVersion
+		) {
+			console.log(
+				JSON.stringify({
+					message: 'stale index job skipped',
+					fileId,
+					version: expectedVersion,
+					currentVersion: initial.current_version
+				})
+			);
+			return 'skipped' as const;
+		}
 		const now = new Date();
 		const leaseUntil = new Date(now.getTime() + INDEX_LEASE_MS).toISOString();
 		const lease = {
@@ -138,7 +177,7 @@ const makeIndexing = Effect.gen(function* () {
 			leaseUntil,
 			MAX_INDEX_ATTEMPTS
 		).pipe(Effect.mapError(storage('claim indexing job')));
-		if (!claimed) return;
+		if (!claimed) return 'skipped' as const;
 
 		const stale = (message: string) =>
 			Effect.sync(() => {
@@ -152,7 +191,7 @@ const makeIndexing = Effect.gen(function* () {
 				);
 			});
 
-		yield* Effect.gen(function* () {
+		return yield* Effect.gen(function* () {
 			const text =
 				initial.index_cursor >= 1 && initial.text_content !== null
 					? initial.text_content
@@ -165,7 +204,8 @@ const makeIndexing = Effect.gen(function* () {
 				Effect.mapError(storage('store extracted search text'))
 			);
 			if (!extracted) {
-				return yield* stale('stale semantic extraction ignored');
+				yield* stale('stale semantic extraction ignored');
+				return 'skipped' as const;
 			}
 
 			if (!embedder.enabled || !vectors.enabled) {
@@ -174,8 +214,9 @@ const makeIndexing = Effect.gen(function* () {
 				);
 				if (!finished) {
 					yield* stale('stale keyword-only indexing completion ignored');
+					return 'skipped' as const;
 				}
-				return;
+				return 'indexed' as const;
 			}
 
 			const chunks = chunkSearchText(initial.display_name, text);
@@ -203,7 +244,9 @@ const makeIndexing = Effect.gen(function* () {
 			).pipe(Effect.mapError(storage('commit semantic index state')));
 			if (!committed) {
 				yield* stale('stale semantic indexing completion rolled back');
+				return 'skipped' as const;
 			}
+			return 'indexed' as const;
 		}).pipe(
 			Effect.catchCause((cause) =>
 				markFailure(lease, Cause.pretty(cause)).pipe(
@@ -218,6 +261,9 @@ const makeIndexing = Effect.gen(function* () {
 									cause: String(recordCause)
 								})
 							);
+							// The lease still holds; the row is picked up again once
+							// it lapses, so the delivery itself is not retried.
+							return 'skipped' as const;
 						})
 					)
 				)
@@ -226,7 +272,7 @@ const makeIndexing = Effect.gen(function* () {
 	});
 
 	const process = Effect.fn('Indexing.process')(function* (fileId: string) {
-		yield* perform(fileId).pipe(
+		yield* perform(fileId, null).pipe(
 			Effect.catchCause((cause) =>
 				Effect.sync(() => {
 					console.error(
@@ -241,39 +287,89 @@ const makeIndexing = Effect.gen(function* () {
 		);
 	});
 
+	const runOne = Effect.fn('Indexing.runOne')(function* (job: {
+		readonly fileId: string;
+		readonly version: number;
+	}) {
+		return yield* perform(job.fileId, job.version);
+	});
+
+	const sendIndexJob = (fileId: string, version: number) =>
+		jobs.trySend({ kind: 'index', orgId: org.id, fileId, version });
+
+	// Rows still pending or leased long after they were due lost their
+	// delivery somewhere (a crashed consumer, a queue outage during the
+	// send); they get a fresh job. Stamping index_next_run_at throttles
+	// the re-send to once per stuck window and keeps a lapsed `running`
+	// lease claimable. Disabled rows are re-sent once semantic search is
+	// switched on so they gain embeddings. Lock candidates before updating
+	// them; a consumer claiming a row concurrently keeps its fresh lease.
 	const runDue = Effect.fn('Indexing.runDue')(function* (limit: number) {
 		const bounded = Math.max(1, Math.min(limit, 10));
-		const now = new Date().toISOString();
+		const now = new Date();
+		const cutoff = stuckBefore(now.getTime());
 		const includeDisabled = embedder.enabled && vectors.enabled;
-		const rows = yield* sql<{ id: string }>`
-			SELECT id
-			FROM files
-			WHERE org_id = ${org.id}
-				AND deleted_at IS NULL
-				AND (expires_at IS NULL OR expires_at > ${now})
-				AND index_attempts < ${MAX_INDEX_ATTEMPTS}
-				AND (
-					(index_state = 'pending'
-						AND (index_next_run_at IS NULL OR index_next_run_at <= ${now}))
-					OR (index_state = 'running' AND index_next_run_at <= ${now})
-					OR (index_state = 'disabled' AND ${includeDisabled}::boolean)
-				)
-			ORDER BY COALESCE(index_next_run_at, updated_at), id
-			LIMIT ${bounded}`.pipe(Effect.mapError(storage('list due indexing jobs')));
-		for (const row of rows) yield* process(row.id);
+		// A worker can disappear during its final attempt, before recording
+		// success or failure. It cannot claim again at the attempt limit, so
+		// close the expired lease instead of leaving it running forever.
+		yield* sql`
+			UPDATE files
+			SET index_state = 'failed',
+				index_error = 'Indexing lease expired after the final attempt',
+				index_next_run_at = NULL, index_lease_token = NULL
+			WHERE id IN (
+				SELECT id FROM files
+				WHERE org_id = ${org.id}
+					AND deleted_at IS NULL
+					AND (expires_at IS NULL OR expires_at > ${now.toISOString()})
+					AND index_state = 'running'
+					AND index_attempts >= ${MAX_INDEX_ATTEMPTS}
+					AND index_next_run_at <= ${cutoff}
+				ORDER BY index_next_run_at, id
+				LIMIT ${bounded}
+				FOR UPDATE SKIP LOCKED
+			) AND org_id = ${org.id}
+		`.pipe(Effect.mapError(storage('close exhausted indexing leases')));
+		const rows = yield* sql<{ id: string; current_version: number }>`
+			UPDATE files
+			SET index_next_run_at = ${now.toISOString()}
+			WHERE id IN (
+				SELECT id
+				FROM files
+				WHERE org_id = ${org.id}
+					AND deleted_at IS NULL
+					AND (expires_at IS NULL OR expires_at > ${now.toISOString()})
+					AND index_attempts < ${MAX_INDEX_ATTEMPTS}
+					AND (
+						(index_state IN ('pending', 'running')
+							AND COALESCE(index_next_run_at, updated_at) <= ${cutoff})
+						OR (index_state = 'disabled' AND ${includeDisabled}::boolean
+							AND COALESCE(index_next_run_at, updated_at) <= ${cutoff})
+					)
+					ORDER BY COALESCE(index_next_run_at, updated_at), id
+					LIMIT ${bounded}
+					FOR UPDATE SKIP LOCKED
+				) AND org_id = ${org.id}
+			RETURNING id, current_version`.pipe(
+			Effect.mapError(storage('list stuck indexing jobs'))
+		);
+		for (const row of rows) yield* sendIndexJob(row.id, row.current_version);
 		return rows.length;
 	});
 
 	const enqueue = Effect.fn('Indexing.enqueue')(function* (fileId: string) {
-		yield* sql`
+		const rows = yield* sql<{ current_version: number }>`
 			UPDATE files
 			SET index_state = 'pending', index_cursor = 0, index_attempts = 0,
 				index_error = NULL, index_next_run_at = NULL,
 				index_lease_token = NULL
 			WHERE id = ${fileId} AND org_id = ${org.id} AND deleted_at IS NULL
-				AND (expires_at IS NULL OR expires_at > ${new Date().toISOString()})`.pipe(
+				AND (expires_at IS NULL OR expires_at > ${new Date().toISOString()})
+			RETURNING current_version`.pipe(
 			Effect.mapError(storage('enqueue semantic indexing'))
 		);
+		const row = rows[0];
+		if (row) yield* sendIndexJob(fileId, row.current_version);
 	});
 
 	const status = Effect.gen(function* () {
@@ -293,7 +389,7 @@ const makeIndexing = Effect.gen(function* () {
 		return result;
 	}).pipe(Effect.withSpan('Indexing.status'));
 
-	return Indexing.of({ enqueue, process, runDue, status });
+	return Indexing.of({ enqueue, process, runOne, runDue, status });
 });
 
 export const IndexingLive = Layer.effect(Indexing, makeIndexing);

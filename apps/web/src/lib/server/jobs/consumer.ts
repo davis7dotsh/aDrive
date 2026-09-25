@@ -1,7 +1,12 @@
 import { JobSchema, type Job } from '@adrive/shared';
 import { Effect, Schema } from 'effect';
-import { runWorkerProgram, type AppServices } from '../edge';
-import type { StorageError } from '../errors';
+import type { AppServices } from '../edge';
+import { StorageError } from '../errors';
+import { retryDelaySeconds } from '../job-policy';
+import { requestLayer } from '../layer';
+import { Files } from '../services/files';
+import { Indexing, type IndexOutcome } from '../services/indexing';
+import { Sites } from '../services/sites';
 
 // The subset of a Cloudflare MessageBatch the consumer needs. A real
 // MessageBatch satisfies it, and so does the JSON the Worker facade posts
@@ -17,11 +22,46 @@ export interface JobBatch {
 	readonly messages: ReadonlyArray<JobMessage>;
 }
 
-export type JobAction = 'ack' | 'retry';
+// What the facade does with one message. `retry` hands it back to the
+// queue after `delaySeconds`; the queue's max_retries then bounds how
+// often a job can come back before it dead-letters.
+export type JobAction =
+	| { readonly ack: true }
+	| { readonly retry: true; readonly delaySeconds: number };
 
-export interface JobDecision {
-	readonly id: string;
-	readonly action: JobAction;
+export type JobDecision = { readonly id: string } & JobAction;
+
+export const ack: JobAction = { ack: true };
+export const retryAfter = (delaySeconds: number): JobAction => ({
+	retry: true,
+	delaySeconds
+});
+
+// What a job handler reports back. Handlers own their persistence: a
+// failure they recorded on the row is `done`; only a failure they could
+// not record (the storage itself was unreachable) asks for a redelivery,
+// and a job that must run again later (a purge whose time is not yet
+// up) re-sends itself and reports `done`.
+export type JobOutcome = 'done' | 'retry';
+
+export type JobOf<K extends Job['kind']> = Extract<Job, { kind: K }>;
+
+// One handler per job kind. To add a kind: extend JobSchema in
+// packages/shared, add its handler here and in liveJobHandlers, and
+// cover the dispatch in consumer.test.ts.
+export interface JobHandlers {
+	readonly index: (
+		job: JobOf<'index'>
+	) => Effect.Effect<JobOutcome, StorageError>;
+	readonly scan: (
+		job: JobOf<'scan'>
+	) => Effect.Effect<JobOutcome, StorageError>;
+	readonly purge: (
+		job: JobOf<'purge'>
+	) => Effect.Effect<JobOutcome, StorageError>;
+	readonly siteCleanup: (
+		job: JobOf<'site-cleanup'>
+	) => Effect.Effect<JobOutcome, StorageError>;
 }
 
 const log = (entry: Record<string, unknown>) =>
@@ -29,53 +69,60 @@ const log = (entry: Record<string, unknown>) =>
 		console.log(JSON.stringify(entry));
 	});
 
-// Dispatch by job kind. Every branch only logs for now; the queue is wired
-// end to end before any behaviour moves onto it.
-export const runJob = (
-	job: Job
-): Effect.Effect<void, StorageError, AppServices> => {
+export const dispatchJob = (handlers: JobHandlers) => (job: Job) => {
 	switch (job.kind) {
 		case 'index':
-			// TODO(D2): indexing.runOne(job); ack when the version is stale.
-			return log({
-				message: 'job received',
-				kind: job.kind,
-				fileId: job.fileId,
-				version: job.version
-			});
+			return handlers.index(job);
 		case 'scan':
-			// TODO(D2): content scanning runs beside indexing.
-			return log({
-				message: 'job received',
-				kind: job.kind,
-				fileId: job.fileId,
-				version: job.version
-			});
+			return handlers.scan(job);
 		case 'purge':
-			// TODO(D3): files.purgeOne(job.fileId) after the retention delay.
-			return log({
-				message: 'job received',
-				kind: job.kind,
-				fileId: job.fileId
-			});
+			return handlers.purge(job);
 		case 'site-cleanup':
-			// TODO(D3): sites.cleanupSession(job.sessionId).
-			return log({
-				message: 'job received',
-				kind: job.kind,
-				sessionId: job.sessionId
-			});
+			return handlers.siteCleanup(job);
 	}
 };
 
+// Only an attempt that could not run asks for a redelivery; a permanent
+// failure is already on the row and a stale version has nothing to do.
+export const indexOutcome = (outcome: IndexOutcome): JobOutcome =>
+	outcome === 'retry' ? 'retry' : 'done';
+
+const received = (job: Job) =>
+	log({ message: 'job received', ...job }).pipe(Effect.as('done' as const));
+
+export const liveJobHandlers = Effect.gen(function* () {
+	const indexing = yield* Indexing;
+	const files = yield* Files;
+	const sites = yield* Sites;
+	return {
+		index: (job) => indexing.runOne(job).pipe(Effect.map(indexOutcome)),
+		// Content scanning arrives with the abuse stack; until then the job
+		// is acknowledged so a stray send never dead-letters.
+		scan: received,
+		purge: (job) => files.purgeOne(job.fileId).pipe(Effect.as('done')),
+		siteCleanup: (job) =>
+			sites.cleanupSession(job.sessionId).pipe(Effect.as('done'))
+	} satisfies JobHandlers;
+});
+
+export const runJob = (
+	job: Job
+): Effect.Effect<JobOutcome, StorageError, AppServices> =>
+	Effect.flatMap(liveJobHandlers, (handlers) => dispatchJob(handlers)(job));
+
 const decodeJob = Schema.decodeUnknownEffect(JobSchema);
 
-// Invalid bodies are acked: retrying can never make them decode. Failed
-// jobs are retried; the queue's max_retries and dead-letter queue bound it.
+// Invalid bodies are acked: retrying can never make them decode. A
+// StorageError (Postgres, R2, or Workers AI unreachable) is transient and
+// retried with backoff; the queue's max_retries and dead-letter queue
+// bound it.
 const consumeMessage = <R>(
 	queue: string,
 	message: JobMessage,
-	run: (job: Job) => Effect.Effect<void, StorageError, R>
+	run: (
+		job: Job,
+		attempts: number
+	) => Effect.Effect<JobOutcome, StorageError, R>
 ) =>
 	Effect.gen(function* () {
 		const decoded = yield* Effect.result(decodeJob(message.body));
@@ -86,32 +133,75 @@ const consumeMessage = <R>(
 				id: message.id,
 				cause: String(decoded.failure)
 			});
-			return 'ack' as const;
+			return ack;
 		}
-		const outcome = yield* Effect.result(run(decoded.success));
+		const job = decoded.success;
+		const outcome = yield* Effect.result(run(job, message.attempts));
 		if (outcome._tag === 'Failure') {
 			yield* log({
 				message: 'job failed',
 				queue,
 				id: message.id,
-				kind: decoded.success.kind,
+				kind: job.kind,
+				orgId: job.orgId,
 				attempts: message.attempts,
 				cause: String(outcome.failure.cause)
 			});
-			return 'retry' as const;
+			return retryAfter(retryDelaySeconds(message.attempts));
 		}
-		return 'ack' as const;
+		if (outcome.success === 'retry') {
+			yield* log({
+				message: 'job asked to run again',
+				queue,
+				id: message.id,
+				kind: job.kind,
+				orgId: job.orgId,
+				attempts: message.attempts
+			});
+			return retryAfter(retryDelaySeconds(message.attempts));
+		}
+		return ack;
 	});
 
 export const consumeBatch = <R>(
 	batch: JobBatch,
-	run: (job: Job) => Effect.Effect<void, StorageError, R>
+	run: (
+		job: Job,
+		attempts: number
+	) => Effect.Effect<JobOutcome, StorageError, R>
 ) =>
 	Effect.forEach(batch.messages, (message) =>
 		consumeMessage(batch.queue, message, run).pipe(
-			Effect.map((action): JobDecision => ({ id: message.id, action }))
+			Effect.map((action): JobDecision => ({ id: message.id, ...action }))
+		)
+	);
+
+// Each job runs in its own layer bound to the job's org (the same layer
+// runWorkerProgram builds), so the services only ever see that tenant's
+// rows. `local` matters: the jobs route already runs under a tenant-less
+// layer, and nested provides otherwise share memoized services, which
+// would hand the job the anonymous org. A defect (a bug, not a
+// StorageError) escapes the batch as a rejection; the facade then
+// retries every message, which is the safe default for an unknown
+// failure.
+export const runJobForOrg = (env: Env) => (job: Job) =>
+	runJob(job).pipe(
+		Effect.provide(requestLayer(env, { orgId: job.orgId, userId: 'system' }), {
+			local: true
+		}),
+		Effect.catchTag('SqlError', (cause) =>
+			Effect.fail(new StorageError({ operation: 'connect for job', cause }))
+		),
+		// The org was deleted after the job was sent. Nothing to do, and
+		// retrying would only dead-letter it.
+		Effect.catchTag('OrgMissing', (missing) =>
+			log({
+				message: 'job skipped for a missing org',
+				kind: job.kind,
+				orgId: missing.orgId
+			}).pipe(Effect.as('done' as const))
 		)
 	);
 
 export const handleJobBatch = (env: Env, batch: JobBatch) =>
-	runWorkerProgram(env, consumeBatch(batch, runJob));
+	Effect.runPromise(consumeBatch(batch, runJobForOrg(env)));
