@@ -2,7 +2,7 @@ import { normalizeSitePath } from '@adrive/shared';
 import { Effect } from 'effect';
 import { InvalidRequest, NotFound, StorageError } from '../../errors';
 import { refreshSearchDocument } from '../../search-index';
-import { ensureStoredBytesWithin } from '../../storage-quota';
+import { ensureStorageHeadroom, reserveWithinPlan } from '../../storage-quota';
 import {
 	assertOpenSiteSession,
 	prepareSiteManifest,
@@ -26,7 +26,8 @@ export const sessionOps = (
 		sweepExpiredSessions,
 		sql,
 		blobs,
-		config
+		config,
+		org
 	} = internals;
 
 	return {
@@ -59,7 +60,7 @@ export const sessionOps = (
 				(total, asset) => total + asset.sizeBytes,
 				0
 			);
-			yield* ensureStoredBytesWithin(sql, config.maxTotalBytes, declaredBytes);
+			yield* ensureStorageHeadroom(sql, org.id, declaredBytes);
 
 			let fileId: string = crypto.randomUUID();
 			let version = 1;
@@ -69,7 +70,8 @@ export const sessionOps = (
 					sql`
 						SELECT id, display_name, current_version
 						FROM files
-						WHERE id = ${input.fileId} AND is_site = true AND deleted_at IS NULL
+						WHERE id = ${input.fileId} AND org_id = ${org.id}
+							AND is_site = true AND deleted_at IS NULL
 						LIMIT 1`,
 					ExistingSiteRow,
 					'find site to republish'
@@ -90,12 +92,13 @@ export const sessionOps = (
 				.withTransaction(
 					Effect.gen(function* () {
 						yield* sql`
-							INSERT INTO site_upload_sessions (
-								id, file_id, display_name, version, status, created_at, expires_at
-							) VALUES (
-								${id}, ${fileId}, ${displayName}, ${version}, 'open',
-								${createdAt}, ${expiresAt}
-							)`;
+								INSERT INTO site_upload_sessions (
+									id, org_id, file_id, display_name, version, status, created_at,
+									expires_at
+								) VALUES (
+									${id}, ${org.id}, ${fileId}, ${displayName}, ${version}, 'open',
+									${createdAt}, ${expiresAt}
+								)`;
 						for (const asset of prepared.assets) {
 							yield* sql`
 								INSERT INTO staged_site_assets (
@@ -193,7 +196,7 @@ export const sessionOps = (
 						// record behind an abort or an expiry sweep.
 						const open = yield* sql`
 						SELECT id FROM site_upload_sessions
-						WHERE id = ${session.id} AND status = 'open'
+						WHERE id = ${session.id} AND org_id = ${org.id} AND status = 'open'
 							AND expires_at > ${uploadedAt}
 						FOR UPDATE`;
 						if (open.length === 0) return [];
@@ -255,18 +258,19 @@ export const sessionOps = (
 					? sql<{ id: string }>`
 							UPDATE site_upload_sessions
 							SET status = 'committing'
-							WHERE id = ${session.id} AND status = 'open'
+							WHERE id = ${session.id} AND org_id = ${org.id} AND status = 'open'
 								AND expires_at > ${publishedAt}
 								AND NOT EXISTS (SELECT 1 FROM files WHERE id = ${session.fileId})
 							RETURNING id`
 					: sql<{ id: string }>`
 							UPDATE site_upload_sessions
 							SET status = 'committing'
-							WHERE id = ${session.id} AND status = 'open'
+							WHERE id = ${session.id} AND org_id = ${org.id} AND status = 'open'
 								AND expires_at > ${publishedAt}
 								AND EXISTS (
 									SELECT 1 FROM files
-									WHERE id = ${session.fileId} AND is_site = true
+									WHERE id = ${session.fileId} AND org_id = ${org.id}
+										AND is_site = true
 										AND deleted_at IS NULL
 										AND current_version = ${session.version - 1}
 								)
@@ -300,16 +304,25 @@ export const sessionOps = (
 								cause: 'The site changed while it was publishing'
 							});
 						}
+						// The previous version's assets leave R2 after commit, so
+						// the org is charged only the difference.
+						const previous =
+							session.version === 1
+								? []
+								: yield* sql<{ size_bytes: number }>`
+										SELECT size_bytes FROM files
+										WHERE id = ${session.fileId} AND org_id = ${org.id}`;
+						const previousBytes = previous[0]?.size_bytes ?? 0;
 						yield* sql`
-							INSERT INTO files (
-								id, display_name, content_type, kind, current_version, size_bytes,
-								public, is_site, created_at, updated_at, index_state
-							)
-							SELECT file_id, display_name, 'text/html', 'site', 1, ${totalSize},
-								true, true, ${publishedAt}, ${publishedAt}, 'pending'
-							FROM site_upload_sessions
-							WHERE id = ${session.id} AND status = 'committing' AND version = 1
-							ON CONFLICT (id) DO NOTHING`;
+								INSERT INTO files (
+									id, org_id, display_name, content_type, kind, current_version,
+									size_bytes, public, is_site, created_at, updated_at, index_state
+								)
+								SELECT file_id, org_id, display_name, 'text/html', 'site', 1,
+									${totalSize}, true, true, ${publishedAt}, ${publishedAt}, 'pending'
+								FROM site_upload_sessions
+								WHERE id = ${session.id} AND status = 'committing' AND version = 1
+								ON CONFLICT (id) DO NOTHING`;
 						yield* sql`
 							UPDATE files
 							SET current_version = ${session.version}, size_bytes = ${totalSize},
@@ -317,7 +330,7 @@ export const sessionOps = (
 								updated_at = ${publishedAt}, index_state = 'pending',
 								index_cursor = 0, index_attempts = 0, index_error = NULL,
 								index_next_run_at = NULL, index_lease_token = NULL
-							WHERE id = ${session.fileId}
+							WHERE id = ${session.fileId} AND org_id = ${org.id}
 								AND current_version = ${session.version - 1}
 								AND is_site = true
 								AND EXISTS (
@@ -326,13 +339,13 @@ export const sessionOps = (
 										AND version > 1
 								)`;
 						yield* sql`
-							INSERT INTO file_versions (
-								file_id, version, r2_key, size_bytes, sha256, content_type,
-								created_at, text_content
-							)
-							SELECT s.file_id, s.version, ${versionKey}, ${totalSize}, NULL,
-								'text/html', ${publishedAt}, NULL
-							FROM site_upload_sessions s
+								INSERT INTO file_versions (
+									file_id, org_id, version, r2_key, size_bytes, sha256,
+									content_type, created_at, text_content
+								)
+								SELECT s.file_id, s.org_id, s.version, ${versionKey}, ${totalSize},
+									NULL, 'text/html', ${publishedAt}, NULL
+								FROM site_upload_sessions s
 							JOIN files f ON f.id = s.file_id
 							WHERE s.id = ${session.id} AND s.status = 'committing'
 								AND f.current_version = s.version`;
@@ -366,7 +379,7 @@ export const sessionOps = (
 							JOIN staged_site_assets a ON a.session_id = s.id
 							WHERE s.id = ${session.id} AND s.status = 'committing'
 								AND a.r2_key IS NOT NULL AND a.stored_size_bytes IS NOT NULL`;
-						yield* refreshSearchDocument(sql, session.fileId);
+						yield* refreshSearchDocument(sql, session.fileId, org.id);
 						yield* sql`
 							UPDATE site_upload_sessions SET status = 'complete'
 							WHERE id = ${session.id} AND status = 'committing'
@@ -384,6 +397,7 @@ export const sessionOps = (
 								SELECT 1 FROM site_upload_sessions
 								WHERE id = ${session.id} AND status = 'complete'
 							)`;
+						yield* reserveWithinPlan(sql, org.id, totalSize - previousBytes);
 					})
 				)
 				.pipe(
@@ -431,7 +445,7 @@ export const sessionOps = (
 					SELECT id, display_name, current_version, size_bytes, created_at,
 						expires_at, download_count, last_download_at
 					FROM files
-					WHERE id = ${session.fileId} AND is_site = true
+					WHERE id = ${session.fileId} AND org_id = ${org.id} AND is_site = true
 						AND current_version = ${session.version}
 					LIMIT 1`,
 				SiteFileRow,

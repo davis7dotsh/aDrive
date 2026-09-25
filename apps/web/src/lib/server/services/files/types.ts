@@ -6,6 +6,7 @@ import { InvalidRequest, NotFound, StorageError } from '../../errors';
 
 const FileContentRow = Schema.Struct({
 	id: Schema.String,
+	org_id: Schema.String,
 	display_name: Schema.String,
 	content_type: Schema.String,
 	version: Schema.Int,
@@ -48,6 +49,9 @@ export interface VersionUploadInput {
 
 export interface FileContent {
 	readonly file: FileSummary;
+	// The owning org, resolved from the row so content routes (which run
+	// without a tenant) can bind grants to it.
+	readonly orgId: string;
 	readonly r2Key: string;
 	readonly thumbnailR2Key: string | null;
 }
@@ -118,6 +122,7 @@ export interface FilesShape {
 	readonly scheduleAllPurgesNow: Effect.Effect<number, StorageError>;
 	readonly recordDownload: (id: string) => Effect.Effect<void, StorageError>;
 	readonly storeDashboardThumbnail: (
+		orgId: string,
 		id: string,
 		version: number,
 		body: ReadableStream<Uint8Array> | null,

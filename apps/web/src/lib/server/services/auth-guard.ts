@@ -7,18 +7,7 @@ const CounterState = Schema.Struct({
 	resetAtMs: Schema.Int
 });
 
-const FailureState = Schema.Struct({
-	failures: Schema.Int,
-	windowStartedAtMs: Schema.Int,
-	lockedUntilMs: Schema.NullOr(Schema.Int)
-});
-
 const ratePolicies = {
-	passcodeLogin: {
-		key: 'passcode-login',
-		limit: 10,
-		windowSeconds: 5 * 60
-	},
 	deviceCreate: {
 		key: 'device-create',
 		limit: 5,
@@ -53,7 +42,7 @@ export interface AllowedAuthAttempt {
 
 export interface BlockedAuthAttempt {
 	readonly allowed: false;
-	readonly reason: 'lockout' | 'rate-limit';
+	readonly reason: 'rate-limit';
 	readonly retryAfterSeconds: number;
 	readonly resetAtMs: number;
 }
@@ -65,24 +54,12 @@ export interface AuthGuardShape {
 		policy: AuthRatePolicy,
 		clientId: string
 	) => Effect.Effect<AuthAttemptDecision, StorageError>;
-	readonly checkPasscodeLock: (
-		clientId: string
-	) => Effect.Effect<AuthAttemptDecision, StorageError>;
-	readonly recordPasscodeFailure: (
-		clientId: string
-	) => Effect.Effect<AuthAttemptDecision, StorageError>;
-	readonly clearPasscodeFailures: (
-		clientId: string
-	) => Effect.Effect<void, StorageError>;
 }
 
 export class AuthGuard extends Context.Service<AuthGuard, AuthGuardShape>()(
 	'app/AuthGuard'
 ) {}
 
-const PASSCODE_FAILURE_LIMIT = 5;
-const PASSCODE_FAILURE_WINDOW_SECONDS = 15 * 60;
-const PASSCODE_LOCKOUT_SECONDS = 30 * 60;
 const MINIMUM_KV_TTL_SECONDS = 60;
 
 const retryAfter = (resetAtMs: number, nowMs: number) =>
@@ -95,14 +72,10 @@ const allowed = (remaining: number, resetAtMs: number) =>
 		resetAtMs
 	}) satisfies AllowedAuthAttempt;
 
-const blocked = (
-	reason: BlockedAuthAttempt['reason'],
-	resetAtMs: number,
-	nowMs: number
-) =>
+const blocked = (resetAtMs: number, nowMs: number) =>
 	({
 		allowed: false,
-		reason,
+		reason: 'rate-limit',
 		retryAfterSeconds: retryAfter(resetAtMs, nowMs),
 		resetAtMs
 	}) satisfies BlockedAuthAttempt;
@@ -166,31 +139,6 @@ const makeAuthGuard = (now: () => Date) =>
 				catch: (cause) => new StorageError({ operation, cause })
 			});
 
-		const writeOrBlock = (
-			key: string,
-			value: unknown,
-			expirationTtl: number,
-			operation: string,
-			currentTime: number
-		) =>
-			write(key, value, expirationTtl, operation).pipe(
-				Effect.match({
-					onFailure: () =>
-						blocked(
-							'rate-limit',
-							currentTime + MINIMUM_KV_TTL_SECONDS * 1_000,
-							currentTime
-						),
-					onSuccess: () => null
-				})
-			);
-
-		const remove = (key: string, operation: string) =>
-			Effect.tryPromise({
-				try: () => store.delete(key),
-				catch: (cause) => new StorageError({ operation, cause })
-			});
-
 		const clientKey = Effect.fn('AuthGuard.clientKey')(function* (
 			prefix: string,
 			clientId: string
@@ -219,94 +167,37 @@ const makeAuthGuard = (now: () => Date) =>
 						: current.count;
 
 				if (count >= policy.limit) {
-					return blocked('rate-limit', resetAtMs, currentTime);
+					return blocked(resetAtMs, currentTime);
 				}
 
 				const nextCount = count + 1;
-				// High-frequency policies (uploads) hit KV's ~1 write/sec/key
-				// ceiling under normal concurrent use; failing the counter
-				// write must not fail the legitimate request there. Abuse
-				// bootstrap policies (login, device) stay fail-closed.
-				if ('tolerateWriteFailure' in policy && policy.tolerateWriteFailure) {
-					yield* write(
-						key,
-						{ count: nextCount, resetAtMs },
-						retryAfter(resetAtMs, currentTime) + MINIMUM_KV_TTL_SECONDS,
-						`update ${policy.key} rate limit`
-					).pipe(Effect.ignore);
-					return allowed(policy.limit - nextCount, resetAtMs);
-				}
-				const writeFailure = yield* writeOrBlock(
+				const persist = write(
 					key,
 					{ count: nextCount, resetAtMs },
 					retryAfter(resetAtMs, currentTime) + MINIMUM_KV_TTL_SECONDS,
-					`update ${policy.key} rate limit`,
-					currentTime
+					`update ${policy.key} rate limit`
 				);
-				if (writeFailure) return writeFailure;
-				return allowed(policy.limit - nextCount, resetAtMs);
-			}),
-			checkPasscodeLock: Effect.fn('AuthGuard.checkPasscodeLock')(
-				function* (clientId) {
-					const key = yield* clientKey('passcode-failures', clientId);
-					const currentTime = now().getTime();
-					const state = yield* read(key, FailureState, 'read passcode lockout');
-					if (state?.lockedUntilMs && state.lockedUntilMs > currentTime) {
-						return blocked('lockout', state.lockedUntilMs, currentTime);
-					}
-					return allowed(PASSCODE_FAILURE_LIMIT, currentTime);
+				// High-frequency policies (uploads) hit KV's ~1 write/sec/key
+				// ceiling under normal concurrent use; failing the counter
+				// write must not fail the legitimate request there. Abuse
+				// bootstrap policies (device flow) stay fail-closed: a
+				// contended write turns into a short rate limit.
+				if ('tolerateWriteFailure' in policy && policy.tolerateWriteFailure) {
+					yield* persist.pipe(Effect.ignore);
+					return allowed(policy.limit - nextCount, resetAtMs);
 				}
-			),
-			recordPasscodeFailure: Effect.fn('AuthGuard.recordPasscodeFailure')(
-				function* (clientId) {
-					const key = yield* clientKey('passcode-failures', clientId);
-					const currentTime = now().getTime();
-					const current = yield* read(
-						key,
-						FailureState,
-						'read passcode failures'
-					);
-					if (current?.lockedUntilMs && current.lockedUntilMs > currentTime) {
-						return blocked('lockout', current.lockedUntilMs, currentTime);
-					}
-
-					const inWindow =
-						current !== null &&
-						currentTime - current.windowStartedAtMs <
-							PASSCODE_FAILURE_WINDOW_SECONDS * 1_000;
-					const failures = inWindow ? current.failures + 1 : 1;
-					const windowStartedAtMs = inWindow
-						? current.windowStartedAtMs
-						: currentTime;
-					const lockedUntilMs =
-						failures >= PASSCODE_FAILURE_LIMIT
-							? currentTime + PASSCODE_LOCKOUT_SECONDS * 1_000
-							: null;
-					const state = { failures, windowStartedAtMs, lockedUntilMs };
-					const expiresAtMs =
-						lockedUntilMs ??
-						windowStartedAtMs + PASSCODE_FAILURE_WINDOW_SECONDS * 1_000;
-
-					const writeFailure = yield* writeOrBlock(
-						key,
-						state,
-						retryAfter(expiresAtMs, currentTime) + MINIMUM_KV_TTL_SECONDS,
-						'update passcode failures',
-						currentTime
-					);
-					if (writeFailure) return writeFailure;
-
-					return lockedUntilMs === null
-						? allowed(PASSCODE_FAILURE_LIMIT - failures, expiresAtMs)
-						: blocked('lockout', lockedUntilMs, currentTime);
-				}
-			),
-			clearPasscodeFailures: Effect.fn('AuthGuard.clearPasscodeFailures')(
-				function* (clientId) {
-					const key = yield* clientKey('passcode-failures', clientId);
-					yield* remove(key, 'clear passcode failures');
-				}
-			)
+				const outcome = yield* persist.pipe(
+					Effect.match({
+						onFailure: () =>
+							blocked(
+								currentTime + MINIMUM_KV_TTL_SECONDS * 1_000,
+								currentTime
+							),
+						onSuccess: () => allowed(policy.limit - nextCount, resetAtMs)
+					})
+				);
+				return outcome;
+			})
 		});
 	});
 

@@ -1,6 +1,7 @@
 import { Cause, Effect, Exit } from 'effect';
 import { isAppError, runWorkerProgram, type AppServices } from '../edge';
 import type { AppError } from '../errors';
+import type { ProgramIdentity } from '../identity';
 import { requestLayer } from '../layer';
 import { Indexing } from '../services/indexing';
 
@@ -52,10 +53,11 @@ export const failureFromCause = (
 
 export const runMcp = async <A, E>(
 	env: Env,
+	identity: ProgramIdentity,
 	program: Effect.Effect<A, E, AppServices>
 ): Promise<McpRunResult<A>> => {
 	const exit = await Effect.runPromiseExit(
-		program.pipe(Effect.provide(requestLayer(env)))
+		program.pipe(Effect.provide(requestLayer(env, identity)))
 	);
 	if (Exit.isSuccess(exit)) return { ok: true, value: exit.value };
 	return failureFromCause(exit.cause);
@@ -64,6 +66,7 @@ export const runMcp = async <A, E>(
 export const scheduleIndex = (
 	env: Env,
 	ctx: ExecutionContext,
+	identity: ProgramIdentity,
 	fileId: string
 ) => {
 	ctx.waitUntil(
@@ -72,7 +75,8 @@ export const scheduleIndex = (
 			Effect.gen(function* () {
 				const indexing = yield* Indexing;
 				yield* indexing.process(fileId);
-			})
+			}),
+			identity
 		)
 	);
 };

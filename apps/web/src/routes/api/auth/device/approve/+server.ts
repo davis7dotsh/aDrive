@@ -2,14 +2,16 @@ import { DeviceApprovalSchema } from '@adrive/shared';
 import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
 import { runEdge } from '$lib/server/edge';
+import { requireWrite } from '$lib/server/request-auth';
 import { decodeJson } from '$lib/server/request-json';
-import { Auth, authorizeWriteRequest } from '$lib/server/services/auth';
+import { Auth } from '$lib/server/services/auth';
 
-export const POST: RequestHandler = ({ cookies, request, url }) =>
-	runEdge(
+export const POST: RequestHandler = (event) => {
+	const { request } = event;
+	return runEdge(
 		Effect.gen(function* () {
 			const auth = yield* Auth;
-			yield* authorizeWriteRequest(auth, request, url, cookies);
+			yield* requireWrite(event);
 			const input = yield* decodeJson(
 				request,
 				DeviceApprovalSchema,
@@ -19,12 +21,14 @@ export const POST: RequestHandler = ({ cookies, request, url }) =>
 			return Response.json({ ok: true as const });
 		})
 	);
+};
 
-export const DELETE: RequestHandler = ({ cookies, request, url }) =>
-	runEdge(
+export const DELETE: RequestHandler = (event) => {
+	const { request } = event;
+	return runEdge(
 		Effect.gen(function* () {
 			const auth = yield* Auth;
-			yield* authorizeWriteRequest(auth, request, url, cookies);
+			yield* requireWrite(event);
 			const input = yield* decodeJson(
 				request,
 				DeviceApprovalSchema,
@@ -34,3 +38,4 @@ export const DELETE: RequestHandler = ({ cookies, request, url }) =>
 			return Response.json({ ok: true as const });
 		})
 	);
+};

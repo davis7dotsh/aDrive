@@ -39,7 +39,7 @@ export const POST: RequestHandler = ({ request }) =>
 			const authorized = yield* Effect.tryPromise({
 				try: () =>
 					verifyJobsRequest(
-						config.passcode,
+						config.maintenanceSecret,
 						request.headers.get('x-adrive-jobs-time'),
 						text,
 						request.headers.get('x-adrive-jobs-signature')

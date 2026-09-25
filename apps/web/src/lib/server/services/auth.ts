@@ -1,27 +1,24 @@
 import { API_KEY_PATTERN, type ApiKey, type ApiKeyScope } from '@adrive/shared';
-import type { Cookies } from '@sveltejs/kit';
 import { Context, Effect, Layer, Schema } from 'effect';
 import {
 	DEVICE_CODE_TTL_SECONDS,
 	DEVICE_POLL_INTERVAL_SECONDS,
-	allowsCredentialOrigin,
-	bearerToken,
 	normalizeApiKeyName,
 	normalizeUserCode,
-	SESSION_COOKIE,
-	SESSION_MAX_AGE_SECONDS,
 	shouldTouchLastUsed,
 	validateExpiration
 } from '../auth-policy';
-import { AppConfig } from '../config';
 import {
 	InvalidRequest,
-	MisdirectedRequest,
 	StorageError,
 	Unauthorized,
 	validate
 } from '../errors';
+import type { AuthContext, ResolvedCredential } from '../identity';
 import { PgSql } from '../pg';
+import { ensureTenant, personalOrgFor } from '../tenants';
+import { CurrentOrg, CurrentUser } from './current-org';
+import { WorkOSClient } from './workos';
 
 const ApiKeyRow = Schema.Struct({
 	id: Schema.String,
@@ -35,10 +32,27 @@ const ApiKeyRow = Schema.Struct({
 	revoked_at: Schema.NullOr(Schema.String)
 });
 
-const SessionRow = Schema.Struct({
-	token_hash: Schema.String,
-	expires_at: Schema.String,
-	last_used_at: Schema.String
+const MembershipRow = Schema.Struct({
+	org_id: Schema.String,
+	user_id: Schema.String,
+	role: Schema.String,
+	email: Schema.String,
+	org_name: Schema.String,
+	org_slug: Schema.String
+});
+
+const ApiKeyCredentialRow = Schema.Struct({
+	id: Schema.String,
+	scope: Schema.Literals(['read-only', 'read-write']),
+	secret_hash: Schema.String,
+	expires_at: Schema.NullOr(Schema.String),
+	last_used_at: Schema.NullOr(Schema.String),
+	org_id: Schema.String,
+	user_id: Schema.String,
+	role: Schema.NullOr(Schema.String),
+	email: Schema.NullOr(Schema.String),
+	org_name: Schema.NullOr(Schema.String),
+	org_slug: Schema.NullOr(Schema.String)
 });
 
 const DeviceCodeRow = Schema.Struct({
@@ -51,14 +65,6 @@ const DeviceCodeRow = Schema.Struct({
 	name: Schema.String
 });
 
-export interface AuthorizeInput {
-	readonly authorization: string | null;
-	readonly sessionToken: string | undefined;
-	readonly requestOrigin: string;
-	readonly origin: string | null;
-	readonly method: string;
-}
-
 export interface DeviceAuthorization {
 	readonly deviceCode: string;
 	readonly userCode: string;
@@ -70,24 +76,34 @@ export type DevicePollResult =
 	| { readonly status: 'authorization_pending' | 'slow_down' }
 	| { readonly status: 'complete'; readonly apiKey: string };
 
-export interface AuthorizedCredential {
-	readonly credentialId: string;
-	readonly kind: 'api-key' | 'session';
-	readonly scope: ApiKeyScope;
-}
-
 export interface AuthShape {
-	readonly authorize: (
-		input: AuthorizeInput
+	// Turns a presented credential into the identity the request acts as,
+	// or Unauthorized when it is unknown, expired, or revoked. The handle
+	// hook calls one of these once per request.
+	readonly resolveApiKey: (
+		bearer: string
+	) => Effect.Effect<AuthContext, Unauthorized | StorageError>;
+	readonly resolveSession: (
+		sessionCookie: string
+	) => Effect.Effect<ResolvedCredential, Unauthorized | StorageError>;
+	// Exchanges the AuthKit callback code for a sealed session, bootstraps
+	// a personal org on first sign-in, and mirrors the user, org, and
+	// membership into Postgres. Returns the cookie value to set.
+	readonly completeSignIn: (
+		code: string
 	) => Effect.Effect<
-		AuthorizedCredential,
-		MisdirectedRequest | Unauthorized | StorageError
+		{ readonly sealedSession: string },
+		Unauthorized | StorageError
 	>;
-	readonly createSession: (
-		passcode: string
-	) => Effect.Effect<string, Unauthorized | StorageError>;
-	readonly revokeSession: (
-		sessionToken: string | undefined
+	readonly logoutUrl: (
+		sessionCookie: string | undefined,
+		returnTo: string
+	) => Effect.Effect<string, StorageError>;
+	// Webhook mirrors: WorkOS is the source of truth for accounts.
+	readonly removeUser: (userId: string) => Effect.Effect<void, StorageError>;
+	readonly removeMembership: (
+		orgId: string,
+		userId: string
 	) => Effect.Effect<void, StorageError>;
 	readonly listApiKeys: Effect.Effect<ReadonlyArray<ApiKey>, StorageError>;
 	readonly createApiKey: (
@@ -119,15 +135,6 @@ export interface AuthShape {
 		InvalidRequest | Unauthorized | StorageError
 	>;
 	readonly sweepExpired: (limit: number) => Effect.Effect<number, StorageError>;
-	// Revokes every browser session and outstanding device code. API keys
-	// survive; revoke those individually from the dashboard.
-	readonly revokeAllSessions: Effect.Effect<number, StorageError>;
-	// Compares the deployed PASSCODE with the recorded hash; on change,
-	// revokes all sessions and device codes and records the rotation time.
-	readonly enforcePasscodeRotation: Effect.Effect<
-		{ readonly rotated: boolean; readonly revoked: number },
-		StorageError
-	>;
 }
 
 export class Auth extends Context.Service<Auth, AuthShape>()('app/Auth') {}
@@ -143,41 +150,6 @@ const parseUserCode = (value: string) =>
 						message: 'Device approval code is invalid'
 					})
 	});
-
-export const authorizeRequest = (
-	auth: AuthShape,
-	request: Request,
-	url: URL,
-	cookies: Cookies
-) =>
-	auth.authorize({
-		authorization: request.headers.get('authorization'),
-		sessionToken: cookies.get(SESSION_COOKIE),
-		requestOrigin: url.origin,
-		origin: request.headers.get('origin'),
-		method: request.method
-	});
-
-// For routes that create, change, or delete data. Read-only API keys are
-// authenticated but rejected here with a 403 rather than a 401.
-export const authorizeWriteRequest = (
-	auth: AuthShape,
-	request: Request,
-	url: URL,
-	cookies: Cookies
-) =>
-	authorizeRequest(auth, request, url, cookies).pipe(
-		Effect.flatMap((credential) =>
-			credential.scope === 'read-write'
-				? Effect.succeed(credential)
-				: Effect.fail(
-						new InvalidRequest({
-							status: 403,
-							message: 'This API key is read-only'
-						})
-					)
-		)
-	);
 
 const randomToken = (bytes = 32) => {
 	const value = new Uint8Array(bytes);
@@ -248,12 +220,58 @@ const toApiKey = (row: typeof ApiKeyRow.Type): ApiKey => ({
 	revokedAt: row.revoked_at
 });
 
+const invalidCredential = () =>
+	new Unauthorized({ message: 'A valid credential is required' });
+
 const makeAuth = Effect.gen(function* () {
 	const sql = yield* PgSql;
-	const config = yield* AppConfig;
+	const workos = yield* WorkOSClient;
+	const org = yield* CurrentOrg;
+	const user = yield* CurrentUser;
 
 	const storageError = (operation: string) =>
 		Effect.mapError((cause: unknown) => new StorageError({ operation, cause }));
+
+	const membershipSelect = sql.literal(`
+		SELECT m.org_id, m.user_id, m.role, u.email,
+			o.name AS org_name, o.slug AS org_slug
+		FROM memberships m
+		JOIN users u ON u.id = m.user_id
+		JOIN orgs o ON o.id = m.org_id
+	`);
+
+	// The org a user acts in: the one on the session when WorkOS names it,
+	// otherwise their first membership (a session created before the org
+	// bootstrap, or a user WorkOS knows in one org without pinning it).
+	const findMembership = Effect.fn('Auth.findMembership')(function* (
+		userId: string,
+		orgId: string | null
+	) {
+		const rows = yield* sql`
+			${membershipSelect}
+			WHERE ${sql.and([
+				sql`m.user_id = ${userId}`,
+				...(orgId === null ? [] : [sql`m.org_id = ${orgId}`])
+			])}
+			ORDER BY o.created_at, o.id
+			LIMIT 1`.pipe(storageError('find membership'));
+		return decodeRows(MembershipRow, rows)[0] ?? null;
+	});
+
+	const sessionContext = (
+		sessionId: string,
+		membership: typeof MembershipRow.Type
+	): AuthContext => ({
+		orgId: membership.org_id,
+		userId: membership.user_id,
+		role: membership.role,
+		via: 'session',
+		scope: 'read-write',
+		credentialId: sessionId,
+		email: membership.email,
+		orgName: membership.org_name,
+		orgSlug: membership.org_slug
+	});
 
 	const makeApiKey = Effect.fn('Auth.makeApiKey')(function* (name: string) {
 		const normalizedName = yield* validate(() => normalizeApiKeyName(name));
@@ -274,175 +292,226 @@ const makeAuth = Effect.gen(function* () {
 		};
 	});
 
-	const listApiKeys = sql`
-		SELECT id, name, prefix, scope, secret_hash, created_at, expires_at,
-			last_used_at, revoked_at
-		FROM api_keys
-		ORDER BY created_at DESC, id
-	`.pipe(
-		Effect.map((rows) => decodeRows(ApiKeyRow, rows).map(toApiKey)),
-		Effect.mapError(
-			(cause) => new StorageError({ operation: 'list API keys', cause })
-		),
-		Effect.withSpan('Auth.listApiKeys')
-	);
+	const listApiKeys = Effect.gen(function* () {
+		const rows = yield* sql`
+			SELECT id, name, prefix, scope, secret_hash, created_at, expires_at,
+				last_used_at, revoked_at
+			FROM api_keys
+			WHERE org_id = ${org.id}
+			ORDER BY created_at DESC, id
+		`.pipe(storageError('list API keys'));
+		return decodeRows(ApiKeyRow, rows).map(toApiKey);
+	}).pipe(Effect.withSpan('Auth.listApiKeys'));
 
 	return Auth.of({
-		authorize: Effect.fn('Auth.authorize')(function* ({
-			authorization,
-			sessionToken,
-			requestOrigin,
-			origin,
-			method
-		}) {
-			if (requestOrigin !== config.dashboardOrigin) {
-				return yield* new MisdirectedRequest({
-					message: 'Credentials are accepted only on the dashboard origin'
-				});
+		// The prefix lookup is global (prefixes are unique across orgs); the
+		// org and user the key acts as come from the key row itself.
+		resolveApiKey: Effect.fn('Auth.resolveApiKey')(function* (bearer) {
+			const match = API_KEY_PATTERN.exec(bearer);
+			if (!match) return yield* invalidCredential();
+			const rows = yield* sql`
+				SELECT k.id, k.scope, k.secret_hash, k.expires_at, k.last_used_at,
+					k.org_id, k.user_id, m.role, u.email,
+					o.name AS org_name, o.slug AS org_slug
+				FROM api_keys k
+				LEFT JOIN memberships m ON m.org_id = k.org_id AND m.user_id = k.user_id
+				LEFT JOIN users u ON u.id = k.user_id
+				LEFT JOIN orgs o ON o.id = k.org_id
+				WHERE k.prefix = ${match[1]} AND k.revoked_at IS NULL
+				LIMIT 1
+			`.pipe(storageError('look up API key'));
+			const row = decodeRows(ApiKeyCredentialRow, rows)[0];
+			const actualHash = yield* hashToken(bearer);
+			if (
+				!row ||
+				!constantTimeEqual(hexBytes(actualHash), hexBytes(row.secret_hash))
+			) {
+				return yield* invalidCredential();
 			}
-
-			const bearer = bearerToken(authorization);
-			if (bearer) {
-				const match = API_KEY_PATTERN.exec(bearer);
-				if (!match) {
-					return yield* new Unauthorized({
-						message: 'A valid credential is required'
-					});
-				}
-				const rows = yield* sql`
-					SELECT id, name, prefix, scope, secret_hash, created_at, expires_at,
-						last_used_at, revoked_at
-					FROM api_keys
-					WHERE prefix = ${match[1]} AND revoked_at IS NULL
-					LIMIT 1
-				`.pipe(
-					Effect.mapError(
-						(cause) => new StorageError({ operation: 'look up API key', cause })
-					)
-				);
-				const row = decodeRows(ApiKeyRow, rows)[0];
-				const actualHash = yield* hashToken(bearer);
-				if (
-					!row ||
-					!constantTimeEqual(hexBytes(actualHash), hexBytes(row.secret_hash))
-				) {
-					return yield* new Unauthorized({
-						message: 'A valid credential is required'
-					});
-				}
-				const now = new Date();
-				const nowIso = now.toISOString();
-				if (row.expires_at !== null && row.expires_at <= nowIso) {
-					return yield* new Unauthorized({
-						message: 'This API key has expired'
-					});
-				}
-				if (shouldTouchLastUsed(row.last_used_at, now)) {
-					yield* sql`
-						UPDATE api_keys
-						SET last_used_at = ${nowIso}
-						WHERE id = ${row.id}
-					`.pipe(
-						Effect.mapError(
-							(cause) =>
-								new StorageError({ operation: 'update API key usage', cause })
-						)
-					);
-				}
-				return {
-					credentialId: row.id,
-					kind: 'api-key' as const,
-					scope: row.scope
-				};
-			}
-
-			if (!sessionToken) {
-				return yield* new Unauthorized({
-					message: 'A valid credential is required'
-				});
-			}
-			if (!allowsCredentialOrigin(method, origin, config.dashboardOrigin)) {
-				return yield* new Unauthorized({
-					message: 'The request origin is not allowed'
-				});
-			}
-			const tokenHash = yield* hashToken(sessionToken);
 			const now = new Date();
 			const nowIso = now.toISOString();
-			const rows = yield* sql`
-				SELECT token_hash, expires_at, last_used_at
-				FROM dashboard_sessions
-				WHERE token_hash = ${tokenHash} AND expires_at > ${nowIso}
-				LIMIT 1
-			`.pipe(
-				Effect.mapError(
-					(cause) =>
-						new StorageError({ operation: 'look up dashboard session', cause })
-				)
-			);
-			const row = decodeRows(SessionRow, rows)[0];
-			if (!row) {
+			if (row.expires_at !== null && row.expires_at <= nowIso) {
 				return yield* new Unauthorized({
-					message: 'A valid credential is required'
+					message: 'This API key has expired'
+				});
+			}
+			// A key whose owner left the org stops working with it.
+			if (
+				row.role === null ||
+				row.email === null ||
+				row.org_name === null ||
+				row.org_slug === null
+			) {
+				return yield* new Unauthorized({
+					message: 'This API key no longer belongs to an organization member'
 				});
 			}
 			if (shouldTouchLastUsed(row.last_used_at, now)) {
 				yield* sql`
-					UPDATE dashboard_sessions SET last_used_at = ${nowIso}
-					WHERE token_hash = ${tokenHash}
-				`.pipe(
-					Effect.mapError(
-						(cause) =>
-							new StorageError({
-								operation: 'update dashboard session',
-								cause
-							})
-					)
+					UPDATE api_keys
+					SET last_used_at = ${nowIso}
+					WHERE id = ${row.id}
+				`.pipe(storageError('update API key usage'));
+			}
+			return {
+				orgId: row.org_id,
+				userId: row.user_id,
+				role: row.role,
+				via: 'api-key' as const,
+				scope: row.scope,
+				credentialId: row.id,
+				email: row.email,
+				orgName: row.org_name,
+				orgSlug: row.org_slug
+			};
+		}),
+		// The access token inside the sealed cookie is verified locally
+		// against WorkOS's JWKS; only an expired token costs an API call
+		// (the refresh), whose new cookie travels back to the hook.
+		resolveSession: Effect.fn('Auth.resolveSession')(function* (sessionCookie) {
+			let loaded = yield* workos.loadSession(sessionCookie);
+			let refreshedSession: string | null = null;
+			if (!loaded.authenticated && loaded.refreshable) {
+				refreshedSession = yield* workos.refresh(sessionCookie);
+				if (refreshedSession === null) return yield* invalidCredential();
+				loaded = yield* workos.loadSession(refreshedSession);
+			}
+			if (!loaded.authenticated) return yield* invalidCredential();
+			const membership = yield* findMembership(loaded.userId, loaded.orgId);
+			// A user WorkOS still knows but Postgres does not (deleted through
+			// the webhook, or a session that predates the org bootstrap) has
+			// to go through the callback again.
+			if (!membership) return yield* invalidCredential();
+			// Organization-bearing sessions carry the verified provider role.
+			// Keep the mirror current so API keys follow the same permissions.
+			const role =
+				loaded.orgId === null ? membership.role : (loaded.role ?? 'member');
+			if (role !== membership.role) {
+				yield* sql`UPDATE memberships SET role = ${role}
+					WHERE org_id = ${membership.org_id} AND user_id = ${membership.user_id}`.pipe(
+					storageError('update organization role')
 				);
 			}
 			return {
-				credentialId: row.token_hash,
-				kind: 'session' as const,
-				scope: 'read-write' as const
+				auth: sessionContext(loaded.sessionId, { ...membership, role }),
+				refreshedSession
 			};
 		}),
-		createSession: Effect.fn('Auth.createSession')(function* (passcode) {
-			const expected = yield* hashToken(config.passcode);
-			const actual = yield* hashToken(passcode);
-			if (!constantTimeEqual(hexBytes(expected), hexBytes(actual))) {
-				return yield* new Unauthorized({ message: 'Passcode is incorrect' });
+		completeSignIn: Effect.fn('Auth.completeSignIn')(function* (code) {
+			const exchanged = yield* workos.exchangeCode(code);
+			const orgId = yield* sql
+				.withTransaction(
+					Effect.gen(function* () {
+						// Serialize first callbacks for one user before checking membership.
+						// The separate statement gives a waiter a fresh snapshot after the
+						// previous bootstrap commits. Namespace is ASCII "sign".
+						yield* sql`SELECT pg_advisory_xact_lock(1936287598, hashtext(${exchanged.user.id}))`;
+						const existing = yield* findMembership(
+							exchanged.user.id,
+							exchanged.organizationId
+						);
+						const role =
+							exchanged.organizationId === null
+								? (existing?.role ?? 'owner')
+								: (exchanged.role ?? 'member');
+						if (existing) {
+							if (role !== existing.role) {
+								yield* sql`UPDATE memberships SET role = ${role}
+						WHERE org_id = ${existing.org_id} AND user_id = ${existing.user_id}`.pipe(
+									storageError('update signed-in organization role')
+								);
+							}
+							yield* sql`
+					UPDATE users
+					SET email = ${exchanged.user.email},
+						email_verified = ${exchanged.user.emailVerified}
+					WHERE id = ${exchanged.user.id}
+				`.pipe(storageError('update signed-in user'));
+						}
+						const orgId =
+							existing?.org_id ??
+							exchanged.organizationId ??
+							(yield* Effect.gen(function* () {
+								// First sign-in: WorkOS does not create a personal org, so
+								// mint one there first, then mirror it. The membership is
+								// created WorkOS-side so the session can be pinned to it.
+								const personal = personalOrgFor(exchanged.user.email);
+								const created = yield* workos.createOrganization(personal.name);
+								yield* workos.createOrganizationMembership({
+									organizationId: created.id,
+									userId: exchanged.user.id,
+									roleSlug: 'owner'
+								});
+								return created.id;
+							}));
+						if (!existing) {
+							const personal = personalOrgFor(exchanged.user.email);
+							yield* ensureTenant(sql, {
+								orgId,
+								userId: exchanged.user.id,
+								slug: personal.slug,
+								name: personal.name,
+								email: exchanged.user.email,
+								emailVerified: exchanged.user.emailVerified,
+								role
+							}).pipe(storageError('create tenant rows'));
+						}
+						return orgId;
+					})
+				)
+				.pipe(
+					Effect.catchTag('SqlError', (cause) =>
+						Effect.fail(
+							new StorageError({ operation: 'complete sign-in', cause })
+						)
+					)
+				);
+			// Pin the org on the session so every later request carries it.
+			const pinned =
+				exchanged.organizationId === orgId
+					? exchanged.sealedSession
+					: yield* workos.refresh(exchanged.sealedSession, orgId);
+			return { sealedSession: pinned ?? exchanged.sealedSession };
+		}),
+		logoutUrl: Effect.fn('Auth.logoutUrl')(function* (sessionCookie, returnTo) {
+			if (!sessionCookie) return returnTo;
+			const loaded = yield* workos.loadSession(sessionCookie);
+			if (!loaded.authenticated) return returnTo;
+			return yield* workos.logoutUrl(loaded.sessionId, returnTo);
+		}),
+		removeUser: Effect.fn('Auth.removeUser')(function* (userId) {
+			yield* sql
+				.withTransaction(
+					Effect.gen(function* () {
+						yield* sql`
+							UPDATE device_codes
+							SET status = 'denied', api_key_id = NULL, user_id = NULL
+							WHERE user_id = ${userId}
+								OR api_key_id IN (SELECT id FROM api_keys WHERE user_id = ${userId})`;
+						yield* sql`DELETE FROM api_keys WHERE user_id = ${userId}`;
+						yield* sql`DELETE FROM memberships WHERE user_id = ${userId}`;
+						yield* sql`DELETE FROM users WHERE id = ${userId}`;
+					})
+				)
+				.pipe(storageError('remove user'));
+		}),
+		removeMembership: Effect.fn('Auth.removeMembership')(
+			function* (orgId, userId) {
+				yield* sql
+					.withTransaction(
+						Effect.gen(function* () {
+							yield* sql`
+							UPDATE api_keys SET revoked_at = ${new Date().toISOString()}
+							WHERE org_id = ${orgId} AND user_id = ${userId}
+								AND revoked_at IS NULL`;
+							yield* sql`
+							DELETE FROM memberships
+							WHERE org_id = ${orgId} AND user_id = ${userId}`;
+						})
+					)
+					.pipe(storageError('remove membership'));
 			}
-			const token = randomToken();
-			const tokenHash = yield* hashToken(token);
-			const createdAt = new Date();
-			const expiresAt = new Date(
-				createdAt.getTime() + SESSION_MAX_AGE_SECONDS * 1000
-			);
-			yield* sql`
-				INSERT INTO dashboard_sessions (
-					token_hash, created_at, expires_at, last_used_at
-				) VALUES (
-					${tokenHash}, ${createdAt.toISOString()}, ${expiresAt.toISOString()},
-					${createdAt.toISOString()}
-				)
-			`.pipe(
-				Effect.mapError(
-					(cause) =>
-						new StorageError({ operation: 'create dashboard session', cause })
-				)
-			);
-			return token;
-		}),
-		revokeSession: Effect.fn('Auth.revokeSession')(function* (sessionToken) {
-			if (!sessionToken) return;
-			const hash = yield* hashToken(sessionToken);
-			yield* sql`DELETE FROM dashboard_sessions WHERE token_hash = ${hash}`.pipe(
-				Effect.mapError(
-					(cause) =>
-						new StorageError({ operation: 'revoke dashboard session', cause })
-				)
-			);
-		}),
+		),
 		listApiKeys,
 		createApiKey: Effect.fn('Auth.createApiKey')(function* (name, options) {
 			const scope = options?.scope ?? 'read-write';
@@ -459,17 +528,14 @@ const makeAuth = Effect.gen(function* () {
 			const generated = yield* makeApiKey(name);
 			yield* sql`
 				INSERT INTO api_keys (
-					id, name, prefix, scope, secret_hash, created_at, expires_at
+					id, name, prefix, scope, secret_hash, created_at, expires_at,
+					org_id, user_id
 				) VALUES (
 					${generated.row.id}, ${generated.row.name}, ${generated.row.prefix},
 					${scope}, ${generated.secretHash}, ${generated.row.createdAt},
-					${expiresAt}
+					${expiresAt}, ${org.id}, ${user.id}
 				)
-			`.pipe(
-				Effect.mapError(
-					(cause) => new StorageError({ operation: 'create API key', cause })
-				)
-			);
+			`.pipe(storageError('create API key'));
 			return {
 				key: {
 					...generated.row,
@@ -485,7 +551,7 @@ const makeAuth = Effect.gen(function* () {
 			const rows = yield* sql`
 				UPDATE api_keys
 				SET revoked_at = ${new Date().toISOString()}
-				WHERE id = ${id} AND revoked_at IS NULL
+				WHERE id = ${id} AND org_id = ${org.id} AND revoked_at IS NULL
 				RETURNING id
 			`.pipe(storageError('revoke API key'));
 			if (rows.length !== 1) {
@@ -537,9 +603,12 @@ const makeAuth = Effect.gen(function* () {
 		approveDevice: Effect.fn('Auth.approveDevice')(function* (userCode) {
 			const code = yield* parseUserCode(userCode);
 			const now = new Date().toISOString();
+			// Approval binds the code to the approving user's org; the key
+			// minted when the CLI next polls copies both columns.
 			const rows = yield* sql`
 				UPDATE device_codes
-				SET status = 'approved', approved_at = ${now}
+				SET status = 'approved', approved_at = ${now},
+					org_id = ${org.id}, user_id = ${user.id}
 				WHERE user_code = ${code} AND status = 'pending' AND expires_at > ${now}
 				RETURNING user_code
 			`.pipe(storageError('approve device'));
@@ -580,12 +649,7 @@ const makeAuth = Effect.gen(function* () {
 				FROM device_codes
 				WHERE device_code_hash = ${hash}
 				LIMIT 1
-			`.pipe(
-				Effect.mapError(
-					(cause) =>
-						new StorageError({ operation: 'poll device authorization', cause })
-				)
-			);
+			`.pipe(storageError('poll device authorization'));
 			const row = decodeRows(DeviceCodeRow, rows)[0];
 			if (!row) {
 				return yield* new Unauthorized({
@@ -597,15 +661,7 @@ const makeAuth = Effect.gen(function* () {
 				yield* sql`
 					UPDATE device_codes SET status = 'expired'
 					WHERE device_code_hash = ${hash} AND status IN ('pending', 'approved')
-				`.pipe(
-					Effect.mapError(
-						(cause) =>
-							new StorageError({
-								operation: 'expire device authorization',
-								cause
-							})
-					)
-				);
+				`.pipe(storageError('expire device authorization'));
 				return yield* new Unauthorized({
 					message: 'Device authorization expired'
 				});
@@ -622,12 +678,7 @@ const makeAuth = Effect.gen(function* () {
 			yield* sql`
 				UPDATE device_codes SET last_polled_at = ${now.toISOString()}
 				WHERE device_code_hash = ${hash}
-			`.pipe(
-				Effect.mapError(
-					(cause) =>
-						new StorageError({ operation: 'record device poll', cause })
-				)
-			);
+			`.pipe(storageError('record device poll'));
 			if (row.status === 'pending') {
 				return { status: 'authorization_pending' as const };
 			}
@@ -641,6 +692,7 @@ const makeAuth = Effect.gen(function* () {
 			const consumedAt = now.toISOString();
 			// Lock the approval before inserting a key. A concurrent poll must
 			// observe the consumed state before it can mint another credential.
+			// The key inherits the org and user stamped at approval.
 			const completed = yield* sql
 				.withTransaction(
 					Effect.gen(function* () {
@@ -650,14 +702,19 @@ const makeAuth = Effect.gen(function* () {
 							FOR UPDATE
 						`;
 						if (approved.length !== 1) return false;
-						yield* sql`
+						const inserted = yield* sql`
 							INSERT INTO api_keys (
-								id, name, prefix, secret_hash, created_at
+								id, name, prefix, secret_hash, created_at, org_id, user_id
 							)
-							VALUES (${generated.row.id}, ${generated.row.name},
+							SELECT ${generated.row.id}, ${generated.row.name},
 								${generated.row.prefix}, ${generated.secretHash},
-								${generated.row.createdAt})
+								${generated.row.createdAt}, org_id, user_id
+							FROM device_codes
+							WHERE device_code_hash = ${hash} AND status = 'approved'
+								AND org_id IS NOT NULL AND user_id IS NOT NULL
+							RETURNING id
 						`;
+						if (inserted.length !== 1) return false;
 						const consumed = yield* sql`
 							UPDATE device_codes
 							SET status = 'consumed', consumed_at = ${consumedAt},
@@ -676,106 +733,24 @@ const makeAuth = Effect.gen(function* () {
 			}
 			return { status: 'complete' as const, apiKey: generated.token };
 		}),
-		revokeAllSessions: sql
-			.withTransaction(
-				Effect.gen(function* () {
-					const sessions = yield* sql`
-						DELETE FROM dashboard_sessions RETURNING token_hash
-					`;
-					const codes = yield* sql`
-						UPDATE device_codes SET status = 'denied'
-						WHERE status IN ('pending', 'approved')
-						RETURNING device_code_hash
-					`;
-					return sessions.length + codes.length;
-				})
-			)
-			.pipe(
-				storageError('revoke all sessions'),
-				Effect.withSpan('Auth.revokeAllSessions')
-			),
-		enforcePasscodeRotation: Effect.gen(function* () {
-			const passcodeHash = yield* hashToken(config.passcode);
-			const now = new Date().toISOString();
-			// One transaction: seed the row on first boot without revoking
-			// anything, revoke while the stored hash still differs from the
-			// deployed one, then record the new hash. A failure anywhere rolls
-			// the whole claim back, so a rotation can never be marked recorded
-			// with revocation skipped.
-			return yield* sql
-				.withTransaction(
-					Effect.gen(function* () {
-						yield* sql`
-							INSERT INTO credential_state (id, passcode_hash, rotated_at)
-							VALUES (1, ${passcodeHash}, ${now})
-							ON CONFLICT (id) DO NOTHING
-						`;
-						const sessions = yield* sql`
-							DELETE FROM dashboard_sessions
-							WHERE EXISTS (
-								SELECT 1 FROM credential_state
-								WHERE id = 1 AND passcode_hash <> ${passcodeHash}
-							)
-							RETURNING token_hash
-						`;
-						const codes = yield* sql`
-							UPDATE device_codes SET status = 'denied'
-							WHERE status IN ('pending', 'approved')
-								AND EXISTS (
-									SELECT 1 FROM credential_state
-									WHERE id = 1 AND passcode_hash <> ${passcodeHash}
-								)
-							RETURNING device_code_hash
-						`;
-						const recorded = yield* sql`
-							UPDATE credential_state
-							SET passcode_hash = ${passcodeHash}, rotated_at = ${now}
-							WHERE id = 1 AND passcode_hash <> ${passcodeHash}
-							RETURNING id
-						`;
-						const rotated = recorded.length === 1;
-						return {
-							rotated,
-							revoked: rotated ? sessions.length + codes.length : 0
-						};
-					})
-				)
-				.pipe(storageError('enforce passcode rotation'));
-		}).pipe(Effect.withSpan('Auth.enforcePasscodeRotation')),
 		sweepExpired: Effect.fn('Auth.sweepExpired')(function* (limit) {
 			const bounded = Math.max(1, Math.min(limit, 100));
 			const now = new Date().toISOString();
 			const cutoff = new Date(
 				new Date(now).getTime() - 24 * 60 * 60 * 1_000
 			).toISOString();
-			return yield* sql
-				.withTransaction(
-					Effect.gen(function* () {
-						const sessions = yield* sql`
-							DELETE FROM dashboard_sessions
-							WHERE token_hash IN (
-								SELECT token_hash FROM dashboard_sessions
-								WHERE expires_at <= ${now}
-								ORDER BY expires_at
-								LIMIT ${bounded}
-							)
-							RETURNING token_hash
-						`;
-						const codes = yield* sql`
-							DELETE FROM device_codes
-							WHERE device_code_hash IN (
-								SELECT device_code_hash FROM device_codes
-								WHERE expires_at <= ${now}
-									OR (status = 'consumed' AND consumed_at <= ${cutoff})
-								ORDER BY expires_at
-								LIMIT ${bounded}
-							)
-							RETURNING device_code_hash
-						`;
-						return sessions.length + codes.length;
-					})
+			const codes = yield* sql`
+				DELETE FROM device_codes
+				WHERE device_code_hash IN (
+					SELECT device_code_hash FROM device_codes
+					WHERE expires_at <= ${now}
+						OR (status = 'consumed' AND consumed_at <= ${cutoff})
+					ORDER BY expires_at
+					LIMIT ${bounded}
 				)
-				.pipe(storageError('sweep expired authentication state'));
+				RETURNING device_code_hash
+			`.pipe(storageError('sweep expired device codes'));
+			return codes.length;
 		})
 	});
 });
