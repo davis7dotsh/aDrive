@@ -1,7 +1,7 @@
 import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
 import { deviceApprovalParams } from '$lib/device-approval';
-import { STATE_COOKIE, stateCookieOptions } from '$lib/server/auth-policy';
+import { cookieNames, stateCookieOptions } from '$lib/server/auth-policy';
 import { AppConfig } from '$lib/server/config';
 import { runEdge } from '$lib/server/edge';
 import { WorkOSClient } from '$lib/server/services/workos';
@@ -24,7 +24,12 @@ export const GET: RequestHandler = ({ cookies, url }) =>
 			const state = randomState();
 			const pending = deviceApprovalParams(url.searchParams);
 			pending.set('state', state);
-			cookies.set(STATE_COOKIE, pending.toString(), stateCookieOptions);
+			const names = cookieNames(config.dashboardOrigin);
+			cookies.set(
+				names.state,
+				pending.toString(),
+				stateCookieOptions(names.secure)
+			);
 			return new Response(null, {
 				status: 302,
 				headers: {

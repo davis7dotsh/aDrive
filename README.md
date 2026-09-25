@@ -2,13 +2,19 @@
 
 adrive is a Cloudflare-backed file spine with a dashboard, tags, hybrid
 search, static-site publishing, deployment-based authentication, and
-scheduled storage lifecycle management.
+scheduled storage lifecycle management. It is becoming a hosted product:
+one deployment serving many organisations, each with its own files, keys,
+and usage (`docs/plans/hosted-product.md`). The setup below runs the hosted
+schema locally with development authentication. Existing single-tenant
+deployments keep their own database; follow `docs/release.md` to provision
+a separate hosted target rather than migrating a populated old database.
 Uploads stream directly to R2, metadata and append-only version history live in
-D1, and file/site bytes are served from a separate cookie-less content origin.
-Search combines weighted FTS5 BM25 results, a filename trigram index, and an
-optional Workers AI + pgvector semantic source with reciprocal rank fusion.
-Canonical D1 hydration still applies deletion, expiry, visibility, and tag
-filters. The CLI supports file transfer and safe, staged directory publishing.
+Postgres (PlanetScale via Hyperdrive), and file/site bytes are served from a
+separate cookie-less content origin. Search combines weighted keyword
+results, a filename trigram index, and an optional Workers AI + pgvector
+semantic source with reciprocal rank fusion, then applies deletion, expiry,
+visibility, and tag filters. The CLI supports file transfer and safe, staged
+directory publishing.
 
 ## Install the CLI
 
@@ -47,18 +53,32 @@ Worker (no build step) deployed by `bun release` to
 
 Requirements: Node 26+ and Bun 1.4+.
 
+The defaults below use the docker database named `adrive`. On a machine
+with an existing drive, create a separate development database and select
+it before running migrations, creating a key, or starting the preview:
+
+```bash
+export DATABASE_URL="postgres://adrive:adrive@127.0.0.1:5432/<new_dev_database>"
+export CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE="$DATABASE_URL"
+```
+
+Replace `<new_dev_database>` with the new target and verify its identity.
+Wrangler reads the Hyperdrive override from the dev server's shell
+environment; putting it in `.dev.vars` alone does not change the database
+binding. `DATABASE_URL` separately selects the migration and local key
+creation target. Keep both pointed at the same intended development database.
+
 ```bash
 bun install
 bun db:pg:up              # local Postgres via docker compose
 bun db:pg:migrate:local
-bun db:migrate:local
 cp apps/web/.dev.vars.example apps/web/.dev.vars
 bun key:create:local
 ```
 
-Postgres (via a Hyperdrive binding) is being introduced beside D1; see
-`docs/plans/hosted-product.md` for the port sequence. The route test suite
-needs the docker compose Postgres running.
+Local development runs against the docker compose Postgres through the
+Hyperdrive binding; the route test suite needs it running too. Production
+uses PlanetScale Postgres (`docs/release.md`).
 
 Route tests reset their Postgres database before each suite run. They use
 `adrive_test` by default; `ADRIVE_TEST_DATABASE_URL` may point to another
@@ -108,6 +128,12 @@ IP (`tailscale ip -4`). Alternatively, use a domain whose wildcard DNS
 record points to that IP. Verify a sample tenant hostname resolves on the
 device running the browser; its resolver may block public DNS answers
 that point to private networks.
+
+Sign-in stores the sealed WorkOS session in a thirty-day, `HttpOnly`,
+`SameSite=Lax` cookie. On an HTTPS dashboard origin it is the `Secure`,
+host-only `__Host-adrive-wos` cookie; on a plain-HTTP dev origin (a LAN or
+Tailscale hostname) it drops the prefix and the `Secure` flag so browsers
+will keep it.
 
 Vite also needs to allow the dashboard hostname and content-domain suffix.
 Set this in the shell when starting development, separately from

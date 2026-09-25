@@ -1,4 +1,5 @@
 import { Context } from 'runed';
+import { createClientId } from './client-id';
 
 export type ToastItem = {
 	readonly id: string;
@@ -44,7 +45,7 @@ export class Toasts {
 	}
 
 	#add(tone: ToastItem['tone'], message: string, action: ToastItem['action']) {
-		const id = crypto.randomUUID();
+		const id = createClientId();
 		this.items = [...this.items, { id, tone, message, action }];
 		this.#timers.set(
 			id,

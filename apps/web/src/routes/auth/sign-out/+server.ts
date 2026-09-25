@@ -1,6 +1,6 @@
 import type { RequestHandler } from './$types';
 import { Effect } from 'effect';
-import { SESSION_COOKIE } from '$lib/server/auth-policy';
+import { cookieNames } from '$lib/server/auth-policy';
 import { AppConfig } from '$lib/server/config';
 import { runEdge } from '$lib/server/edge';
 import { InvalidRequest } from '$lib/server/errors';
@@ -20,11 +20,12 @@ export const POST: RequestHandler = ({ cookies, request, url }) =>
 			}
 			const auth = yield* Auth;
 			const config = yield* AppConfig;
+			const names = cookieNames(config.dashboardOrigin);
 			const location = yield* auth.logoutUrl(
-				cookies.get(SESSION_COOKIE),
+				cookies.get(names.session),
 				`${config.dashboardOrigin}/`
 			);
-			cookies.delete(SESSION_COOKIE, { path: '/' });
+			cookies.delete(names.session, { path: '/', secure: names.secure });
 			return new Response(null, {
 				status: 303,
 				headers: { 'Cache-Control': 'private, no-store', Location: location }
