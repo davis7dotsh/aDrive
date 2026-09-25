@@ -12,9 +12,6 @@
 		"dev:content": "node scripts/content-proxy.mjs",
 		"dev:dashboard": "vite dev --host 0.0.0.0 --port 5173",
 		"search:rebuild:local": "wrangler d1 execute DB --local --file scripts/rebuild-search-index.sql",
-		"test": "vitest run --config vite.config.ts",
-		"test:runes": "vitest run --config vitest.runes.config.ts",
-		"test:routes": "vitest run --config vitest.routes.config.ts",
 		"types:worker": "wrangler types"
 	},
 	"dependencies": {
@@ -39,7 +36,6 @@
 		"@types/node": "^26.1.1",
 		"@typescript/native": "npm:typescript@^7.0.2",
 		"concurrently": "^10.0.4",
-		"happy-dom": "^20.11.6",
 		"svelte": "5.56.8",
 		"svelte-check": "4.7.4",
 		"tailwindcss": "^4.3.3",

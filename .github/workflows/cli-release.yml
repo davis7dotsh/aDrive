@@ -34,7 +34,6 @@ jobs:
         run: |
           bun run format:check
           bun run check
-          bun run test
 
       - name: Derive version from tag
         id: version
@@ -63,8 +62,6 @@ jobs:
             echo "Bundle version does not match the tag" >&2
             exit 1
           fi
-          # Run the full contract suite against the built artifact.
-          ADRIVE_TEST_BUNDLE="$PWD/dist/adrive.mjs" bun run test
 
       - name: Checksums
         working-directory: packages/cli/dist

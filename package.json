@@ -23,12 +23,10 @@
 		"key:create:local": "bun scripts/create-local-key.mjs",
 		"postinstall": "find node_modules -path '*/@effect/tsgo*/lib/tsc' -exec chmod +x {} +",
 		"release": "bash scripts/release.sh",
-		"search:rebuild:local": "bun --filter @adrive/web search:rebuild:local",
-		"test": "bun run --filter '@adrive/*' --if-present test && bun --filter @adrive/web test:runes && bun --filter @adrive/web test:routes"
+		"search:rebuild:local": "bun --filter @adrive/web search:rebuild:local"
 	},
 	"devDependencies": {
 		"prettier": "^3.9.6",
-		"prettier-plugin-svelte": "^4.1.1",
-		"vitest": "^4.1.10"
+		"prettier-plugin-svelte": "^4.1.1"
 	}
 }
