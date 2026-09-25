@@ -6,7 +6,6 @@ import {
 	supportsRenderedDashboardThumbnail
 } from '$lib/file-thumbnail';
 import { listingMode } from '$lib/listing';
-import { AppConfig } from '$lib/server/config';
 import { runWorkerProgram } from '$lib/server/edge';
 import { GrantSecrets } from '$lib/server/services/grant-secrets';
 import type { PageServerLoad } from './$types';
@@ -72,10 +71,8 @@ const grantedThumbnailPreloads = async (
 			Effect.all(
 				thumbnailPreloadTargets(list).map(({ id, version }) =>
 					Effect.gen(function* () {
-						const config = yield* AppConfig;
 						const secrets = yield* GrantSecrets;
 						return yield* secrets.mint({
-							contentOrigin: config.contentOrigin,
 							orgId,
 							fileId: id,
 							version

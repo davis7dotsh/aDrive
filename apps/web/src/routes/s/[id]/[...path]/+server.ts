@@ -75,7 +75,6 @@ const serveSite: RequestHandler = ({ params, request, url }) =>
 			if (grant) {
 				const grantSecrets = yield* GrantSecrets;
 				const granted = yield* grantSecrets.verify({
-					contentOrigin: config.contentOrigin,
 					orgId: asset.orgId,
 					requestOrigin: url.origin,
 					fileId: params.id,
@@ -86,7 +85,6 @@ const serveSite: RequestHandler = ({ params, request, url }) =>
 				if (!granted) return yield* new NotFound({ id: params.id });
 				if (thumbnailSource) {
 					const thumbnailGranted = yield* grantSecrets.verify({
-						contentOrigin: config.contentOrigin,
 						orgId: asset.orgId,
 						requestOrigin: url.origin,
 						fileId: params.id,

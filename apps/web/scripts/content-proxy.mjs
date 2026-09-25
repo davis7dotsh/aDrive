@@ -1,5 +1,10 @@
 import { createServer, request } from 'node:http';
 
+// Streams `<slug>.localhost:5174` (or whatever CONTENT_DOMAIN names) into
+// the dashboard dev server on 5173. The Host header is forwarded untouched
+// so the Worker sees the tenant host and enforces its host routing exactly
+// as in production; browsers resolve `*.localhost` to loopback, so no DNS
+// setup is needed locally.
 const server = createServer((incoming, outgoing) => {
 	const upstream = request(
 		{

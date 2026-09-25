@@ -126,7 +126,7 @@ const main = () => {
 		const ENV_ONLY_VARS = new Set([
 			'SEMANTIC_SEARCH',
 			'DASHBOARD_ORIGIN',
-			'CONTENT_ORIGIN'
+			'CONTENT_DOMAIN'
 		]);
 		const localVars = { ...config.vars };
 		const prodVars = { ...prod.vars };
@@ -146,7 +146,7 @@ const main = () => {
 				}
 			}
 		}
-		for (const key of ['DASHBOARD_ORIGIN', 'CONTENT_ORIGIN']) {
+		for (const key of ['DASHBOARD_ORIGIN', 'CONTENT_DOMAIN']) {
 			if (!config.vars?.[key] || !prod.vars?.[key]) {
 				drift.push(
 					`vars.${key}: must be defined at both top level and env.${envName}`

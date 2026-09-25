@@ -16,6 +16,7 @@ import type {
 	FileSummary,
 	FileTagsResponse,
 	FileVersion,
+	OrgSettings,
 	Tag,
 	TagResponse,
 	UploadResponse
@@ -251,6 +252,20 @@ export const parseApiKeyListResponse = (value: unknown): ApiKeyListResponse => {
 	const record = requireRecord(value, 'keys');
 	return {
 		keys: list(record.keys, parseApiKey, 'keys.keys')
+	};
+};
+
+export const parseOrgSettings = (value: unknown): OrgSettings => {
+	const record = requireRecord(value, 'org');
+	return {
+		id: text(record.id, 'org.id'),
+		name: text(record.name, 'org.name'),
+		slug: text(record.slug, 'org.slug'),
+		contentOrigin: text(record.contentOrigin, 'org.contentOrigin'),
+		nextSlugChangeAt: maybeString(
+			record.nextSlugChangeAt,
+			'org.nextSlugChangeAt'
+		)
 	};
 };
 

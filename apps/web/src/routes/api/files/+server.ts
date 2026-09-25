@@ -8,6 +8,7 @@ import { authRateLimitResponse } from '$lib/server/auth-rate-limit-response';
 import { InvalidRequest } from '$lib/server/errors';
 import { parsePageSize } from '$lib/server/list-cursor';
 import { AuthGuard } from '$lib/server/services/auth-guard';
+import { currentContentOrigin } from '$lib/server/services/current-org';
 import { Files } from '$lib/server/services/files';
 import { Indexing } from '$lib/server/services/indexing';
 import { Tags } from '$lib/server/services/tags';
@@ -101,7 +102,7 @@ export const GET: RequestHandler = (event) => {
 				files: listing.files,
 				nextCursor: listing.nextCursor,
 				tags: tagList ?? [],
-				contentOrigin: config.contentOrigin,
+				contentOrigin: yield* currentContentOrigin,
 				maxUploadBytes: config.maxUploadBytes,
 				semantic: status ?? {
 					enabled: false,
@@ -122,7 +123,6 @@ export const PUT: RequestHandler = async (event) => {
 		Effect.gen(function* () {
 			const authGuard = yield* AuthGuard;
 			const files = yield* Files;
-			const config = yield* AppConfig;
 			const credential = yield* requireWrite(event);
 			const rateLimit = yield* authGuard.consume(
 				'upload',
@@ -191,7 +191,7 @@ export const PUT: RequestHandler = async (event) => {
 				response: Response.json(
 					{
 						file: result.file,
-						url: `${config.contentOrigin}/f/${result.file.id}`,
+						url: `${yield* currentContentOrigin}/f/${result.file.id}`,
 						forcedPublic: result.forcedPublic
 					},
 					{ status: 201 }

@@ -1,16 +1,25 @@
 <script lang="ts">
-	import { listFiles } from '$lib/dashboard/api';
+	import { page } from '$app/state';
+	import { getOrgSettings, listFiles } from '$lib/dashboard/api';
 	import { formatBytes } from '$lib/dashboard/format';
 	import { getDashboardSession } from '$lib/dashboard/session.svelte';
 	import ApiKeys from '$lib/components/auth/ApiKeys.svelte';
+	import OrgSlug from '$lib/components/auth/OrgSlug.svelte';
+	import Button from '$lib/components/ui/Button.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { resource } from 'runed';
 
 	const session = getDashboardSession();
+	const canChangeSlug = $derived(page.data.session?.role === 'owner');
 	const settings = resource(
 		() => [session.ready, session.token] as const,
 		([ready, token], _previous, { signal }) =>
 			ready && token ? listFiles(token, false, signal) : Promise.resolve(null)
+	);
+	const org = resource(
+		() => [session.ready, session.token] as const,
+		([ready, token], _previous, { signal }) =>
+			ready && token ? getOrgSettings(token, signal) : Promise.resolve(null)
 	);
 </script>
 
@@ -68,7 +77,9 @@
 				<div class="flex justify-between gap-4">
 					<dt class="text-zinc-500">Content origin</dt>
 					<dd class="break-all text-right text-zinc-800">
-						{settings.current?.contentOrigin ?? 'Unavailable'}
+						{org.current?.contentOrigin ??
+							settings.current?.contentOrigin ??
+							'Unavailable'}
 					</dd>
 				</div>
 				<div class="flex justify-between gap-4">
@@ -91,6 +102,43 @@
 					{settings.current.semantic.model} · {settings.current.semantic
 						.costNotice}
 				</p>
+			{/if}
+			{#if canChangeSlug}
+				<div class="mt-4 min-h-28" aria-busy={org.loading}>
+					{#if org.current}
+						{#key org.current.slug}
+							<OrgSlug
+								token={session.token}
+								org={org.current}
+								onchanged={(updated) => org.mutate(updated)}
+							/>
+						{/key}
+					{:else if org.error}
+						<div
+							class="flex min-h-28 items-center justify-between gap-3"
+							role="alert"
+						>
+							<p class="text-sm text-red-700">{org.error.message}</p>
+							<Button
+								variant="secondary"
+								disabled={org.loading}
+								onclick={() => void org.refetch()}>Try again</Button
+							>
+						</div>
+					{:else}
+						<div role="status" aria-label="Loading organization settings">
+							<span class="sr-only">Loading organization settings</span>
+							<div
+								class="max-w-xl animate-pulse motion-reduce:animate-none"
+								aria-hidden="true"
+							>
+								<div class="h-5 w-12 rounded bg-zinc-100"></div>
+								<div class="mt-2 h-10 rounded-md bg-zinc-100"></div>
+								<div class="mt-2 h-5 w-3/4 rounded bg-zinc-100"></div>
+							</div>
+						</div>
+					{/if}
+				</div>
 			{/if}
 		</section>
 

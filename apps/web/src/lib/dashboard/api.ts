@@ -15,6 +15,7 @@ import {
 	parseFileListResponse,
 	parseFileMutationResponse,
 	parseFileTagsResponse,
+	parseOrgSettings,
 	parseTagResponse,
 	parseUploadResponse
 } from './parse';
@@ -73,6 +74,20 @@ const json = async <A>(parse: (value: unknown) => A, response: Response) =>
 
 export const checkKey = async (token: string, signal?: AbortSignal) => {
 	await request('/api/auth/check', token, { signal });
+};
+
+export const getOrgSettings = async (token: string, signal?: AbortSignal) => {
+	const response = await request('/api/org', token, { signal });
+	return json(parseOrgSettings, response);
+};
+
+export const changeOrgSlug = async (token: string, slug: string) => {
+	const response = await request('/api/org', token, {
+		method: 'PATCH',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ slug })
+	});
+	return json(parseOrgSettings, response);
 };
 
 export const listApiKeys = async (token: string, signal?: AbortSignal) => {

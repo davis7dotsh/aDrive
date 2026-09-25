@@ -1,9 +1,12 @@
 import { Context, Effect, Layer, Schema } from 'effect';
+import { AppConfig } from '../config';
 import { StorageError } from '../errors';
 import { createObjectTtlCache } from '../isolate-cache';
 import { PgSql } from '../pg';
+import { CurrentOrg } from './current-org';
 import {
 	mintPrivateGrant,
+	PRIVATE_GRANT_TTL_SECONDS,
 	verifyPrivateGrant,
 	type MintPrivateGrantOptions,
 	type PrivateGrant,
@@ -30,8 +33,18 @@ const signingKeyCache = createObjectTtlCache<object, string>(
 	SIGNING_KEY_CACHE_TTL_MS
 );
 
-type MintGrantInput = Omit<MintPrivateGrantOptions, 'signingKey'>;
-type VerifyGrantInput = Omit<VerifyPrivateGrantOptions, 'signingKey'>;
+// Grants are bound to the current org's content origin
+// (`<slug>.<content domain>`): a dashboard request mints for its own org,
+// a content request verifies for the org its host names. Verification
+// additionally requires the request to arrive on exactly that origin.
+type MintGrantInput = Omit<
+	MintPrivateGrantOptions,
+	'signingKey' | 'contentOrigin'
+>;
+type VerifyGrantInput = Omit<
+	VerifyPrivateGrantOptions,
+	'signingKey' | 'contentOrigin'
+>;
 
 export interface GrantSecretsShape {
 	readonly mint: (
@@ -58,6 +71,8 @@ const randomSigningKey = () => {
 
 const makeGrantSecrets = Effect.gen(function* () {
 	const sql = yield* PgSql;
+	const config = yield* AppConfig;
+	const org = yield* CurrentOrg;
 
 	const signingKey = Effect.gen(function* () {
 		const cached = signingKeyCache.get(signingKeyCacheKey);
@@ -100,16 +115,56 @@ const makeGrantSecrets = Effect.gen(function* () {
 
 	return GrantSecrets.of({
 		mint: Effect.fn('GrantSecrets.mint')(function* (input) {
+			const contentOrigin = config.contentOriginFor(org.slug);
 			const key = yield* signingKey;
 			return yield* Effect.promise(() =>
-				mintPrivateGrant({ ...input, signingKey: key })
+				mintPrivateGrant({ ...input, contentOrigin, signingKey: key })
 			);
 		}),
 		verify: Effect.fn('GrantSecrets.verify')(function* (input) {
+			const contentOrigin = config.contentOriginFor(org.slug);
+			if (input.requestOrigin !== contentOrigin || input.orgId !== org.id) {
+				return false;
+			}
 			const key = yield* signingKey;
-			return yield* Effect.promise(() =>
-				verifyPrivateGrant({ ...input, signingKey: key })
+			const now = input.now ?? new Date();
+			const granted = yield* Effect.promise(() =>
+				verifyPrivateGrant({ ...input, contentOrigin, signingKey: key, now })
 			);
+			if (granted) return true;
+
+			// A rename redirects old links to this authorized current host. Keep
+			// their signatures valid for the remainder of their original lifetime,
+			// considering only signing origins this same org recently released.
+			const cutoff = new Date(
+				now.getTime() - PRIVATE_GRANT_TTL_SECONDS * 1_000
+			).toISOString();
+			const previous = yield* sql<{ slug: string }>`
+				SELECT slug FROM org_slug_history
+				WHERE org_id = ${org.id}
+					AND released_at >= ${cutoff} AND released_at <= ${now.toISOString()}
+			`.pipe(
+				Effect.mapError(
+					(cause) =>
+						new StorageError({ operation: 'load grant signing origins', cause })
+				)
+			);
+			for (const { slug } of previous) {
+				const signedOrigin = config.contentOriginFor(slug);
+				const valid = yield* Effect.promise(() =>
+					verifyPrivateGrant({
+						...input,
+						contentOrigin: signedOrigin,
+						// The actual request host was authorized above; the primitive now
+						// checks the original signed scope without changing its rules.
+						requestOrigin: signedOrigin,
+						signingKey: key,
+						now
+					})
+				);
+				if (valid) return true;
+			}
+			return false;
 		})
 	});
 });
