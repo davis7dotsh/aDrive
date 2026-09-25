@@ -14,8 +14,7 @@
 		"build": "node scripts/build.mjs",
 		"check": "bun run check:types && bun run check:effect",
 		"check:effect": "effect-tsgo diagnostics --project tsconfig.json --format pretty",
-		"check:types": "tsc --noEmit",
-		"test": "vitest run"
+		"check:types": "tsc --noEmit"
 	},
 	"dependencies": {
 		"@adrive/shared": "workspace:^",
