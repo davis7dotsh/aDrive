@@ -15,7 +15,7 @@ export * from ${JSON.stringify(`./${svelteKitWorker}`)};
 const toHex = (bytes) =>
 	Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, '0')).join('');
 
-const scheduledSignature = async (passcode, scheduledTime, cron) => {
+const hmacSign = async (passcode, message) => {
 	const key = await crypto.subtle.importKey(
 		'raw',
 		new TextEncoder().encode(passcode),
@@ -24,13 +24,16 @@ const scheduledSignature = async (passcode, scheduledTime, cron) => {
 		['sign']
 	);
 	return toHex(
-		await crypto.subtle.sign(
-			'HMAC',
-			key,
-			new TextEncoder().encode(\`\${scheduledTime}\\n\${cron}\`)
-		)
+		await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(message))
 	);
 };
+
+const scheduledSignature = (passcode, scheduledTime, cron) =>
+	hmacSign(passcode, \`\${scheduledTime}\\n\${cron}\`);
+
+// Mirrors verifyJobsRequest in src/lib/server/cron-auth.ts.
+const jobsSignature = (passcode, timestamp, body) =>
+	hmacSign(passcode, \`jobs\\n\${timestamp}\\n\${body}\`);
 
 export default {
 	fetch(request, env, ctx) {
@@ -62,6 +65,44 @@ export default {
 				}
 			})()
 		);
+	},
+	// Queue batches are forwarded to the SvelteKit bundle in-process (the
+	// consumer lives under $lib, unreachable from this facade). The endpoint
+	// returns one ack/retry decision per message id; anything it did not
+	// decide on is retried so a crash never silently drops work.
+	async queue(batch, env, ctx) {
+		const timestamp = String(Date.now());
+		const body = JSON.stringify({
+			queue: batch.queue,
+			messages: batch.messages.map((message) => ({
+				id: message.id,
+				attempts: message.attempts,
+				body: message.body
+			}))
+		});
+		const signature = await jobsSignature(env.PASSCODE, timestamp, body);
+		const response = await sveltekit.fetch(
+			new Request(new URL('/api/internal/jobs', env.DASHBOARD_ORIGIN), {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					'X-Adrive-Jobs-Time': timestamp,
+					'X-Adrive-Jobs-Signature': signature
+				},
+				body
+			}),
+			env,
+			ctx
+		);
+		if (!response.ok) {
+			throw new Error(\`Queue consumer failed with status \${response.status}\`);
+		}
+		const { decisions } = await response.json();
+		const actions = new Map(decisions.map((decision) => [decision.id, decision.action]));
+		for (const message of batch.messages) {
+			if (actions.get(message.id) === 'ack') message.ack();
+			else message.retry();
+		}
 	}
 };
 `.trimStart();

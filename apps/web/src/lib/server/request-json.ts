@@ -7,6 +7,12 @@ interface BoundedJsonOptions {
 	readonly invalidJsonMessage: string;
 }
 
+interface BoundedTextOptions {
+	readonly maxBytes: number;
+	readonly invalidLengthMessage: string;
+	readonly invalidTextMessage: string;
+}
+
 type BodyReadResult =
 	| { readonly _tag: 'Success'; readonly bytes: Uint8Array }
 	| { readonly _tag: 'TooLarge' }
@@ -64,9 +70,9 @@ const readBodyAtMost = async (
 	return { _tag: 'Success', bytes };
 };
 
-export const readBoundedJson = (
+export const readBoundedText = (
 	request: Request,
-	{ maxBytes, invalidLengthMessage, invalidJsonMessage }: BoundedJsonOptions
+	{ maxBytes, invalidLengthMessage, invalidTextMessage }: BoundedTextOptions
 ) =>
 	Effect.gen(function* () {
 		// A declared length is validated up front so oversized requests fail
@@ -97,19 +103,30 @@ export const readBoundedJson = (
 			case 'ReadFailure':
 				return yield* new InvalidRequest({
 					status: 400,
-					message: invalidJsonMessage
+					message: invalidTextMessage
 				});
 			case 'Success':
-				return yield* Effect.try({
-					try: (): unknown => JSON.parse(new TextDecoder().decode(body.bytes)),
-					catch: () =>
-						new InvalidRequest({
-							status: 400,
-							message: invalidJsonMessage
-						})
-				});
+				return new TextDecoder().decode(body.bytes);
 		}
 	});
+
+export const readBoundedJson = (
+	request: Request,
+	{ maxBytes, invalidLengthMessage, invalidJsonMessage }: BoundedJsonOptions
+) =>
+	readBoundedText(request, {
+		maxBytes,
+		invalidLengthMessage,
+		invalidTextMessage: invalidJsonMessage
+	}).pipe(
+		Effect.flatMap((text) =>
+			Effect.try({
+				try: (): unknown => JSON.parse(text),
+				catch: () =>
+					new InvalidRequest({ status: 400, message: invalidJsonMessage })
+			})
+		)
+	);
 
 export const DEFAULT_JSON_BODY_LIMIT = 16 * 1024;
 

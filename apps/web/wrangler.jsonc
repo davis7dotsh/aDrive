@@ -45,6 +45,19 @@
 			"id": "419a52adcd9649e0a24e5c47c2748477"
 		}
 	],
+	"queues": {
+		"producers": [{ "queue": "adrive-jobs", "binding": "JOBS" }],
+		"consumers": [
+			{
+				"queue": "adrive-jobs",
+				"max_batch_size": 5,
+				"max_batch_timeout": 5,
+				"max_retries": 5,
+				"max_concurrency": 10,
+				"dead_letter_queue": "adrive-jobs-dlq"
+			}
+		]
+	},
 	"observability": {
 		"enabled": true,
 		"logs": {
@@ -58,17 +71,18 @@
 	// Production deploys with `wrangler deploy --env production`. Wrangler
 	// environments do not inherit bindings, so everything is redeclared.
 	// Before the first deploy (see docs/release.md):
-	//   1. Create the production D1 database and paste its id below.
-	//   1b. Create a Hyperdrive config pointing at PlanetScale Postgres
-	//       (direct port 5432, caching disabled) and paste its id below.
+	//   1. Create a Hyperdrive config pointing at PlanetScale Postgres
+	//      (direct port 5432, caching disabled) and paste its id below.
 	//   2. Create the production R2 bucket and KV namespace; paste the KV id.
-	//   3. Point DNS for both hostnames at the Worker (routes below).
-	//   4. `wrangler secret put PASSCODE --env production`
-	//   5. `DATABASE_URL=postgres://... bun db:pg:migrate` (see docs/release.md)
+	//   3. Create the production job queue and its dead-letter queue
+	//      (docs/release.md, "Queues").
+	//   4. Point DNS for both hostnames at the Worker (routes below).
+	//   5. `wrangler secret put PASSCODE --env production`
+	//   6. `DATABASE_URL=postgres://... bun db:pg:migrate` (see docs/release.md)
 	"env": {
 		"production": {
-			// Place the Worker near D1 for dashboard/search queries. Content
-			// routes still check visibility in D1, then serve from R2 or the
+			// Place the Worker near the database for dashboard/search queries. Content
+			// routes still check visibility in Postgres, then serve from R2 or the
 			// Cache API.
 			"placement": { "mode": "smart" },
 			"routes": [
@@ -114,6 +128,19 @@
 					"id": "09b884a95e5e40389d8554b3cd690d3f"
 				}
 			],
+			"queues": {
+				"producers": [{ "queue": "adrive-jobs-production", "binding": "JOBS" }],
+				"consumers": [
+					{
+						"queue": "adrive-jobs-production",
+						"max_batch_size": 5,
+						"max_batch_timeout": 5,
+						"max_retries": 5,
+						"max_concurrency": 10,
+						"dead_letter_queue": "adrive-jobs-production-dlq"
+					}
+				]
+			},
 			"observability": {
 				"enabled": true,
 				"logs": {

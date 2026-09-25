@@ -181,6 +181,12 @@ const main = () => {
 				);
 			}
 		}
+		const queueProducers = (block) => bindingNames(block.queues?.producers);
+		if (!sameJson(queueProducers(config), queueProducers(prod))) {
+			drift.push(
+				`queues.producers bindings: local=${JSON.stringify(queueProducers(config))} production=${JSON.stringify(queueProducers(prod))}`
+			);
+		}
 	}
 
 	if (drift.length > 0) {
