@@ -113,6 +113,11 @@ export const createInternals = (deps: CoreDeps) => {
 	// scanner publishes a held row itself (services/scanner.ts).
 	const sendScanJob = (fileId: string, version: number) =>
 		jobs.trySend({ kind: 'scan', orgId: org.id, fileId, version });
+	// After a transaction moved the storage counter: billing reads the row
+	// when the job runs, so a burst of sends costs one report.
+	const sendUsageSync = Effect.suspend(() =>
+		jobs.trySend({ kind: 'usage-sync', orgId: org.id })
+	);
 
 	const findDashboardFile = Effect.fn('Files.findDashboardFile')(function* (
 		id: string,
@@ -235,6 +240,7 @@ export const createInternals = (deps: CoreDeps) => {
 			);
 		yield* sendIndexJob(current.id, version);
 		if (committed.scan) yield* sendScanJob(current.id, version);
+		yield* sendUsageSync;
 		return committed.result;
 	});
 
@@ -253,6 +259,7 @@ export const createInternals = (deps: CoreDeps) => {
 		sendIndexJob,
 		sendPurgeJob,
 		sendScanJob,
+		sendUsageSync,
 		findDashboardFile,
 		commitStoredVersion
 	};

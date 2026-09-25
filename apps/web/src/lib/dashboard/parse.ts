@@ -8,6 +8,8 @@
 // Struct decoders, they require every declared field but ignore extra keys.
 import type {
 	ApiKey,
+	BillingLinkResponse,
+	BillingSummary,
 	DashboardFile,
 	FileContentLinkResponse,
 	FileDetailResponse,
@@ -269,6 +271,31 @@ export const parseOrgSettings = (value: unknown): OrgSettings => {
 			'org.nextSlugChangeAt'
 		)
 	};
+};
+
+export const parseBillingSummary = (value: unknown): BillingSummary => {
+	const record = requireRecord(value, 'billing');
+	const storage = requireRecord(record.storage, 'billing.storage');
+	const aiOps = requireRecord(record.aiOps, 'billing.aiOps');
+	return {
+		plan: text(record.plan, 'billing.plan'),
+		planName: text(record.planName, 'billing.planName'),
+		billingEnabled: flag(record.billingEnabled, 'billing.billingEnabled'),
+		canManageBilling: flag(record.canManageBilling, 'billing.canManageBilling'),
+		storage: {
+			used: integer(storage.used, 'billing.storage.used'),
+			limit: integer(storage.limit, 'billing.storage.limit')
+		},
+		aiOps: {
+			used: integer(aiOps.used, 'billing.aiOps.used'),
+			limit: integer(aiOps.limit, 'billing.aiOps.limit')
+		}
+	};
+};
+
+export const parseBillingLink = (value: unknown): BillingLinkResponse => {
+	const record = requireRecord(value, 'billing');
+	return { url: maybeString(record.url, 'billing.url') };
 };
 
 export const parseApiKeyCreateResponse = (

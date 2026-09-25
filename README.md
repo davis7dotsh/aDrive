@@ -205,7 +205,8 @@ create one D1 database and one private R2 bucket, replace the D1 database ID,
 apply the migration remotely, set the production dashboard origin and
 content domain, and set
 the secrets (`MAINTENANCE_SECRET`, `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`,
-`WORKOS_COOKIE_PASSWORD`, `WORKOS_WEBHOOK_SECRET`):
+`WORKOS_COOKIE_PASSWORD`, `WORKOS_WEBHOOK_SECRET`, `AUTUMN_SECRET_KEY`,
+`AUTUMN_WEBHOOK_SECRET`):
 
 ```bash
 cd apps/web && bun x wrangler secret put MAINTENANCE_SECRET

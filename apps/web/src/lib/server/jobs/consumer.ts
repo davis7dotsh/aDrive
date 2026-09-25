@@ -4,6 +4,7 @@ import type { AppServices } from '../edge';
 import { StorageError } from '../errors';
 import { retryDelaySeconds } from '../job-policy';
 import { requestLayer } from '../layer';
+import { Billing } from '../services/billing';
 import { Files } from '../services/files';
 import { Indexing, type IndexOutcome } from '../services/indexing';
 import { Scanner } from '../services/scanner';
@@ -63,6 +64,9 @@ export interface JobHandlers {
 	readonly siteCleanup: (
 		job: JobOf<'site-cleanup'>
 	) => Effect.Effect<JobOutcome, StorageError>;
+	readonly usageSync: (
+		job: JobOf<'usage-sync'>
+	) => Effect.Effect<JobOutcome, StorageError>;
 }
 
 const log = (entry: Record<string, unknown>) =>
@@ -80,6 +84,8 @@ export const dispatchJob = (handlers: JobHandlers) => (job: Job) => {
 			return handlers.purge(job);
 		case 'site-cleanup':
 			return handlers.siteCleanup(job);
+		case 'usage-sync':
+			return handlers.usageSync(job);
 	}
 };
 
@@ -93,6 +99,7 @@ export const liveJobHandlers = Effect.gen(function* () {
 	const files = yield* Files;
 	const sites = yield* Sites;
 	const scanner = yield* Scanner;
+	const billing = yield* Billing;
 	return {
 		index: (job) => indexing.runOne(job).pipe(Effect.map(indexOutcome)),
 		// The scanner records its own outcome (a verdict row, a re-sent
@@ -100,7 +107,8 @@ export const liveJobHandlers = Effect.gen(function* () {
 		scan: (job) => scanner.runOne(job).pipe(Effect.as('done')),
 		purge: (job) => files.purgeOne(job.fileId).pipe(Effect.as('done')),
 		siteCleanup: (job) =>
-			sites.cleanupSession(job.sessionId).pipe(Effect.as('done'))
+			sites.cleanupSession(job.sessionId).pipe(Effect.as('done')),
+		usageSync: () => billing.syncUsage.pipe(Effect.as('done'))
 	} satisfies JobHandlers;
 });
 
