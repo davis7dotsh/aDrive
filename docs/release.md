@@ -6,26 +6,27 @@ App Worker commands run from `apps/web`. Landing-site commands run from
 `apps/site` (no `--env`). `bun release` and the backup installer run from
 the repository root.
 
-1. From `apps/web`: `wrangler d1 create adrive-production` — paste the id
-   into `wrangler.jsonc` `env.production.d1_databases[0].database_id`.
+1. Create a PlanetScale Postgres 17+ database (region close to most users)
+   with `vector` 0.8 or newer and the `pg_trgm` extension available, then a Hyperdrive
+   config pointing at its direct port 5432 with caching disabled:
+
+   ```
+   wrangler hyperdrive create adrive-production --connection-string="postgres://..." --caching-disabled
+   ```
+
+   Paste the id into `wrangler.jsonc` `env.production.hyperdrive[0].id`.
+   Export the same connection string as `DATABASE_URL` when releasing;
+   `bun release` runs `apps/web/scripts/pg-migrate.mjs` against it.
+
 2. From `apps/web`: `wrangler r2 bucket create adrive-production`
 3. From `apps/web`: `wrangler kv namespace create AUTH_GUARD --env production`
    — paste the id into `env.production.kv_namespaces[0].id`.
-4. From `apps/web`: create the semantic-search index (the production env
-   sets `SEMANTIC_SEARCH=required`, so the deploy fails without it):
-
-   ```
-   wrangler vectorize create adrive-production --dimensions=384 --metric=cosine
-   wrangler vectorize create-metadata-index adrive-production --property-name=deleted --type=boolean
-   wrangler vectorize create-metadata-index adrive-production --property-name=kind --type=string
-   wrangler vectorize create-metadata-index adrive-production --property-name=visibility --type=string
-   ```
-
-   The Workers AI binding needs no provisioning — it activates with the
-   `ai` binding already declared in `wrangler.jsonc`. Both services sit
-   inside the Workers Paid plan's included allocation at personal scale
-   (50M queried + 10M stored vector dimensions per month ≈ 26k chunks at
-   384 dims; embeddings run within the 10k neurons/day allocation).
+4. Semantic search needs no extra provisioning: embeddings come from the
+   Workers AI `ai` binding already declared in `wrangler.jsonc`, and the
+   vectors live in the Postgres `file_chunks` table (pgvector). The
+   production env sets `SEMANTIC_SEARCH=required`, so the deploy fails
+   loudly if the `AI` binding is missing. Embeddings run within the
+   Workers Paid plan's included neuron allocation at personal scale.
 
 5. In the Cloudflare dashboard, open **Images → Transformations**, select
    the zone that owns `CONTENT_ORIGIN` (`davis7.space` for
@@ -50,10 +51,9 @@ Semantic search notes for the first deploy:
   sit in `index_state = 'disabled'` and are backfilled by the maintenance
   cron at 5 files per 5 minutes. A large pre-existing corpus takes hours;
   the settings page's "indexed chunks" count shows progress.
-- Vectorize contents are derived state (like the FTS tables): after a D1
-  restore, vectors for purged files are orphaned but harmless, and
-  missing vectors regenerate on reindex. They are deliberately not part
-  of the backup set.
+- Embeddings live in Postgres beside the file rows, so they are restored
+  with the database. Files whose embeddings are missing after a partial
+  restore regenerate on reindex.
 
 ## Releasing
 
@@ -63,7 +63,7 @@ bun release
 
 The script refuses a dirty tree or placeholder ids in the target env,
 then runs format check → type/lint checks → tests → audit → build →
-app deploy dry run → landing-site dry run → D1 migrations → app deploy →
+app deploy dry run → landing-site dry run → Postgres migrations → app deploy →
 landing-site deploy, and appends the deployed commit to
 `.release-history`. If the landing site fails after the app Worker is
 live, the script still records the app commit and prints rollback
@@ -92,8 +92,8 @@ bun x wrangler deployments list --env production   # find the previous version
 bun x wrangler rollback --env production           # interactive picker
 ```
 
-Rollback redeploys the previous Worker bundle. It does not touch D1, R2,
-KV, or secrets — which is why the migration rule above matters.
+Rollback redeploys the previous Worker bundle. It does not touch
+Postgres, R2, KV, or secrets — which is why the migration rule above matters.
 
 ### Landing site
 
@@ -106,14 +106,13 @@ bun x wrangler deployments list
 bun x wrangler rollback
 ```
 
-### D1
+### Postgres
 
 There is no in-place downgrade. Recovery options, in order of blast
 radius:
 
-1. **Cloudflare Time Travel** (point-in-time restore, 30-day window):
-   `wrangler d1 time-travel info DB --env production` then
-   `wrangler d1 time-travel restore DB --env production --timestamp <unix>`.
+1. **PlanetScale backups** (automatic daily, plus point-in-time):
+   PlanetScale point-in-time restore from the database's Backups page.
    This rewinds the whole database — anything written after the
    timestamp is lost.
 2. **Nightly export**: restore per `docs/backup-restore.md` (full
@@ -130,3 +129,44 @@ pending device codes automatically (API keys stay).
 `.release-history` in the repo root accumulates
 `<timestamp> <env> <commit>` lines locally. The deployed commit is also
 visible via `wrangler deployments list --env production`.
+
+## One-off move from D1
+
+The single existing instance moves its metadata from D1 to Postgres once.
+R2 does not move. Sessions, device codes, and the passcode hash are not
+carried over; sign in again afterwards. Semantic vectors are not carried
+over either; every file is left `pending` and re-embeds through the
+indexing sweep.
+
+`wrangler d1 export` refuses databases that contain FTS5 virtual tables,
+so export one table at a time from a checkout that still has the D1
+binding (the commit before this one):
+
+```
+cd apps/web
+mkdir -p /tmp/adrive-d1
+for t in files file_versions tags file_tags site_assets api_keys \
+         pending_site_asset_deletes instance_secrets \
+         site_upload_sessions staged_site_assets; do
+  bun x wrangler d1 export DB --env production --remote --table $t --output /tmp/adrive-d1/$t.sql
+done
+```
+
+Then from this checkout:
+
+```
+cd apps/web
+export DATABASE_URL=postgres://...
+bun scripts/pg-migrate.mjs --url "$DATABASE_URL"
+bun scripts/d1-to-postgres.mjs --dump /tmp/adrive-d1 --url "$DATABASE_URL"
+```
+
+The script prints per-table counts and the Postgres totals at the end.
+Compare them with the row counts in the exports before flipping DNS. Run
+it with `--wipe` to truncate and retry. Tested against the local D1 state
+on 2026-09-09.
+
+All listed tables must be exported, including empty ones. Unfinished site
+uploads are not resumed: their stored assets enter the cleanup queue unless
+the key is referenced by a published site asset. Export while writes to the
+old drive are paused so the table snapshots describe the same state.

@@ -12,19 +12,6 @@ export interface FusedFile extends RankedFile {
 	readonly ranks: Readonly<Record<string, number>>;
 }
 
-export const sanitizeMatchQuery = (value: string) => {
-	const terms = value
-		.normalize('NFKC')
-		.match(/[\p{L}\p{N}]+/gu)
-		?.map((term) => term.slice(0, 64))
-		.filter(Boolean)
-		.slice(0, 20);
-	if (!terms?.length) return null;
-	return terms
-		.map((term, index) => `"${term}"${index === terms.length - 1 ? '*' : ''}`)
-		.join(' ');
-};
-
 export const normalizedSearchText = (value: string) =>
 	value
 		.normalize('NFKC')
@@ -32,23 +19,20 @@ export const normalizedSearchText = (value: string) =>
 		.replace(/[^\p{L}\p{N}]+/gu, ' ')
 		.trim();
 
+// Embeddings and trigram matching both need a few real characters before
+// they say anything useful; shorter queries run keyword search only.
+const MIN_FUZZY_QUERY_LENGTH = 3;
+
 export const shouldEmbedSearchQuery = (value: string) =>
-	normalizedSearchText(value).length >= 3;
+	normalizedSearchText(value).length >= MIN_FUZZY_QUERY_LENGTH;
 
-export const sanitizeTrigramQuery = (value: string) => {
-	const normalized = normalizedSearchText(value);
-	if (normalized.length < 3) return null;
+export const shouldFuzzyMatchQuery = shouldEmbedSearchQuery;
 
-	const trigrams = new Set<string>();
-	for (let index = 0; index <= normalized.length - 3; index += 1) {
-		const trigram = normalized.slice(index, index + 3);
-		if (trigram.trim().length === 3) trigrams.add(trigram);
-		if (trigrams.size === 32) break;
-	}
-	return trigrams.size
-		? [...trigrams].map((trigram) => `"${trigram}"`).join(' OR ')
-		: null;
-};
+// Postgres websearch_to_tsquery handles quoting and operators itself, so
+// the only guard left is "is there anything to search for": a query of pure
+// punctuation falls back to the recent-files listing.
+export const hasSearchableQuery = (value: string) =>
+	normalizedSearchText(value).length > 0;
 
 export const reciprocalRankFusion = (
 	sources: Readonly<Record<string, FusionSource>>,

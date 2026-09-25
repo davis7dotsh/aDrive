@@ -84,13 +84,6 @@ export const sameJson = (left, right) =>
 	JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));
 
 const placeholderIds = (block, label, drift) => {
-	for (const entry of block.d1_databases ?? []) {
-		if (String(entry.database_id ?? '').includes('replace-with-')) {
-			drift.push(
-				`${label} D1 ${entry.binding ?? 'DB'}: still has a placeholder database_id`
-			);
-		}
-	}
 	for (const entry of block.kv_namespaces ?? []) {
 		if (String(entry.id ?? '').includes('replace-with-')) {
 			drift.push(
@@ -181,12 +174,7 @@ const main = () => {
 
 		const bindingNames = (entries) =>
 			(entries ?? []).map((entry) => entry.binding).sort();
-		for (const key of [
-			'd1_databases',
-			'r2_buckets',
-			'kv_namespaces',
-			'hyperdrive'
-		]) {
+		for (const key of ['r2_buckets', 'kv_namespaces', 'hyperdrive']) {
 			if (!sameJson(bindingNames(config[key]), bindingNames(prod[key]))) {
 				drift.push(
 					`${key} bindings: local=${JSON.stringify(bindingNames(config[key]))} production=${JSON.stringify(bindingNames(prod[key]))}`

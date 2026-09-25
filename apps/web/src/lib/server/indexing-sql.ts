@@ -1,11 +1,6 @@
-import type { TextChunk } from './semantic-policy';
-
-export type SqlBinding = string | number | null;
-
-export interface SqlCommand {
-	readonly sql: string;
-	readonly bindings: ReadonlyArray<SqlBinding>;
-}
+import type { PgClient } from '@effect/sql-pg';
+import { Data, Effect } from 'effect';
+import { refreshSearchDocument } from './search-index';
 
 export interface IndexLease {
 	readonly fileId: string;
@@ -14,257 +9,174 @@ export interface IndexLease {
 	readonly token: string;
 }
 
-interface IndexFailure {
+export interface IndexFailure {
 	readonly state: 'pending' | 'failed';
 	readonly error: string;
 	readonly nextRunAt: string | null;
 }
 
-const leaseExists = `SELECT 1 FROM files
-	WHERE id = ? AND current_version = ?
-		AND index_state = 'running' AND index_lease_token = ?`;
+export interface VectorChunk {
+	readonly fileId: string;
+	readonly version: number;
+	readonly ordinal: number;
+	readonly charStart: number;
+	readonly charEnd: number;
+	readonly values: ReadonlyArray<number>;
+}
 
-const leaseBindings = (lease: IndexLease) => [
-	lease.fileId,
-	lease.version,
-	lease.token
-];
+// Raised inside a transaction when the claimed lease no longer holds; the
+// transaction rolls back and the caller sees `false` instead of an error.
+class StaleIndexLease extends Data.TaggedError('StaleIndexLease')<{}> {}
 
-const vectorIdsJson = (vectorIds: ReadonlyArray<string>) =>
-	JSON.stringify(vectorIds);
+const staleAsFalse = <E, R>(
+	effect: Effect.Effect<unknown, E | StaleIndexLease, R>
+) =>
+	effect.pipe(
+		Effect.as(true),
+		Effect.catchTag('StaleIndexLease', () => Effect.succeed(false))
+	);
 
-export const claimIndexCommand = (
+// Locks the files row for the rest of the transaction so a concurrent
+// claim for a newer version waits for this commit instead of interleaving.
+const holdLease = (sql: PgClient.PgClient, lease: IndexLease) =>
+	sql<{ held: number }>`
+		SELECT 1 AS held FROM files
+		WHERE id = ${lease.fileId} AND current_version = ${lease.version}
+			AND index_state = 'running' AND index_lease_token = ${lease.token}
+		FOR UPDATE`.pipe(
+		Effect.flatMap((rows) =>
+			rows.length === 1 ? Effect.void : new StaleIndexLease()
+		)
+	);
+
+const leaseUpdateFilter = (sql: PgClient.PgClient, lease: IndexLease) =>
+	sql`id = ${lease.fileId} AND current_version = ${lease.version}
+		AND index_state = 'running' AND index_lease_token = ${lease.token}`;
+
+export const claimIndex = (
+	sql: PgClient.PgClient,
 	lease: IndexLease,
 	now: string,
 	leaseUntil: string,
 	maxAttempts: number
-): SqlCommand => ({
-	sql: `UPDATE files
+) =>
+	sql<{ id: string }>`
+		UPDATE files
 		SET index_state = 'running', index_attempts = index_attempts + 1,
-			index_error = NULL, index_next_run_at = ?, index_lease_token = ?
-		WHERE id = ? AND current_version = ? AND deleted_at IS NULL
-			AND (expires_at IS NULL OR expires_at > ?)
-			AND index_attempts = ? AND index_attempts < ?
+			index_error = NULL, index_next_run_at = ${leaseUntil},
+			index_lease_token = ${lease.token}
+		WHERE id = ${lease.fileId} AND current_version = ${lease.version}
+			AND deleted_at IS NULL
+			AND (expires_at IS NULL OR expires_at > ${now})
+			AND index_attempts = ${lease.attempt - 1}
+			AND index_attempts < ${maxAttempts}
 			AND (
 				index_state IN ('pending', 'disabled')
-				OR (index_state = 'running' AND index_next_run_at <= ?)
-			)`,
-	bindings: [
-		leaseUntil,
-		lease.token,
-		lease.fileId,
-		lease.version,
-		now,
-		lease.attempt - 1,
-		maxAttempts,
-		now
-	]
-});
+				OR (index_state = 'running' AND index_next_run_at <= ${now})
+			)
+		RETURNING id`.pipe(Effect.map((rows) => rows.length === 1));
 
-export const extractedTextCommands = (
+// Stores the extracted text for the leased version and refreshes the
+// keyword document from it. index_cursor = 1 marks the text as stored so a
+// retried attempt skips the R2 read.
+export const storeExtractedText = (
+	sql: PgClient.PgClient,
 	lease: IndexLease,
 	text: string
-): ReadonlyArray<SqlCommand> => [
-	{
-		sql: `UPDATE file_versions SET text_content = ?
-			WHERE file_id = ? AND version = ?
-				AND EXISTS (${leaseExists})`,
-		bindings: [text, lease.fileId, lease.version, ...leaseBindings(lease)]
-	},
-	{
-		sql: `UPDATE files SET index_cursor = 1
-			WHERE id = ? AND current_version = ?
-				AND index_state = 'running' AND index_lease_token = ?`,
-		bindings: leaseBindings(lease)
-	},
-	{
-		sql: `DELETE FROM files_fts
-			WHERE file_id = ? AND EXISTS (${leaseExists})`,
-		bindings: [lease.fileId, ...leaseBindings(lease)]
-	},
-	{
-		sql: `INSERT INTO files_fts (name, tags, body, file_id, chunk_no)
-			SELECT
-				f.display_name,
-				COALESCE((
-					SELECT group_concat(t.name, ' ')
-					FROM file_tags ft
-					JOIN tags t ON t.id = ft.tag_id
-					WHERE ft.file_id = f.id
-				), ''),
-				substr(COALESCE(v.text_content, ''), 1, 65536),
-				f.id,
-				0
-			FROM files f
-			JOIN file_versions v
-				ON v.file_id = f.id AND v.version = f.current_version
-			WHERE f.id = ? AND f.current_version = ?
-				AND f.index_state = 'running' AND f.index_lease_token = ?`,
-		bindings: leaseBindings(lease)
-	},
-	{
-		sql: `DELETE FROM files_trgm
-			WHERE file_id = ? AND EXISTS (${leaseExists})`,
-		bindings: [lease.fileId, ...leaseBindings(lease)]
-	},
-	{
-		sql: `INSERT INTO files_trgm (name, file_id)
-			SELECT display_name, id
-			FROM files
-			WHERE id = ? AND current_version = ?
-				AND index_state = 'running' AND index_lease_token = ?`,
-		bindings: leaseBindings(lease)
-	}
-];
+) =>
+	sql
+		.withTransaction(
+			Effect.gen(function* () {
+				yield* holdLease(sql, lease);
+				// PostgreSQL text rejects NUL bytes; match the semantic chunker's
+				// cleanup before writing either the source text or keyword index.
+				yield* sql`
+					UPDATE file_versions SET text_content = ${text.replaceAll('\u0000', '')}
+					WHERE file_id = ${lease.fileId} AND version = ${lease.version}`;
+				yield* sql`
+					UPDATE files SET index_cursor = 1
+					WHERE ${leaseUpdateFilter(sql, lease)}`;
+				yield* refreshSearchDocument(sql, lease.fileId);
+			})
+		)
+		.pipe(staleAsFalse);
 
-export const finishKeywordOnlyCommand = (lease: IndexLease): SqlCommand => ({
-	sql: `UPDATE files
+export const finishKeywordOnly = (sql: PgClient.PgClient, lease: IndexLease) =>
+	sql<{ id: string }>`
+		UPDATE files
 		SET index_state = 'disabled', indexed_version = NULL,
 			index_attempts = 0, index_error = NULL,
 			index_next_run_at = NULL, index_lease_token = NULL
-		WHERE id = ? AND current_version = ?
-			AND index_state = 'running' AND index_lease_token = ?`,
-	bindings: leaseBindings(lease)
-});
+		WHERE ${leaseUpdateFilter(sql, lease)}
+		RETURNING id`.pipe(Effect.map((rows) => rows.length === 1));
 
-const chunkJson = (
-	chunks: ReadonlyArray<TextChunk>,
-	vectorIds: ReadonlyArray<string>
+// One multi-row statement: the columns arrive as parallel arrays and are
+// zipped by unnest, and the embeddings travel in pgvector's text form.
+export const upsertFileChunks = (
+	sql: PgClient.PgClient,
+	rows: ReadonlyArray<VectorChunk>
 ) =>
-	JSON.stringify(
-		chunks.map((chunk, index) => ({
-			vectorId: vectorIds[index],
-			ordinal: chunk.ordinal,
-			charStart: chunk.charStart,
-			charEnd: chunk.charEnd
-		}))
-	);
-
-const queueStaleVectorsCommand = (
-	lease: IndexLease,
-	vectorIds: ReadonlyArray<string>,
-	queuedAt: string
-): SqlCommand => ({
-	sql: `INSERT INTO pending_vector_deletes (vector_id, queued_at)
-		SELECT CAST(value AS TEXT), ?
-		FROM json_each(?)
-		WHERE NOT EXISTS (${leaseExists})
-		ON CONFLICT(vector_id) DO NOTHING`,
-	bindings: [queuedAt, vectorIdsJson(vectorIds), ...leaseBindings(lease)]
-});
-
-const queueAttemptVectorsCommand = (
-	vectorIds: ReadonlyArray<string>,
-	queuedAt: string
-): SqlCommand => ({
-	sql: `INSERT INTO pending_vector_deletes (vector_id, queued_at)
-		SELECT CAST(value AS TEXT), ? FROM json_each(?) WHERE 1
-		ON CONFLICT(vector_id) DO NOTHING`,
-	bindings: [queuedAt, vectorIdsJson(vectorIds)]
-});
-
-export const semanticCommitCommands = (
-	lease: IndexLease,
-	chunks: ReadonlyArray<TextChunk>,
-	vectorIds: ReadonlyArray<string>,
-	indexedAt: string
-): ReadonlyArray<SqlCommand> => [
-	queueStaleVectorsCommand(lease, vectorIds, indexedAt),
-	{
-		sql: `INSERT INTO pending_vector_deletes (vector_id, queued_at)
-			SELECT chunks.vector_id, ?
-			FROM file_chunks chunks
-			WHERE chunks.file_id = ?
-				AND EXISTS (${leaseExists})
-			ON CONFLICT(vector_id) DO NOTHING`,
-		bindings: [indexedAt, lease.fileId, ...leaseBindings(lease)]
-	},
-	{
-		sql: `DELETE FROM file_chunks
-			WHERE file_id = ? AND EXISTS (${leaseExists})`,
-		bindings: [lease.fileId, ...leaseBindings(lease)]
-	},
-	{
-		sql: `INSERT INTO file_chunks (
-				vector_id, file_id, version, ordinal, char_start, char_end
+	rows.length === 0
+		? Effect.void
+		: sql`
+			INSERT INTO file_chunks (
+				file_id, version, ordinal, char_start, char_end, embedding
 			)
-			SELECT
-				CAST(json_extract(value, '$.vectorId') AS TEXT),
-				?,
-				?,
-				CAST(json_extract(value, '$.ordinal') AS INTEGER),
-				CAST(json_extract(value, '$.charStart') AS INTEGER),
-				CAST(json_extract(value, '$.charEnd') AS INTEGER)
-			FROM json_each(?)
-			WHERE EXISTS (${leaseExists})`,
-		bindings: [
-			lease.fileId,
-			lease.version,
-			chunkJson(chunks, vectorIds),
-			...leaseBindings(lease)
-		]
-	},
-	{
-		sql: `UPDATE files
-			SET index_state = 'ready', indexed_version = ?, index_cursor = ?,
-				index_attempts = 0, index_error = NULL, index_next_run_at = NULL,
-				index_lease_token = NULL
-			WHERE id = ? AND current_version = ?
-				AND index_state = 'running' AND index_lease_token = ?`,
-		bindings: [lease.version, chunks.length, ...leaseBindings(lease)]
-	}
-];
-
-export const indexFailureCommands = (
-	lease: IndexLease,
-	vectorIds: ReadonlyArray<string>,
-	failure: IndexFailure,
-	failedAt: string
-): ReadonlyArray<SqlCommand> => [
-	...(vectorIds.length === 0
-		? []
-		: [queueAttemptVectorsCommand(vectorIds, failedAt)]),
-	{
-		sql: `UPDATE files
-			SET index_state = ?, index_error = ?, index_next_run_at = ?,
-				index_lease_token = NULL
-			WHERE id = ? AND current_version = ?
-				AND index_state = 'running' AND index_lease_token = ?`,
-		bindings: [
-			failure.state,
-			failure.error,
-			failure.nextRunAt,
-			...leaseBindings(lease)
-		]
-	}
-];
-
-export const vectorDeleteFailureCommand = (
-	rows: ReadonlyArray<{
-		readonly vectorId: string;
-		readonly nextRunAt: string;
-	}>,
-	error: string
-): SqlCommand => ({
-	sql: `UPDATE pending_vector_deletes
-		SET attempts = attempts + 1,
-			last_error = ?,
-			next_run_at = (
-				SELECT json_extract(value, '$.nextRunAt')
-				FROM json_each(?)
-				WHERE json_extract(value, '$.vectorId') =
-					pending_vector_deletes.vector_id
+			SELECT *
+			FROM unnest(
+				${rows.map((row) => row.fileId)}::text[],
+				${rows.map((row) => row.version)}::integer[],
+				${rows.map((row) => row.ordinal)}::integer[],
+				${rows.map((row) => row.charStart)}::integer[],
+				${rows.map((row) => row.charEnd)}::integer[],
+				${rows.map((row) => `[${row.values.join(',')}]`)}::vector[]
 			)
-		WHERE vector_id IN (
-			SELECT json_extract(value, '$.vectorId') FROM json_each(?)
-		)`,
-	bindings: [error, JSON.stringify(rows), JSON.stringify(rows)]
-});
+			ON CONFLICT (file_id, version, ordinal) DO UPDATE
+			SET char_start = EXCLUDED.char_start,
+				char_end = EXCLUDED.char_end,
+				embedding = EXCLUDED.embedding`.pipe(Effect.asVoid);
 
-export const vectorDeleteSuccessCommand = (
-	vectorIds: ReadonlyArray<string>
-): SqlCommand => ({
-	sql: `DELETE FROM pending_vector_deletes
-		WHERE vector_id IN (SELECT CAST(value AS TEXT) FROM json_each(?))`,
-	bindings: [vectorIdsJson(vectorIds)]
-});
+// Commits the embedded chunks and the ready state together. Chunks from
+// older versions (and any same-version ordinals past the new count) go in
+// the same transaction, so a stale lease rolls everything back and the
+// newer version's rows are never touched.
+export const semanticCommit = (
+	sql: PgClient.PgClient,
+	lease: IndexLease,
+	chunks: ReadonlyArray<VectorChunk>
+) =>
+	sql
+		.withTransaction(
+			Effect.gen(function* () {
+				yield* holdLease(sql, lease);
+				yield* sql`
+					DELETE FROM file_chunks
+					WHERE file_id = ${lease.fileId}
+						AND (version <> ${lease.version} OR ordinal >= ${chunks.length})`;
+				yield* upsertFileChunks(sql, chunks);
+				const updated = yield* sql<{ id: string }>`
+					UPDATE files
+					SET index_state = 'ready', indexed_version = ${lease.version},
+						index_cursor = ${chunks.length}, index_attempts = 0,
+						index_error = NULL, index_next_run_at = NULL,
+						index_lease_token = NULL
+					WHERE ${leaseUpdateFilter(sql, lease)}
+					RETURNING id`;
+				if (updated.length !== 1) return yield* new StaleIndexLease();
+			})
+		)
+		.pipe(staleAsFalse);
+
+// Chunks are only written inside semanticCommit, so a failed attempt has
+// nothing to clean up; recording the disposition releases the lease.
+export const recordIndexFailure = (
+	sql: PgClient.PgClient,
+	lease: IndexLease,
+	failure: IndexFailure
+) =>
+	sql<{ id: string }>`
+		UPDATE files
+		SET index_state = ${failure.state}, index_error = ${failure.error},
+			index_next_run_at = ${failure.nextRunAt}, index_lease_token = NULL
+		WHERE ${leaseUpdateFilter(sql, lease)}
+		RETURNING id`.pipe(Effect.map((rows) => rows.length === 1));

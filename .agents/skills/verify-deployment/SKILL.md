@@ -57,8 +57,8 @@ key-only run can conclude at best INCONCLUSIVE — never PASS.
   repo, or `wrangler deployments list --env production` when wrangler
   is authenticated) plus the current UTC time.
 - **[M]** If wrangler is available: confirm the production env lists DB
-  (D1), BUCKET (R2), AUTH_GUARD (KV), AI (Workers AI), and VECTORIZE
-  bindings (`wrangler deploy --dry-run --env production` output). Without
+  (D1), BUCKET (R2), AUTH_GUARD (KV), HYPERDRIVE (Postgres), and AI
+  (Workers AI) bindings (`wrangler deploy --dry-run --env production` output). Without
   wrangler this mandatory check is SKIPPED and the run cannot PASS.
 
 ## 2. Authentication

@@ -1,7 +1,6 @@
 import { API_KEY_PATTERN, type ApiKey, type ApiKeyScope } from '@adrive/shared';
 import type { Cookies } from '@sveltejs/kit';
 import { Context, Effect, Layer, Schema } from 'effect';
-import { SqlClient } from 'effect/unstable/sql';
 import {
 	DEVICE_CODE_TTL_SECONDS,
 	DEVICE_POLL_INTERVAL_SECONDS,
@@ -22,7 +21,7 @@ import {
 	Unauthorized,
 	validate
 } from '../errors';
-import { Db } from './bindings';
+import { PgSql } from '../pg';
 
 const ApiKeyRow = Schema.Struct({
 	id: Schema.String,
@@ -250,9 +249,11 @@ const toApiKey = (row: typeof ApiKeyRow.Type): ApiKey => ({
 });
 
 const makeAuth = Effect.gen(function* () {
-	const db = yield* Db;
-	const sql = (yield* SqlClient.SqlClient).withoutTransforms();
+	const sql = yield* PgSql;
 	const config = yield* AppConfig;
+
+	const storageError = (operation: string) =>
+		Effect.mapError((cause: unknown) => new StorageError({ operation, cause }));
 
 	const makeApiKey = Effect.fn('Auth.makeApiKey')(function* (name: string) {
 		const normalizedName = yield* validate(() => normalizeApiKeyName(name));
@@ -481,20 +482,13 @@ const makeAuth = Effect.gen(function* () {
 			};
 		}),
 		revokeApiKey: Effect.fn('Auth.revokeApiKey')(function* (id) {
-			const result = yield* Effect.tryPromise({
-				try: () =>
-					db
-						.prepare(
-							`UPDATE api_keys
-							SET revoked_at = ?
-							WHERE id = ? AND revoked_at IS NULL`
-						)
-						.bind(new Date().toISOString(), id)
-						.run(),
-				catch: (cause) =>
-					new StorageError({ operation: 'revoke API key', cause })
-			});
-			if (result.meta.changes !== 1) {
+			const rows = yield* sql`
+				UPDATE api_keys
+				SET revoked_at = ${new Date().toISOString()}
+				WHERE id = ${id} AND revoked_at IS NULL
+				RETURNING id
+			`.pipe(storageError('revoke API key'));
+			if (rows.length !== 1) {
 				return yield* new InvalidRequest({
 					status: 404,
 					message: 'API key was not found'
@@ -512,32 +506,19 @@ const makeAuth = Effect.gen(function* () {
 				);
 				let userCode = randomUserCode();
 				for (let attempt = 0; attempt < 5; attempt += 1) {
-					const result = yield* Effect.tryPromise({
-						try: () =>
-							db
-								.prepare(
-									`INSERT INTO device_codes (
-									device_code_hash, user_code, status, interval_seconds,
-									expires_at, created_at, name
-								) VALUES (?, ?, 'pending', ?, ?, ?, ?)
-								ON CONFLICT(user_code) DO NOTHING`
-								)
-								.bind(
-									deviceCodeHash,
-									userCode,
-									DEVICE_POLL_INTERVAL_SECONDS,
-									expiresAt.toISOString(),
-									createdAt.toISOString(),
-									normalizedName
-								)
-								.run(),
-						catch: (cause) =>
-							new StorageError({
-								operation: 'create device authorization',
-								cause
-							})
-					});
-					if (result.meta.changes === 1) {
+					const rows = yield* sql`
+						INSERT INTO device_codes (
+							device_code_hash, user_code, status, interval_seconds,
+							expires_at, created_at, name
+						) VALUES (
+							${deviceCodeHash}, ${userCode}, 'pending',
+							${DEVICE_POLL_INTERVAL_SECONDS}, ${expiresAt.toISOString()},
+							${createdAt.toISOString()}, ${normalizedName}
+						)
+						ON CONFLICT (user_code) DO NOTHING
+						RETURNING device_code_hash
+					`.pipe(storageError('create device authorization'));
+					if (rows.length === 1) {
 						return {
 							deviceCode,
 							userCode,
@@ -556,20 +537,13 @@ const makeAuth = Effect.gen(function* () {
 		approveDevice: Effect.fn('Auth.approveDevice')(function* (userCode) {
 			const code = yield* parseUserCode(userCode);
 			const now = new Date().toISOString();
-			const result = yield* Effect.tryPromise({
-				try: () =>
-					db
-						.prepare(
-							`UPDATE device_codes
-							SET status = 'approved', approved_at = ?
-							WHERE user_code = ? AND status = 'pending' AND expires_at > ?`
-						)
-						.bind(now, code, now)
-						.run(),
-				catch: (cause) =>
-					new StorageError({ operation: 'approve device', cause })
-			});
-			if (result.meta.changes !== 1) {
+			const rows = yield* sql`
+				UPDATE device_codes
+				SET status = 'approved', approved_at = ${now}
+				WHERE user_code = ${code} AND status = 'pending' AND expires_at > ${now}
+				RETURNING user_code
+			`.pipe(storageError('approve device'));
+			if (rows.length !== 1) {
 				return yield* new InvalidRequest({
 					status: 400,
 					message: 'Device approval code is invalid or expired'
@@ -579,19 +553,13 @@ const makeAuth = Effect.gen(function* () {
 		denyDevice: Effect.fn('Auth.denyDevice')(function* (userCode) {
 			const code = yield* parseUserCode(userCode);
 			const now = new Date().toISOString();
-			const result = yield* Effect.tryPromise({
-				try: () =>
-					db
-						.prepare(
-							`UPDATE device_codes
-							SET status = 'denied'
-							WHERE user_code = ? AND status = 'pending' AND expires_at > ?`
-						)
-						.bind(code, now)
-						.run(),
-				catch: (cause) => new StorageError({ operation: 'deny device', cause })
-			});
-			if (result.meta.changes !== 1) {
+			const rows = yield* sql`
+				UPDATE device_codes
+				SET status = 'denied'
+				WHERE user_code = ${code} AND status = 'pending' AND expires_at > ${now}
+				RETURNING user_code
+			`.pipe(storageError('deny device'));
+			if (rows.length !== 1) {
 				return yield* new InvalidRequest({
 					status: 400,
 					message: 'Device approval code is invalid or expired'
@@ -671,125 +639,108 @@ const makeAuth = Effect.gen(function* () {
 
 			const generated = yield* makeApiKey(row.name);
 			const consumedAt = now.toISOString();
-			const results = yield* Effect.tryPromise({
-				try: () =>
-					db.batch([
-						db
-							.prepare(
-								`INSERT INTO api_keys (
-									id, name, prefix, secret_hash, created_at
-								)
-								SELECT ?, ?, ?, ?, ?
-								WHERE EXISTS (
-									SELECT 1 FROM device_codes
-									WHERE device_code_hash = ? AND status = 'approved'
-								)`
+			// Lock the approval before inserting a key. A concurrent poll must
+			// observe the consumed state before it can mint another credential.
+			const completed = yield* sql
+				.withTransaction(
+					Effect.gen(function* () {
+						const approved = yield* sql`
+							SELECT device_code_hash FROM device_codes
+							WHERE device_code_hash = ${hash} AND status = 'approved'
+							FOR UPDATE
+						`;
+						if (approved.length !== 1) return false;
+						yield* sql`
+							INSERT INTO api_keys (
+								id, name, prefix, secret_hash, created_at
 							)
-							.bind(
-								generated.row.id,
-								generated.row.name,
-								generated.row.prefix,
-								generated.secretHash,
-								generated.row.createdAt,
-								hash
-							),
-						db
-							.prepare(
-								`UPDATE device_codes
-								SET status = 'consumed', consumed_at = ?, api_key_id = ?
-								WHERE device_code_hash = ? AND status = 'approved'`
-							)
-							.bind(consumedAt, generated.row.id, hash)
-					]),
-				catch: (cause) =>
-					new StorageError({
-						operation: 'complete device authorization',
-						cause
+							VALUES (${generated.row.id}, ${generated.row.name},
+								${generated.row.prefix}, ${generated.secretHash},
+								${generated.row.createdAt})
+						`;
+						const consumed = yield* sql`
+							UPDATE device_codes
+							SET status = 'consumed', consumed_at = ${consumedAt},
+								api_key_id = ${generated.row.id}
+							WHERE device_code_hash = ${hash} AND status = 'approved'
+							RETURNING device_code_hash
+						`;
+						return consumed.length === 1;
 					})
-			});
-			if (results[0]?.meta.changes !== 1 || results[1]?.meta.changes !== 1) {
+				)
+				.pipe(storageError('complete device authorization'));
+			if (!completed) {
 				return yield* new Unauthorized({
 					message: 'Device authorization was already consumed'
 				});
 			}
 			return { status: 'complete' as const, apiKey: generated.token };
 		}),
-		revokeAllSessions: Effect.gen(function* () {
-			const results = yield* Effect.tryPromise({
-				try: () =>
-					db.batch([
-						db.prepare('DELETE FROM dashboard_sessions'),
-						db.prepare(
-							`UPDATE device_codes SET status = 'denied'
-							WHERE status IN ('pending', 'approved')`
-						)
-					]),
-				catch: (cause) =>
-					new StorageError({ operation: 'revoke all sessions', cause })
-			});
-			return results.reduce(
-				(count, result) => count + (result.meta.changes ?? 0),
-				0
-			);
-		}).pipe(Effect.withSpan('Auth.revokeAllSessions')),
+		revokeAllSessions: sql
+			.withTransaction(
+				Effect.gen(function* () {
+					const sessions = yield* sql`
+						DELETE FROM dashboard_sessions RETURNING token_hash
+					`;
+					const codes = yield* sql`
+						UPDATE device_codes SET status = 'denied'
+						WHERE status IN ('pending', 'approved')
+						RETURNING device_code_hash
+					`;
+					return sessions.length + codes.length;
+				})
+			)
+			.pipe(
+				storageError('revoke all sessions'),
+				Effect.withSpan('Auth.revokeAllSessions')
+			),
 		enforcePasscodeRotation: Effect.gen(function* () {
 			const passcodeHash = yield* hashToken(config.passcode);
 			const now = new Date().toISOString();
-			// One transactional batch (D1 batches are transactions): seed the
-			// row on first boot without revoking anything, revoke while the
-			// stored hash still differs from the deployed one, then record the
-			// new hash. A failure anywhere rolls the whole claim back, so a
-			// rotation can never be marked recorded with revocation skipped.
-			const results = yield* Effect.tryPromise({
-				try: () =>
-					db.batch([
-						db
-							.prepare(
-								`INSERT INTO credential_state (id, passcode_hash, rotated_at)
-								VALUES (1, ?1, ?2)
-								ON CONFLICT(id) DO NOTHING`
+			// One transaction: seed the row on first boot without revoking
+			// anything, revoke while the stored hash still differs from the
+			// deployed one, then record the new hash. A failure anywhere rolls
+			// the whole claim back, so a rotation can never be marked recorded
+			// with revocation skipped.
+			return yield* sql
+				.withTransaction(
+					Effect.gen(function* () {
+						yield* sql`
+							INSERT INTO credential_state (id, passcode_hash, rotated_at)
+							VALUES (1, ${passcodeHash}, ${now})
+							ON CONFLICT (id) DO NOTHING
+						`;
+						const sessions = yield* sql`
+							DELETE FROM dashboard_sessions
+							WHERE EXISTS (
+								SELECT 1 FROM credential_state
+								WHERE id = 1 AND passcode_hash <> ${passcodeHash}
 							)
-							.bind(passcodeHash, now),
-						db
-							.prepare(
-								`DELETE FROM dashboard_sessions
-								WHERE EXISTS (
+							RETURNING token_hash
+						`;
+						const codes = yield* sql`
+							UPDATE device_codes SET status = 'denied'
+							WHERE status IN ('pending', 'approved')
+								AND EXISTS (
 									SELECT 1 FROM credential_state
-									WHERE id = 1 AND passcode_hash <> ?1
-								)`
-							)
-							.bind(passcodeHash),
-						db
-							.prepare(
-								`UPDATE device_codes SET status = 'denied'
-								WHERE status IN ('pending', 'approved')
-									AND EXISTS (
-										SELECT 1 FROM credential_state
-										WHERE id = 1 AND passcode_hash <> ?1
-									)`
-							)
-							.bind(passcodeHash),
-						db
-							.prepare(
-								`UPDATE credential_state
-								SET passcode_hash = ?1, rotated_at = ?2
-								WHERE id = 1 AND passcode_hash <> ?1`
-							)
-							.bind(passcodeHash, now)
-					]),
-				catch: (cause) =>
-					new StorageError({
-						operation: 'enforce passcode rotation',
-						cause
+									WHERE id = 1 AND passcode_hash <> ${passcodeHash}
+								)
+							RETURNING device_code_hash
+						`;
+						const recorded = yield* sql`
+							UPDATE credential_state
+							SET passcode_hash = ${passcodeHash}, rotated_at = ${now}
+							WHERE id = 1 AND passcode_hash <> ${passcodeHash}
+							RETURNING id
+						`;
+						const rotated = recorded.length === 1;
+						return {
+							rotated,
+							revoked: rotated ? sessions.length + codes.length : 0
+						};
 					})
-			});
-			const rotated = results[3]?.meta.changes === 1;
-			return {
-				rotated,
-				revoked: rotated
-					? (results[1]?.meta.changes ?? 0) + (results[2]?.meta.changes ?? 0)
-					: 0
-			};
+				)
+				.pipe(storageError('enforce passcode rotation'));
 		}).pipe(Effect.withSpan('Auth.enforcePasscodeRotation')),
 		sweepExpired: Effect.fn('Auth.sweepExpired')(function* (limit) {
 			const bounded = Math.max(1, Math.min(limit, 100));
@@ -797,43 +748,34 @@ const makeAuth = Effect.gen(function* () {
 			const cutoff = new Date(
 				new Date(now).getTime() - 24 * 60 * 60 * 1_000
 			).toISOString();
-			const results = yield* Effect.tryPromise({
-				try: () =>
-					db.batch([
-						db
-							.prepare(
-								`DELETE FROM dashboard_sessions
-								WHERE token_hash IN (
-									SELECT token_hash FROM dashboard_sessions
-									WHERE expires_at <= ?
-									ORDER BY expires_at
-									LIMIT ?
-								)`
+			return yield* sql
+				.withTransaction(
+					Effect.gen(function* () {
+						const sessions = yield* sql`
+							DELETE FROM dashboard_sessions
+							WHERE token_hash IN (
+								SELECT token_hash FROM dashboard_sessions
+								WHERE expires_at <= ${now}
+								ORDER BY expires_at
+								LIMIT ${bounded}
 							)
-							.bind(now, bounded),
-						db
-							.prepare(
-								`DELETE FROM device_codes
-								WHERE device_code_hash IN (
-									SELECT device_code_hash FROM device_codes
-									WHERE expires_at <= ?
-										OR (status = 'consumed' AND consumed_at <= ?)
-									ORDER BY expires_at
-									LIMIT ?
-								)`
+							RETURNING token_hash
+						`;
+						const codes = yield* sql`
+							DELETE FROM device_codes
+							WHERE device_code_hash IN (
+								SELECT device_code_hash FROM device_codes
+								WHERE expires_at <= ${now}
+									OR (status = 'consumed' AND consumed_at <= ${cutoff})
+								ORDER BY expires_at
+								LIMIT ${bounded}
 							)
-							.bind(now, cutoff, bounded)
-					]),
-				catch: (cause) =>
-					new StorageError({
-						operation: 'sweep expired authentication state',
-						cause
+							RETURNING device_code_hash
+						`;
+						return sessions.length + codes.length;
 					})
-			});
-			return results.reduce(
-				(count, result) => count + (result.meta.changes ?? 0),
-				0
-			);
+				)
+				.pipe(storageError('sweep expired authentication state'));
 		})
 	});
 });

@@ -1,8 +1,8 @@
 import { normalizeSitePath } from '@adrive/shared';
 import { Effect } from 'effect';
 import { InvalidRequest, NotFound, StorageError } from '../../errors';
-import { fileIndexStatements } from '../../search-index';
-import { ensureStorageQuota } from '../../storage-quota';
+import { refreshSearchDocument } from '../../search-index';
+import { ensureStoredBytesWithin } from '../../storage-quota';
 import {
 	assertOpenSiteSession,
 	prepareSiteManifest,
@@ -24,7 +24,7 @@ export const sessionOps = (
 		cleanupStaged,
 		drainDeletes,
 		sweepExpiredSessions,
-		db,
+		sql,
 		blobs,
 		config
 	} = internals;
@@ -59,21 +59,18 @@ export const sessionOps = (
 				(total, asset) => total + asset.sizeBytes,
 				0
 			);
-			yield* ensureStorageQuota(db, config.maxTotalBytes, declaredBytes);
+			yield* ensureStoredBytesWithin(sql, config.maxTotalBytes, declaredBytes);
 
 			let fileId: string = crypto.randomUUID();
 			let version = 1;
 			let displayName = prepared.displayName;
 			if (input.fileId !== undefined) {
 				const rows = yield* all(
-					db
-						.prepare(
-							`SELECT id, display_name, current_version
-							FROM files
-							WHERE id = ? AND is_site = 1 AND deleted_at IS NULL
-							LIMIT 1`
-						)
-						.bind(input.fileId),
+					sql`
+						SELECT id, display_name, current_version
+						FROM files
+						WHERE id = ${input.fileId} AND is_site = true AND deleted_at IS NULL
+						LIMIT 1`,
 					ExistingSiteRow,
 					'find site to republish'
 				);
@@ -89,29 +86,35 @@ export const sessionOps = (
 			const expiresAt = new Date(
 				new Date(createdAt).getTime() + SITE_SESSION_TTL_MS
 			).toISOString();
-			const statements = [
-				db
-					.prepare(
-						`INSERT INTO site_upload_sessions (
-							id, file_id, display_name, version, status, created_at, expires_at
-						) VALUES (?, ?, ?, ?, 'open', ?, ?)`
-					)
-					.bind(id, fileId, displayName, version, createdAt, expiresAt),
-				...prepared.assets.map((asset) =>
-					db
-						.prepare(
-							`INSERT INTO staged_site_assets (
-								session_id, path, expected_size_bytes, content_type
-							) VALUES (?, ?, ?, ?)`
-						)
-						.bind(id, asset.path, asset.sizeBytes, asset.contentType)
+			yield* sql
+				.withTransaction(
+					Effect.gen(function* () {
+						yield* sql`
+							INSERT INTO site_upload_sessions (
+								id, file_id, display_name, version, status, created_at, expires_at
+							) VALUES (
+								${id}, ${fileId}, ${displayName}, ${version}, 'open',
+								${createdAt}, ${expiresAt}
+							)`;
+						for (const asset of prepared.assets) {
+							yield* sql`
+								INSERT INTO staged_site_assets (
+									session_id, path, expected_size_bytes, content_type
+								) VALUES (
+									${id}, ${asset.path}, ${asset.sizeBytes}, ${asset.contentType}
+								)`;
+						}
+					})
 				)
-			];
-			yield* Effect.tryPromise({
-				try: () => db.batch(statements),
-				catch: (cause) =>
-					new StorageError({ operation: 'create site upload session', cause })
-			});
+				.pipe(
+					Effect.mapError(
+						(cause) =>
+							new StorageError({
+								operation: 'create site upload session',
+								cause
+							})
+					)
+				);
 			yield* drainDeletes(fileId).pipe(
 				Effect.catchCause((cause) =>
 					Effect.sync(() => {
@@ -182,38 +185,38 @@ export const sessionOps = (
 				asset.contentType
 			);
 			const uploadedAt = new Date().toISOString();
-			const update = yield* Effect.tryPromise({
-				try: () =>
-					db
-						.prepare(
-							`UPDATE staged_site_assets
-							SET r2_key = ?, stored_size_bytes = ?, uploaded_at = ?
-							WHERE session_id = ? AND path = ? AND r2_key IS NULL
-								AND EXISTS (
-									SELECT 1 FROM site_upload_sessions
-									WHERE id = ? AND status = 'open' AND expires_at > ?
-								)`
-						)
-						.bind(
-							r2Key,
-							stored.size,
-							uploadedAt,
-							session.id,
-							path,
-							session.id,
-							uploadedAt
-						)
-						.run(),
-				catch: (cause) =>
-					new StorageError({ operation: 'record staged site asset', cause })
-			}).pipe(
-				Effect.catch((failure) =>
-					compensateStagedBlob(session, r2Key).pipe(
-						Effect.andThen(Effect.fail(failure))
-					)
+			const updated = yield* sql
+				.withTransaction(
+					Effect.gen(function* () {
+						// Cleanup also locks the session before touching staged rows.
+						// Recheck after waiting so a late upload cannot lose its blob
+						// record behind an abort or an expiry sweep.
+						const open = yield* sql`
+						SELECT id FROM site_upload_sessions
+						WHERE id = ${session.id} AND status = 'open'
+							AND expires_at > ${uploadedAt}
+						FOR UPDATE`;
+						if (open.length === 0) return [];
+						return yield* sql<{ path: string }>`
+						UPDATE staged_site_assets
+						SET r2_key = ${r2Key}, stored_size_bytes = ${stored.size},
+							uploaded_at = ${uploadedAt}
+						WHERE session_id = ${session.id} AND path = ${path} AND r2_key IS NULL
+						RETURNING path`;
+					})
 				)
-			);
-			if (update.meta.changes !== 1) {
+				.pipe(
+					Effect.mapError(
+						(cause) =>
+							new StorageError({ operation: 'record staged site asset', cause })
+					),
+					Effect.catch((failure) =>
+						compensateStagedBlob(session, r2Key).pipe(
+							Effect.andThen(Effect.fail(failure))
+						)
+					)
+				);
+			if (updated.length !== 1) {
 				yield* compensateStagedBlob(session, r2Key);
 				return yield* new InvalidRequest({
 					status: 409,
@@ -249,153 +252,147 @@ export const sessionOps = (
 			const versionKey = `site-version/${session.fileId}/${session.version}/${session.id}`;
 			const guard =
 				session.version === 1
-					? db
-							.prepare(
-								`UPDATE site_upload_sessions
-								SET status = 'committing'
-								WHERE id = ? AND status = 'open' AND expires_at > ?
-									AND NOT EXISTS (SELECT 1 FROM files WHERE id = ?)`
-							)
-							.bind(session.id, publishedAt, session.fileId)
-					: db
-							.prepare(
-								`UPDATE site_upload_sessions
-								SET status = 'committing'
-								WHERE id = ? AND status = 'open' AND expires_at > ?
-									AND EXISTS (
-										SELECT 1 FROM files
-										WHERE id = ? AND is_site = 1 AND deleted_at IS NULL
-											AND current_version = ?
-									)`
-							)
-							.bind(
-								session.id,
-								publishedAt,
-								session.fileId,
-								session.version - 1
-							);
-			const statements = [
-				guard,
-				db
-					.prepare(
-						`INSERT INTO files (
-							id, display_name, content_type, kind, current_version, size_bytes,
-							public, is_site, created_at, updated_at, index_state
-						)
-						SELECT file_id, display_name, 'text/html', 'site', 1, ?, 1, 1,
-							?, ?, 'pending'
-						FROM site_upload_sessions
-						WHERE id = ? AND status = 'committing' AND version = 1
-						ON CONFLICT(id) DO NOTHING`
-					)
-					.bind(totalSize, publishedAt, publishedAt, session.id),
-				db
-					.prepare(
-						`UPDATE files
-						SET current_version = ?, size_bytes = ?, content_type = 'text/html',
-							public = 1, updated_at = ?, index_state = 'pending',
-							index_cursor = 0, index_attempts = 0, index_error = NULL,
-							index_next_run_at = NULL, index_lease_token = NULL
-						WHERE id = ? AND current_version = ? AND is_site = 1
-							AND EXISTS (
-								SELECT 1 FROM site_upload_sessions
-								WHERE id = ? AND status = 'committing' AND version > 1
-							)`
-					)
-					.bind(
-						session.version,
-						totalSize,
-						publishedAt,
-						session.fileId,
-						session.version - 1,
-						session.id
-					),
-				db
-					.prepare(
-						`INSERT INTO file_versions (
-							file_id, version, r2_key, size_bytes, sha256, content_type,
-							created_at, text_content
-						)
-						SELECT s.file_id, s.version, ?, ?, NULL, 'text/html', ?, NULL
-						FROM site_upload_sessions s
-						JOIN files f ON f.id = s.file_id
-						WHERE s.id = ? AND s.status = 'committing'
-							AND f.current_version = s.version`
-					)
-					.bind(versionKey, totalSize, publishedAt, session.id),
-				db
-					.prepare(
-						`INSERT INTO pending_site_asset_deletes (
-							r2_key, file_id, version, queued_at
-						)
-						SELECT old.r2_key, old.file_id, old.version, ?
-						FROM site_assets old
-						WHERE old.file_id = ? AND old.version <> ?
-							AND EXISTS (
-								SELECT 1 FROM site_upload_sessions
-								WHERE id = ? AND status = 'committing'
-							)
-						ON CONFLICT(r2_key) DO NOTHING`
-					)
-					.bind(publishedAt, session.fileId, session.version, session.id),
-				db
-					.prepare(
-						`DELETE FROM site_assets
-						WHERE file_id = ? AND version <> ?
-							AND EXISTS (
-								SELECT 1 FROM site_upload_sessions
-								WHERE id = ? AND status = 'committing'
-							)`
-					)
-					.bind(session.fileId, session.version, session.id),
-				db
-					.prepare(
-						`INSERT INTO site_assets (
-							file_id, version, path, r2_key, content_type, size_bytes
-						)
-						SELECT s.file_id, s.version, a.path, a.r2_key, a.content_type,
-							a.stored_size_bytes
-						FROM site_upload_sessions s
-						JOIN staged_site_assets a ON a.session_id = s.id
-						WHERE s.id = ? AND s.status = 'committing'
-							AND a.r2_key IS NOT NULL AND a.stored_size_bytes IS NOT NULL`
-					)
-					.bind(session.id),
-				...fileIndexStatements(db, session.fileId),
-				db
-					.prepare(
-						`UPDATE site_upload_sessions SET status = 'complete'
-						WHERE id = ? AND status = 'committing'
-							AND (
-								SELECT COUNT(*) FROM staged_site_assets
-								WHERE session_id = ?
-							) = (
-								SELECT COUNT(*) FROM site_assets
-								WHERE file_id = ? AND version = ?
-							)`
-					)
-					.bind(session.id, session.id, session.fileId, session.version),
-				db
-					.prepare(
-						`DELETE FROM staged_site_assets
-						WHERE session_id = ? AND EXISTS (
-							SELECT 1 FROM site_upload_sessions
-							WHERE id = ? AND status = 'complete'
-						)`
-					)
-					.bind(session.id, session.id)
-			];
+					? sql<{ id: string }>`
+							UPDATE site_upload_sessions
+							SET status = 'committing'
+							WHERE id = ${session.id} AND status = 'open'
+								AND expires_at > ${publishedAt}
+								AND NOT EXISTS (SELECT 1 FROM files WHERE id = ${session.fileId})
+							RETURNING id`
+					: sql<{ id: string }>`
+							UPDATE site_upload_sessions
+							SET status = 'committing'
+							WHERE id = ${session.id} AND status = 'open'
+								AND expires_at > ${publishedAt}
+								AND EXISTS (
+									SELECT 1 FROM files
+									WHERE id = ${session.fileId} AND is_site = true
+										AND deleted_at IS NULL
+										AND current_version = ${session.version - 1}
+								)
+							RETURNING id`;
 
-			const commit = Effect.tryPromise({
-				try: async () => {
-					const results = await db.batch(statements);
-					if (results[0]?.meta.changes !== 1) {
-						throw new Error('The site changed while it was publishing');
-					}
-				},
-				catch: (cause) =>
-					new StorageError({ operation: 'commit site version', cause })
-			});
+			const commit = sql
+				.withTransaction(
+					Effect.gen(function* () {
+						if (session.version > 1) {
+							// Purge claims this row before enumerating blobs. Hold it
+							// through publication so purge either sees the new version
+							// or makes this publish ineligible before any promotion.
+							const current = yield* sql<{ id: string }>`
+								SELECT id FROM files
+								WHERE id = ${session.fileId} AND is_site = true
+									AND current_version = ${session.version - 1}
+									AND deleted_at IS NULL AND purge_state = 'none'
+									AND (expires_at IS NULL OR expires_at > ${publishedAt})
+								FOR UPDATE`;
+							if (current.length !== 1) {
+								return yield* new StorageError({
+									operation: 'commit site version',
+									cause: 'The site changed while it was publishing'
+								});
+							}
+						}
+						const guarded = yield* guard;
+						if (guarded.length !== 1) {
+							return yield* new StorageError({
+								operation: 'commit site version',
+								cause: 'The site changed while it was publishing'
+							});
+						}
+						yield* sql`
+							INSERT INTO files (
+								id, display_name, content_type, kind, current_version, size_bytes,
+								public, is_site, created_at, updated_at, index_state
+							)
+							SELECT file_id, display_name, 'text/html', 'site', 1, ${totalSize},
+								true, true, ${publishedAt}, ${publishedAt}, 'pending'
+							FROM site_upload_sessions
+							WHERE id = ${session.id} AND status = 'committing' AND version = 1
+							ON CONFLICT (id) DO NOTHING`;
+						yield* sql`
+							UPDATE files
+							SET current_version = ${session.version}, size_bytes = ${totalSize},
+								content_type = 'text/html', public = true,
+								updated_at = ${publishedAt}, index_state = 'pending',
+								index_cursor = 0, index_attempts = 0, index_error = NULL,
+								index_next_run_at = NULL, index_lease_token = NULL
+							WHERE id = ${session.fileId}
+								AND current_version = ${session.version - 1}
+								AND is_site = true
+								AND EXISTS (
+									SELECT 1 FROM site_upload_sessions
+									WHERE id = ${session.id} AND status = 'committing'
+										AND version > 1
+								)`;
+						yield* sql`
+							INSERT INTO file_versions (
+								file_id, version, r2_key, size_bytes, sha256, content_type,
+								created_at, text_content
+							)
+							SELECT s.file_id, s.version, ${versionKey}, ${totalSize}, NULL,
+								'text/html', ${publishedAt}, NULL
+							FROM site_upload_sessions s
+							JOIN files f ON f.id = s.file_id
+							WHERE s.id = ${session.id} AND s.status = 'committing'
+								AND f.current_version = s.version`;
+						yield* sql`
+							INSERT INTO pending_site_asset_deletes (
+								r2_key, file_id, version, queued_at
+							)
+							SELECT old.r2_key, old.file_id, old.version, ${publishedAt}
+							FROM site_assets old
+							WHERE old.file_id = ${session.fileId}
+								AND old.version <> ${session.version}
+								AND EXISTS (
+									SELECT 1 FROM site_upload_sessions
+									WHERE id = ${session.id} AND status = 'committing'
+								)
+							ON CONFLICT (r2_key) DO NOTHING`;
+						yield* sql`
+							DELETE FROM site_assets
+							WHERE file_id = ${session.fileId} AND version <> ${session.version}
+								AND EXISTS (
+									SELECT 1 FROM site_upload_sessions
+									WHERE id = ${session.id} AND status = 'committing'
+								)`;
+						yield* sql`
+							INSERT INTO site_assets (
+								file_id, version, path, r2_key, content_type, size_bytes
+							)
+							SELECT s.file_id, s.version, a.path, a.r2_key, a.content_type,
+								a.stored_size_bytes
+							FROM site_upload_sessions s
+							JOIN staged_site_assets a ON a.session_id = s.id
+							WHERE s.id = ${session.id} AND s.status = 'committing'
+								AND a.r2_key IS NOT NULL AND a.stored_size_bytes IS NOT NULL`;
+						yield* refreshSearchDocument(sql, session.fileId);
+						yield* sql`
+							UPDATE site_upload_sessions SET status = 'complete'
+							WHERE id = ${session.id} AND status = 'committing'
+								AND (
+									SELECT COUNT(*) FROM staged_site_assets
+									WHERE session_id = ${session.id}
+								) = (
+									SELECT COUNT(*) FROM site_assets
+									WHERE file_id = ${session.fileId}
+										AND version = ${session.version}
+								)`;
+						yield* sql`
+							DELETE FROM staged_site_assets
+							WHERE session_id = ${session.id} AND EXISTS (
+								SELECT 1 FROM site_upload_sessions
+								WHERE id = ${session.id} AND status = 'complete'
+							)`;
+					})
+				)
+				.pipe(
+					Effect.catchTag('SqlError', (cause) =>
+						Effect.fail(
+							new StorageError({ operation: 'commit site version', cause })
+						)
+					)
+				);
 			yield* commit.pipe(
 				Effect.catch((failure) =>
 					cleanupStaged(session, 'aborted').pipe(
@@ -430,15 +427,13 @@ export const sessionOps = (
 				)
 			);
 			const rows = yield* all(
-				db
-					.prepare(
-						`SELECT id, display_name, current_version, size_bytes, created_at,
-							expires_at, download_count, last_download_at
-						FROM files
-						WHERE id = ? AND is_site = 1 AND current_version = ?
-						LIMIT 1`
-					)
-					.bind(session.fileId, session.version),
+				sql`
+					SELECT id, display_name, current_version, size_bytes, created_at,
+						expires_at, download_count, last_download_at
+					FROM files
+					WHERE id = ${session.fileId} AND is_site = true
+						AND current_version = ${session.version}
+					LIMIT 1`,
 				SiteFileRow,
 				'read published site'
 			);

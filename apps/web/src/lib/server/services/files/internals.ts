@@ -1,9 +1,9 @@
 import type { DashboardFile } from '@adrive/shared';
+import type { PgClient } from '@effect/sql-pg';
 import { Effect } from 'effect';
-import { SqlClient } from 'effect/unstable/sql';
 import {
 	compensateBlobFailure,
-	deferredBlobDeleteCommand
+	queueDeferredBlobDelete
 } from '../../blob-compensation';
 import { NotFound, StorageError } from '../../errors';
 import {
@@ -12,27 +12,22 @@ import {
 	toDashboardFile
 } from '../../file-rows';
 import { visibilityForFile } from '../../file-policy';
-import type { PurgeSqlCommand } from '../../purge-sql';
-import { fileIndexStatements } from '../../search-index';
-import { ensureStorageQuota } from '../../storage-quota';
+import { refreshSearchDocument } from '../../search-index';
+import { ensureStoredBytesWithin } from '../../storage-quota';
 import type { AppConfig } from '../../config';
 import type { Blobs } from '../blobs';
-import type { Db } from '../bindings';
 import type { Tags } from '../tags';
 import type { MutationResult } from './types';
 
 export interface CoreDeps {
-	readonly db: Db['Service'];
+	readonly sql: PgClient.PgClient;
 	readonly blobs: Blobs['Service'];
-	readonly sql: (typeof SqlClient.SqlClient)['Service'];
 	readonly config: AppConfig['Service'];
 	readonly tags: Tags['Service'];
 }
 
 export const createInternals = (deps: CoreDeps) => {
-	const { db, blobs, sql, config, tags } = deps;
-	const preparePurgeCommand = (command: PurgeSqlCommand) =>
-		db.prepare(command.sql).bind(...command.bindings);
+	const { sql, blobs, config, tags } = deps;
 	const compensateStoredBlob = <OriginalError>(
 		failure: OriginalError,
 		fileId: string,
@@ -43,27 +38,20 @@ export const createInternals = (deps: CoreDeps) => {
 		compensateBlobFailure(
 			failure,
 			blobs.delete(r2Key),
-			(deleteCause) => {
-				const command = deferredBlobDeleteCommand(
+			(deleteCause) =>
+				queueDeferredBlobDelete(
+					sql,
 					r2Key,
 					fileId,
 					version,
 					new Date().toISOString(),
 					String(deleteCause)
-				);
-				return Effect.tryPromise({
-					try: () =>
-						db
-							.prepare(command.sql)
-							.bind(...command.bindings)
-							.run(),
-					catch: (cause) =>
-						new StorageError({
-							operation: 'queue orphaned file blob',
-							cause
-						})
-				});
-			},
+				).pipe(
+					Effect.mapError(
+						(cause) =>
+							new StorageError({ operation: 'queue orphaned file blob', cause })
+					)
+				),
 			(deleteCause, queueCause) => {
 				console.error(
 					JSON.stringify({
@@ -79,25 +67,20 @@ export const createInternals = (deps: CoreDeps) => {
 	// One aggregate query per upload; at personal scale this stays cheap
 	// and cannot drift the way a maintained counter can.
 	const checkStorageQuota = (incomingBytes: number) =>
-		ensureStorageQuota(db, config.maxTotalBytes, incomingBytes);
+		ensureStoredBytesWithin(sql, config.maxTotalBytes, incomingBytes);
 
 	const findDashboardFile = Effect.fn('Files.findDashboardFile')(function* (
 		id: string
 	) {
-		const rows = yield* sql
-			.unsafe(
-				`SELECT ${dashboardFileColumns}
-				FROM files f
-				WHERE f.id = ?
-				LIMIT 1`,
-				[id]
+		const rows = yield* sql`
+			SELECT ${sql.literal(dashboardFileColumns)}
+			FROM files f
+			WHERE f.id = ${id}
+			LIMIT 1`.pipe(
+			Effect.mapError(
+				(cause) => new StorageError({ operation: 'find dashboard file', cause })
 			)
-			.pipe(
-				Effect.mapError(
-					(cause) =>
-						new StorageError({ operation: 'find dashboard file', cause })
-				)
-			);
+		);
 		const row = decodeDashboardRows(rows)[0];
 		if (!row) return yield* new NotFound({ id });
 		return toDashboardFile(row);
@@ -116,60 +99,45 @@ export const createInternals = (deps: CoreDeps) => {
 			current.htmlForcedPublic ? 'text/html' : contentType,
 			current.public
 		);
-		const statements = [
-			db
-				.prepare(
-					`UPDATE files
-						SET current_version = ?, size_bytes = ?, content_type = ?,
-							public = ?, updated_at = ?, index_state = 'pending',
+		// Optimistic concurrency on current_version: a concurrent upload
+		// that committed first makes this update match nothing.
+		yield* sql
+			.withTransaction(
+				Effect.gen(function* () {
+					const updated = yield* sql<{ id: string }>`
+						UPDATE files
+						SET current_version = ${version}, size_bytes = ${size},
+							content_type = ${contentType}, public = ${visibility.public},
+							updated_at = ${updatedAt}, index_state = 'pending',
 							index_cursor = 0, index_attempts = 0, index_error = NULL,
 							index_next_run_at = NULL, index_lease_token = NULL
-						WHERE id = ? AND current_version = ? AND deleted_at IS NULL`
-				)
-				.bind(
-					version,
-					size,
-					contentType,
-					visibility.public ? 1 : 0,
-					updatedAt,
-					current.id,
-					current.version
-				),
-			db
-				.prepare(
-					`INSERT INTO file_versions (
-						file_id, version, r2_key, size_bytes, sha256, content_type, created_at,
-						text_content
+						WHERE id = ${current.id} AND current_version = ${current.version}
+							AND deleted_at IS NULL
+						RETURNING id`;
+					if (updated.length !== 1) {
+						return yield* new StorageError({
+							operation: 'commit file version',
+							cause: 'File changed while the version was uploading'
+						});
+					}
+					yield* sql`
+						INSERT INTO file_versions (
+							file_id, version, r2_key, size_bytes, sha256, content_type,
+							created_at, text_content
+						) VALUES (
+							${current.id}, ${version}, ${r2Key}, ${size}, NULL, ${contentType},
+							${updatedAt}, NULL
+						)`;
+					yield* refreshSearchDocument(sql, current.id);
+				})
+			)
+			.pipe(
+				Effect.catchTag('SqlError', (cause) =>
+					Effect.fail(
+						new StorageError({ operation: 'commit file version', cause })
 					)
-					SELECT ?, ?, ?, ?, NULL, ?, ?, ?
-					WHERE EXISTS (
-						SELECT 1 FROM files
-						WHERE id = ? AND current_version = ? AND deleted_at IS NULL
-					)`
 				)
-				.bind(
-					current.id,
-					version,
-					r2Key,
-					size,
-					contentType,
-					updatedAt,
-					null,
-					current.id,
-					version
-				),
-			...fileIndexStatements(db, current.id)
-		];
-		yield* Effect.tryPromise({
-			try: async () => {
-				const results = await db.batch(statements);
-				if (results[0]?.meta.changes !== 1 || results[1]?.meta.changes !== 1) {
-					throw new Error('File changed while the version was uploading');
-				}
-			},
-			catch: (cause) =>
-				new StorageError({ operation: 'commit file version', cause })
-		});
+			);
 		return {
 			file: {
 				...current,
@@ -189,12 +157,10 @@ export const createInternals = (deps: CoreDeps) => {
 	});
 
 	return {
-		db,
-		blobs,
 		sql,
+		blobs,
 		config,
 		tags,
-		preparePurgeCommand,
 		compensateStoredBlob,
 		checkStorageQuota,
 		findDashboardFile,
