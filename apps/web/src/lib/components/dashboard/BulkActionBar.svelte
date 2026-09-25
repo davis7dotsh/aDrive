@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { FileMutation, Tag } from '@adrive/shared';
 	import Button from '$lib/components/ui/Button.svelte';
+	import { fly } from 'svelte/transition';
 
 	let {
 		selectedCount,
@@ -27,10 +28,11 @@
 
 {#if selectedCount > 0}
 	<div
-		class="mt-5 flex flex-wrap items-center gap-2 border-y border-zinc-200 py-3"
+		transition:fly={{ y: 12, duration: 180 }}
+		class="bulk-bar pointer-events-auto flex max-w-full shrink-0 flex-wrap items-center gap-2 rounded-xl border border-zinc-200 bg-white p-2 pl-4 shadow-xl"
 		aria-label="Selected file actions"
 	>
-		<p class="mr-auto text-sm font-medium text-zinc-800">
+		<p class="mr-2 text-sm font-medium text-zinc-800">
 			{selectedCount} selected
 		</p>
 		{#if showTrash}
@@ -48,7 +50,7 @@
 				aria-label="Add tag to selected files"
 				value={bulkTagId}
 				disabled={batchBusy}
-				class="rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm text-zinc-600"
+				class="min-w-0 max-w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm text-zinc-600"
 				onchange={(event) => onbulktag(event.currentTarget.value)}
 			>
 				<option value="">Add tag…</option>

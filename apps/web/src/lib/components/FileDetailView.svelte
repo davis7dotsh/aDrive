@@ -11,6 +11,7 @@
 	} from '$lib/dashboard/api';
 	import { getDashboardSession } from '$lib/dashboard/session.svelte';
 	import { getToasts } from '$lib/dashboard/toast.svelte';
+	import { dashboardReturnHref } from '$lib/dashboard/return-href';
 	import CopyButton from './ui/CopyButton.svelte';
 	import Icon from './ui/Icon.svelte';
 	import FileName from './files/FileName.svelte';
@@ -29,8 +30,9 @@
 	const session = getDashboardSession();
 	const toasts = getToasts();
 	const id = $derived(page.params.id);
-	const from = $derived(page.url.searchParams.get('from') ?? '');
-	const backHref = $derived(from.startsWith('?') ? `/${from}` : '/');
+	const backHref = $derived(
+		dashboardReturnHref(page.url.searchParams.get('from'))
+	);
 	const ssrDetail = $derived(initialDetail);
 	let hydratedFileId: string | null = null;
 	const detail = resource(

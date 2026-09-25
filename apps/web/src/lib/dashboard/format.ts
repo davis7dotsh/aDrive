@@ -17,6 +17,11 @@ export const formatDate = (value: string) =>
 		timeStyle: 'short'
 	}).format(new Date(value));
 
+export const formatShortDate = (value: string) =>
+	new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(
+		new Date(value)
+	);
+
 const padDatePart = (value: number) => String(value).padStart(2, '0');
 
 export const toLocalDateTimeInput = (value: string | null | undefined) => {

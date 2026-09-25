@@ -1,4 +1,5 @@
 import type { RequestHandler } from './$types';
+import { dev } from '$app/environment';
 import { Effect } from 'effect';
 import {
 	DASHBOARD_RENDERED_THUMBNAIL,
@@ -36,16 +37,17 @@ const parsedVersion = (value: string) => {
 
 const thumbnailResponse = (
 	body: BodyInit | null,
-	size: number,
+	size: number | undefined,
 	etag: string,
-	cacheControl: string
+	cacheControl: string,
+	contentType = 'image/webp'
 ) =>
 	new Response(body, {
 		headers: {
 			'Cache-Control': cacheControl,
-			'Content-Length': String(size),
-			'Content-Security-Policy': contentSecurityPolicy('image/webp'),
-			'Content-Type': 'image/webp',
+			...(size === undefined ? {} : { 'Content-Length': String(size) }),
+			'Content-Security-Policy': contentSecurityPolicy(contentType),
+			'Content-Type': contentType,
 			ETag: etag,
 			'Referrer-Policy': 'no-referrer',
 			'X-Content-Type-Options': 'nosniff'
@@ -216,8 +218,16 @@ export const GET: RequestHandler = ({
 							signature: sourceGrant.signature
 						}
 					);
-			const bytes = yield* Effect.tryPromise({
-				try: async () => {
+			// Local workerd has no image resizing, so in development an image
+			// that cannot be transformed is served unresized and unstored.
+			const generated = yield* Effect.tryPromise({
+				try: async (): Promise<
+					| { readonly kind: 'transformed'; readonly bytes: ArrayBuffer }
+					| {
+							readonly kind: 'unresized';
+							readonly response: Response;
+					  }
+				> => {
 					const response = rendered
 						? await platform?.env.BROWSER.quickAction('screenshot', {
 								url: sourceUrl.href,
@@ -245,17 +255,47 @@ export const GET: RequestHandler = ({
 									response.headers.get('cf-resized')
 								)
 					) {
+						if (dev && !rendered) {
+							return {
+								kind: 'unresized',
+								response
+							};
+						}
 						throw new Error('Image transform did not return transformed WebP');
 					}
 					const output = await response.arrayBuffer();
 					if (output.byteLength === 0) {
 						throw new Error('Image transform returned an empty response');
 					}
-					return output;
+					return { kind: 'transformed', bytes: output };
 				},
 				catch: (cause) =>
 					new StorageError({ operation: 'generate dashboard thumbnail', cause })
 			});
+			if (generated.kind === 'unresized') {
+				const { response } = generated;
+				const length = response.headers.get('content-length');
+				const size =
+					length !== null && /^\d+$/.test(length) ? Number(length) : undefined;
+				// Preserve the original stream: a grid can request several large
+				// uploads concurrently. Encoded or unknown-length bodies must not
+				// inherit a length that differs from the decoded stream.
+				const contentLength =
+					!response.headers.has('content-encoding') &&
+					size !== undefined &&
+					Number.isSafeInteger(size) &&
+					size >= 0
+						? size
+						: undefined;
+				return thumbnailResponse(
+					response.body,
+					contentLength,
+					`"dev-${params.id}-${content.file.version}"`,
+					'private, no-store',
+					response.headers.get('content-type') ?? content.file.contentType
+				);
+			}
+			const bytes = generated.bytes;
 			const body = new Response(bytes).body;
 			const result = yield* files.storeDashboardThumbnail(
 				content.orgId,

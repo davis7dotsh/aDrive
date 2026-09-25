@@ -7,6 +7,7 @@
 		supportsRenderedDashboardThumbnail
 	} from '$lib/file-thumbnail';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import { fileFamily } from '$lib/dashboard/file-family';
 	import { resource, useIntersectionObserver } from 'runed';
 	import type { Attachment } from 'svelte/attachments';
 
@@ -176,7 +177,10 @@
 
 <div
 	{@attach attachElement}
-	class="relative flex aspect-[4/3] overflow-hidden rounded-xl bg-zinc-100 transition group-hover:bg-zinc-200/70"
+	data-public={file.public}
+	data-family={fileFamily(file)}
+	style:--tag-color={file.tags[0]?.color ?? undefined}
+	class="thumb relative flex aspect-[4/3] overflow-hidden rounded-xl bg-zinc-100 transition group-hover:bg-zinc-200/70"
 >
 	{#if source && failedSource !== source}
 		<img
@@ -198,9 +202,9 @@
 			class="line-clamp-6 size-full overflow-hidden whitespace-pre-wrap p-3 text-[10px] leading-4 text-zinc-500 transition-opacity duration-200">{text}</pre>
 	{:else}
 		<div class="m-auto text-center">
-			<Icon name="file" class="mx-auto size-9 text-zinc-400" />
+			<Icon name="file" class="thumb-icon mx-auto size-9 text-zinc-400" />
 			<span
-				class="mt-2 block text-[10px] font-semibold tracking-wider text-zinc-400"
+				class="ext-label mt-2 block text-[10px] font-semibold tracking-wider text-zinc-400"
 			>
 				{file.kind === 'site'
 					? 'SITE'
